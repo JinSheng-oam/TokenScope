@@ -1,0 +1,17 @@
+[package]
+name = "tokenscope-local-ipc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "tokenscope_local_ipc"
+path = "src/lib.rs"
+
+[dependencies]
+tokenscope-local-store = { path = "../local-store" }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

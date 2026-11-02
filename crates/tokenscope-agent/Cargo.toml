@@ -1,0 +1,31 @@
+[package]
+name = "tokenscope-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "tokenscope-agent"
+path = "src/main.rs"
+
+[dependencies]
+tokenscope-source-codex = { path = "../source-codex" }
+tokenscope-source-claude = { path = "../source-claude" }
+tokenscope-source-antigravity = { path = "../source-antigravity" }
+tokenscope-local-store = { path = "../local-store" }
+tokenscope-local-ipc = { path = "../local-ipc" }
+tokenscope-sync-client = { path = "../sync-client" }
+
+fs2 = "0.4"
+ctrlc = "3.4"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Local-only Antigravity quota RPC (no OAuth or remote endpoint access).
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+chrono-tz = "0.10"
+
+uuid = { version = "1", features = ["v4"] }

@@ -1,0 +1,21 @@
+name: Hub Deployment Template CI
+on:
+  push:
+    paths: ['deploy/**', 'scripts/verify_m107.py', '.github/workflows/deploy-ci.yml']
+  pull_request:
+    paths: ['deploy/**', 'scripts/verify_m107.py', '.github/workflows/deploy-ci.yml']
+  workflow_dispatch:
+jobs:
+  compose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: M1-07 production-readiness static gates
+        run: python scripts/verify_m107.py
+      - name: Validate Compose configuration
+        working-directory: deploy
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+      - name: Build Hub image
+        run: docker build -f deploy/hub/Dockerfile -t tokenscope-hub:ci .

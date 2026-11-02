@@ -1,0 +1,11 @@
+{
+  "userStatus": {
+    "cascadeModelConfigData": {
+      "clientModelConfigs": [
+        {"label":"Gemini Pro","modelOrAlias":{"model":"gemini-pro"},"quotaInfo":{"remainingFraction":0.42,"resetTime":"2026-11-03T00:00:00Z"}},
+        {"label":"Claude Sonnet","modelOrAlias":{"model":"claude-sonnet-4"},"quotaInfo":{"remainingFraction":0.8}},
+        {"label":"Placeholder","modelOrAlias":{"model":"MODEL_PLACEHOLDER_M9"},"quotaInfo":{"remainingFraction":1.0}}
+      ]
+    }
+  }
+}

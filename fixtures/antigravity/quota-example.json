@@ -1,0 +1,18 @@
+[
+  {
+    "source_id": "local-account-1",
+    "pool_id": "gemini_pro",
+    "window_id": "five_hour",
+    "remaining_basis_points": 5500,
+    "reset_at_ms": null,
+    "observed_at_ms": 1793491200000
+  },
+  {
+    "source_id": "local-account-1",
+    "pool_id": "claude_gpt_shared",
+    "window_id": "weekly",
+    "remaining_basis_points": null,
+    "reset_at_ms": null,
+    "observed_at_ms": 1793491200000
+  }
+]

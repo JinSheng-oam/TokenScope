@@ -1,0 +1,19 @@
+[package]
+name = "tokenscope-source-antigravity"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "tokenscope_source_antigravity"
+path = "src/lib.rs"
+
+[dependencies]
+tokenscope-core-domain = { path = "../core-domain" }
+tokenscope-local-store = { path = "../local-store" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+sha2 = "0.10"
+
+[dev-dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }

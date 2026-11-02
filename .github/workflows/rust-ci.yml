@@ -1,0 +1,59 @@
+name: Rust Core CI
+on:
+  push:
+    paths: ['crates/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'fixtures/domain/**', 'fixtures/codex/**', 'fixtures/codex-test-home/**', 'fixtures/claude/**', 'fixtures/antigravity/**', 'tools/verify_domain_vectors.py', 'tools/verify_local_store_sql.py', 'tools/verify_codex_semantics.py', 'scripts/verify_m005.py', 'scripts/verify_m006.py', 'scripts/verify_m007.py', 'scripts/verify_m008.py', 'scripts/verify_m009.py', 'scripts/verify_m010.py', 'scripts/verify_m102.py', 'scripts/verify_m104.py', 'scripts/verify_m105.py', 'scripts/verify_m106.py', 'scripts/verify_m107.py', '.github/workflows/rust-ci.yml']
+  pull_request:
+    paths: ['crates/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'fixtures/domain/**', 'fixtures/codex/**', 'fixtures/codex-test-home/**', 'fixtures/claude/**', 'fixtures/antigravity/**', 'tools/verify_domain_vectors.py', 'tools/verify_local_store_sql.py', 'tools/verify_codex_semantics.py', 'scripts/verify_m005.py', 'scripts/verify_m006.py', 'scripts/verify_m007.py', 'scripts/verify_m008.py', 'scripts/verify_m009.py', 'scripts/verify_m010.py', 'scripts/verify_m102.py', 'scripts/verify_m104.py', 'scripts/verify_m105.py', 'scripts/verify_m106.py', 'scripts/verify_m107.py', '.github/workflows/rust-ci.yml']
+  workflow_dispatch:
+jobs:
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.90.0'
+          components: rustfmt, clippy
+      - name: Linux Secret Service build dependency
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev
+      - name: canonical vector reference
+        run: python tools/verify_domain_vectors.py
+      - name: local SQLite SQL smoke check
+        run: python tools/verify_local_store_sql.py
+      - name: Codex fixture oracle (not Rust test)
+        run: python tools/verify_codex_semantics.py
+      - name: Codex M0-05 independent fixture and SQL oracle
+        run: python scripts/verify_m005.py
+      - name: Claude M0-06 independent fixture oracle (not Rust test)
+        run: python scripts/verify_m006.py
+      - name: M0-07 large source SQLite oracle (not Rust test)
+        run: python scripts/verify_m007.py
+      - name: Antigravity M0-08 independent SQLite/protobuf oracle (not Rust test)
+        run: python scripts/verify_m008.py
+      - name: Antigravity M0-09 SQLite migration/activity/quota oracle (not Rust test)
+        run: python scripts/verify_m009.py
+      - name: Antigravity M0-10 local RPC security contract (not Rust test)
+        run: python scripts/verify_m010.py
+      - name: M1-02 pairing and credential security contract (static; not Rust compilation)
+        run: python scripts/verify_m102.py
+      - name: M1-04 durable sync retry and conflict quarantine oracle (not Rust test)
+        run: python scripts/verify_m104.py
+      - name: M1-05 Change Feed and remote cache contract
+        run: python scripts/verify_m105.py
+      - name: M1-06 remote breakdown contract
+        run: python scripts/verify_m106.py
+      - name: M1-07 production-readiness static gates
+        run: python scripts/verify_m107.py
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test --workspace

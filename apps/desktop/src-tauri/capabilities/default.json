@@ -1,0 +1,10 @@
+{
+  "identifier": "default",
+  "description": "No WebView filesystem, shell, or network plugin access; app data operations remain in Rust commands",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

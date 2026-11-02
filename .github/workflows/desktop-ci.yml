@@ -1,0 +1,80 @@
+name: Desktop UI, Agent and Installer CI
+on:
+  push:
+    paths: ['apps/desktop/**', 'crates/**', 'scripts/stage-agent.mjs', 'scripts/verify_m012.py', 'scripts/verify_m102.py', 'scripts/verify_m104.py', 'scripts/verify_m105.py', 'scripts/verify_m106.py', 'scripts/verify_m107.py', 'Cargo.toml', 'rust-toolchain.toml', '.github/workflows/desktop-ci.yml']
+  pull_request:
+    paths: ['apps/desktop/**', 'crates/**', 'scripts/stage-agent.mjs', 'scripts/verify_m012.py', 'scripts/verify_m102.py', 'scripts/verify_m104.py', 'scripts/verify_m105.py', 'scripts/verify_m106.py', 'scripts/verify_m107.py', 'Cargo.toml', 'rust-toolchain.toml', '.github/workflows/desktop-ci.yml']
+  workflow_dispatch:
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            bundles: deb,appimage
+          - os: windows-2022
+            bundles: msi,nsis
+          - os: macos-14
+            bundles: dmg
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.90.0'
+          components: rustfmt, clippy
+      - name: Linux Tauri dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libfuse2 libdbus-1-dev
+        working-directory: .
+      - name: Install frontend dependencies
+        run: npm install --no-audit --no-fund
+      - name: M1-05 Change Feed and remote cache contract
+        run: python scripts/verify_m105.py
+      - name: M1-06 remote breakdown contract
+        run: python scripts/verify_m106.py
+      - name: M1-07 production-readiness static gates
+        run: python scripts/verify_m107.py
+      - name: Type and Svelte checks
+        run: npm run check
+      - name: UI tests
+        run: npm run test
+      - name: Vite production build
+        run: npm run build
+      - name: Rust workspace checks
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+        working-directory: .
+      - name: M0-12 packaging and lifecycle contract
+        run: python scripts/verify_m012.py
+        working-directory: .
+      - name: M1-02 pairing and credential security contract (static; not Rust compilation)
+        run: python scripts/verify_m102.py
+        working-directory: .
+      - name: M1-04 durable sync retry and dashboard status contract (static; not Rust compilation)
+        run: python scripts/verify_m104.py
+        working-directory: .
+      - name: Desktop Rust shell lint
+        run: |
+          cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
+          cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+        working-directory: .
+      - name: Build installer with embedded Agent
+        run: npm run pretauri:build && npx tauri build --bundles ${{ matrix.bundles }}
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tokenscope-${{ runner.os }}
+          path: apps/desktop/src-tauri/target/release/bundle/**
+          if-no-files-found: error

@@ -1,0 +1,43 @@
+name: Go Hub CI
+on:
+  push:
+    paths: ['hub/**', 'scripts/verify_m101_sql.py', 'scripts/verify_m106.py', 'scripts/verify_m107.py', '.github/workflows/hub-ci.yml']
+  pull_request:
+    paths: ['hub/**', 'scripts/verify_m101_sql.py', 'scripts/verify_m106.py', 'scripts/verify_m107.py', '.github/workflows/hub-ci.yml']
+  workflow_dispatch:
+jobs:
+  go:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: hub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: hub/go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download Go modules
+        run: go mod download
+      - name: SQLite migration and transaction oracle
+        run: python ../scripts/verify_m101_sql.py
+      - name: Remote breakdown SQL oracle
+        run: python ../scripts/verify_m106.py
+      - name: M1-07 production-readiness static gates
+        run: python ../scripts/verify_m107.py
+      - name: Format verification
+        shell: bash
+        run: test -z "$(gofmt -l .)"
+      - name: Test
+        run: go test ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Race detector
+        if: runner.os != 'Windows'
+        run: go test -race ./...

@@ -1,0 +1,29 @@
+export function formatNumber(value: number | null | undefined): string {
+  return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 }).format(value ?? 0);
+}
+
+export function formatCost(microUsd: number | null | undefined): string {
+  if (microUsd === null || microUsd === undefined) return '暂无价格数据';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency', currency: 'USD', maximumFractionDigits: 4,
+  }).format(microUsd / 1_000_000);
+}
+
+export function formatPercent(basisPoints: number | null | undefined): string {
+  if (basisPoints === null || basisPoints === undefined) return '未知';
+  return `${(basisPoints / 100).toFixed(1)}%`;
+}
+
+export function relativeTime(timestamp: number | null | undefined, now = Date.now()): string {
+  if (timestamp === null || timestamp === undefined) return '从未采集';
+  const diff = Math.max(0, now - timestamp);
+  if (diff < 60_000) return '刚刚';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+  return `${Math.floor(diff / 86_400_000)} 天前`;
+}
+
+export function percentOf(value: number, total: number): number {
+  if (total <= 0 || value <= 0) return 0;
+  return Math.max(0, Math.min(100, (value / total) * 100));
+}

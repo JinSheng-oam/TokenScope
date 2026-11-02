@@ -1,0 +1,18 @@
+[package]
+name = "tokenscope-source-codex"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "tokenscope_source_codex"
+path = "src/lib.rs"
+
+[dependencies]
+tokenscope-core-domain = { path = "../core-domain" }
+tokenscope-local-store = { path = "../local-store" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+chrono = { version = "0.4", default-features = false, features = ["std"] }

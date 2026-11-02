@@ -1,0 +1,1110 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import {
+    disconnectHubDevice,
+    getAgentStatus,
+    getAutostartEnabled,
+    getDashboardSnapshot,
+    isTauriRuntime,
+    listHubDevices,
+    pairHubDevice,
+    renameHubDevice,
+    rotateHubDeviceToken,
+    setAutostartEnabled,
+    startAgent,
+  } from './lib/api';
+  import { formatCost, formatNumber, formatPercent, percentOf, relativeTime } from './lib/format';
+  import { icons } from './lib/icons';
+  import { BOOTSTRAP_STAGE } from './lib/status';
+  import { applyTheme, getInitialTheme, initThemeListener, type ThemeMode } from './lib/theme';
+  import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice } from './lib/types';
+
+  type Tab = 'overview' | 'devices' | 'tools' | 'models' | 'projects' | 'quota' | 'settings';
+  let activeTab: Tab = 'overview';
+  let range: DashboardRange = '7d';
+  let currentTheme: ThemeMode = 'dark';
+
+  let snapshot: DashboardSnapshot | null = null;
+  let agent: AgentStatus | null = null;
+  let loading = true;
+  let refreshing = false;
+  let errorMessage = '';
+  let runtimeAvailable = isTauriRuntime();
+  let agentStarted = false;
+
+  // Autostart State
+  let autostartEnabled = false;
+  let autostartBusy = false;
+  let autostartError = '';
+
+  // Hub Pairing & Devices
+  let hubUrl = '';
+  let pairingCode = '';
+  let hubDisplayName = '';
+  let remoteDevices: RemoteDevice[] = [];
+  let hubBusy = false;
+  let hubError = '';
+  let hubSuccess = '';
+  let hubPaired = false;
+  let remoteSelectedDevice = 'all';
+
+  // Sort States
+  let modelSortBy: 'tokens' | 'cost' = 'tokens';
+
+  // Navigation Items
+  const navItems: { id: Tab; label: string; iconKey: keyof typeof icons }[] = [
+    { id: 'overview', label: '使用总览', iconKey: 'dashboard' },
+    { id: 'devices', label: '多设备网络', iconKey: 'devices' },
+    { id: 'tools', label: '工具分析', iconKey: 'tools' },
+    { id: 'models', label: '模型排行', iconKey: 'models' },
+    { id: 'projects', label: '项目分析', iconKey: 'projects' },
+    { id: 'quota', label: 'Antigravity 额度', iconKey: 'quota' },
+    { id: 'settings', label: '系统设置', iconKey: 'settings' },
+  ];
+
+  // Derived View Helpers
+  $: local = snapshot?.local;
+  $: chartValues = snapshot?.daily ?? [];
+  $: chartMax = Math.max(1, ...chartValues.map((item) => item.total_tokens));
+  $: chartPoints = chartValues.map((item, index) => ({
+    ...item,
+    x: chartValues.length <= 1 ? 400 : 25 + (index / (chartValues.length - 1)) * 750,
+    y: 160 - (item.total_tokens / chartMax) * 130,
+  }));
+  $: chartPath = chartPoints.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
+
+  $: topToolTotal = Math.max(1, ...(snapshot?.by_tool ?? []).map((item) => item.total_tokens));
+  $: topModelTotal = Math.max(1, ...(snapshot?.by_model ?? []).map((item) => item.total_tokens));
+
+  $: selectableRemoteDevices = remoteDevices.filter(
+    (d) => d.device_id !== snapshot?.identity?.device_id && d.revoked_at_ms === null
+  );
+
+  $: remoteToolRows = (snapshot?.remote_by_tool ?? []).filter(
+    (row) => remoteSelectedDevice === 'all' || row.owner_device_id === remoteSelectedDevice
+  );
+  $: remoteModelRows = (snapshot?.remote_by_model ?? []).filter(
+    (row) => remoteSelectedDevice === 'all' || row.owner_device_id === remoteSelectedDevice
+  );
+  $: remoteProjectRows = (snapshot?.remote_by_project ?? []).filter(
+    (row) => remoteSelectedDevice === 'all' || row.owner_device_id === remoteSelectedDevice
+  );
+
+  $: sortedModels = [...(snapshot?.by_model ?? [])].sort((a, b) => {
+    if (modelSortBy === 'cost') {
+      return (b.estimated_cost_microusd ?? 0) - (a.estimated_cost_microusd ?? 0);
+    }
+    return b.total_tokens - a.total_tokens;
+  });
+
+  // Calculate Cache Savings Rate
+  $: cacheTokens = (local?.cache_read_tokens ?? 0) + (local?.cache_write_tokens ?? 0);
+  $: cacheHitRate = local?.total_tokens ? ((local.cache_read_tokens / local.total_tokens) * 100).toFixed(1) : '0.0';
+
+  // Precision Ratio
+  $: exactRatio = local?.record_count
+    ? ((local.exact_records / local.record_count) * 100).toFixed(1)
+    : '100.0';
+
+  async function loadDashboard(showSpinner = true) {
+    if (!runtimeAvailable) {
+      errorMessage = '请在 TokenScope 桌面端运行环境查看实时统计。';
+      loading = false;
+      return;
+    }
+    if (showSpinner) refreshing = true;
+    errorMessage = '';
+    try {
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      let currentAgent: AgentStatus;
+      if (!agentStarted) {
+        currentAgent = await startAgent(timeZone);
+        agentStarted = true;
+      } else {
+        currentAgent = await getAgentStatus();
+        if (!currentAgent.running && currentAgent.binaryFound) {
+          currentAgent = await startAgent(timeZone);
+        }
+      }
+      agent = currentAgent;
+      if (!currentAgent.running) {
+        errorMessage = currentAgent.message;
+        snapshot = null;
+      } else if (!currentAgent.databaseReady) {
+        errorMessage = 'Agent 已启动，正在初始化本地 SQLite WAL 数据库…';
+        snapshot = null;
+      } else {
+        snapshot = await getDashboardSnapshot(range);
+        if (!hubDisplayName && snapshot.identity?.display_name) {
+          hubDisplayName = snapshot.identity.display_name;
+        }
+      }
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    } finally {
+      loading = false;
+      refreshing = false;
+    }
+  }
+
+  function handleSelectRange(next: DashboardRange) {
+    if (range === next) return;
+    range = next;
+    void loadDashboard();
+  }
+
+  function handleSwitchTheme(mode: ThemeMode) {
+    currentTheme = mode;
+    applyTheme(mode);
+  }
+
+  async function handleToggleAutostart() {
+    if (autostartBusy || !runtimeAvailable) return;
+    autostartBusy = true;
+    autostartError = '';
+    try {
+      autostartEnabled = await setAutostartEnabled(!autostartEnabled);
+    } catch (error) {
+      autostartError = error instanceof Error ? error.message : String(error);
+    } finally {
+      autostartBusy = false;
+    }
+  }
+
+  async function handleRefreshHubDevices() {
+    if (!runtimeAvailable || !hubUrl.trim()) return;
+    hubBusy = true;
+    hubError = '';
+    hubSuccess = '';
+    try {
+      const result = await listHubDevices(hubUrl.trim());
+      remoteDevices = result.devices;
+      hubPaired = true;
+      window.localStorage.setItem('tokenscope.hubUrl', hubUrl.trim());
+    } catch (error) {
+      hubError = error instanceof Error ? error.message : String(error);
+      if (hubError.includes('尚未与该 Hub 配对') || hubError.includes('尚未保存')) {
+        hubPaired = false;
+        remoteDevices = [];
+      }
+    } finally {
+      hubBusy = false;
+    }
+  }
+
+  async function handlePairWithHub() {
+    if (hubBusy || !runtimeAvailable) return;
+    hubBusy = true;
+    hubError = '';
+    hubSuccess = '';
+    try {
+      const result = await pairHubDevice(hubUrl.trim(), pairingCode.trim(), hubDisplayName.trim());
+      hubUrl = result.hubOrigin;
+      window.localStorage.setItem('tokenscope.hubUrl', hubUrl);
+      pairingCode = '';
+      hubPaired = true;
+      hubSuccess = `设备 ${result.deviceId} 配对成功，凭证已保存至操作系统安全密码库。`;
+      const list = await listHubDevices(hubUrl);
+      remoteDevices = list.devices;
+    } catch (error) {
+      hubError = error instanceof Error ? error.message : String(error);
+      if (hubError.includes('配对请求连接中断') || hubError.includes('配对码无效')) {
+        pairingCode = '';
+      }
+    } finally {
+      hubBusy = false;
+    }
+  }
+
+  async function handleRenameHubDevice() {
+    if (hubBusy || !runtimeAvailable || !hubDisplayName.trim()) return;
+    hubBusy = true;
+    hubError = '';
+    hubSuccess = '';
+    try {
+      const name = await renameHubDevice(hubUrl.trim(), hubDisplayName.trim());
+      hubSuccess = `本机在 Hub 中的名称已更新为“${name}”。`;
+      const list = await listHubDevices(hubUrl.trim());
+      remoteDevices = list.devices;
+    } catch (error) {
+      hubError = error instanceof Error ? error.message : String(error);
+    } finally {
+      hubBusy = false;
+    }
+  }
+
+  async function handleRotateHubCredential() {
+    if (hubBusy || !runtimeAvailable || !window.confirm('轮换后旧设备凭证立即失效。确定继续吗？')) return;
+    hubBusy = true;
+    hubError = '';
+    hubSuccess = '';
+    try {
+      await rotateHubDeviceToken(hubUrl.trim());
+      hubSuccess = '设备凭证已轮换，并已更新到系统安全密码库。';
+      const list = await listHubDevices(hubUrl.trim());
+      remoteDevices = list.devices;
+    } catch (error) {
+      hubError = error instanceof Error ? error.message : String(error);
+    } finally {
+      hubBusy = false;
+    }
+  }
+
+  async function handleDisconnectHub() {
+    if (hubBusy || !runtimeAvailable || !window.confirm('这只会删除本机保存的 Hub 凭证。确定断开吗？')) return;
+    hubBusy = true;
+    hubError = '';
+    hubSuccess = '';
+    try {
+      await disconnectHubDevice(hubUrl.trim());
+      remoteDevices = [];
+      hubPaired = false;
+      hubSuccess = '本机 Hub 凭证已从系统安全密码库彻底删除。';
+    } catch (error) {
+      hubError = error instanceof Error ? error.message : String(error);
+    } finally {
+      hubBusy = false;
+    }
+  }
+
+  function formatCountdown(resetAtMs: number | null): string {
+    if (!resetAtMs) return '未提供重置时间';
+    const diff = resetAtMs - Date.now();
+    if (diff <= 0) return '即将重置';
+    const hours = Math.floor(diff / 3_600_000);
+    const mins = Math.floor((diff % 3_600_000) / 60_000);
+    const secs = Math.floor((diff % 60_000) / 1000);
+    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')} 后重置`;
+  }
+
+  onMount(() => {
+    currentTheme = getInitialTheme();
+    applyTheme(currentTheme);
+    const cleanThemeListener = initThemeListener(() => {});
+
+    if (runtimeAvailable) {
+      void getAutostartEnabled().then((v) => (autostartEnabled = v)).catch(() => {});
+      hubUrl = window.localStorage.getItem('tokenscope.hubUrl') ?? '';
+    }
+
+    void loadDashboard().then(() => {
+      if (hubUrl) void handleRefreshHubDevices();
+    });
+
+    const timer = window.setInterval(() => void loadDashboard(false), 30_000);
+    return () => {
+      window.clearInterval(timer);
+      cleanThemeListener();
+    };
+  });
+</script>
+
+<svelte:head>
+  <title>TokenScope · 跨设备 AI Token 监控</title>
+</svelte:head>
+
+<div class="app-shell">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand-row">
+      <div class="brand-prism">
+        {@html icons.sparkle}
+      </div>
+      <div class="brand-title">
+        TokenScope
+        <small>Local Analytics</small>
+      </div>
+    </div>
+
+    <div class="nav-caption">工作空间</div>
+    <nav aria-label="主导航">
+      {#each navItems as item}
+        <button
+          class="nav-button"
+          class:active={activeTab === item.id}
+          onclick={() => (activeTab = item.id)}
+        >
+          <span class="nav-icon">{@html icons[item.iconKey]}</span>
+          <span>{item.label}</span>
+          {#if item.id === 'quota' && (snapshot?.antigravity_quota.length ?? 0) > 0}
+            <span class="nav-badge">{snapshot?.antigravity_quota.length}</span>
+          {/if}
+        </button>
+      {/each}
+    </nav>
+
+    <div class="sidebar-spacer"></div>
+
+    <div class="sidebar-footer">
+      <div class="agent-heart-row">
+        <span class="ping-dot" class:online={agent?.running}></span>
+        <span>{agent?.running ? 'Agent 正在运行' : 'Agent 未连接'}</span>
+        <span class="milestone-tag">{BOOTSTRAP_STAGE}</span>
+      </div>
+
+      <!-- Theme Switcher -->
+      <div class="theme-switch-row" title="切换显示主题">
+        <button
+          class="theme-button"
+          class:active={currentTheme === 'dark'}
+          onclick={() => handleSwitchTheme('dark')}
+          title="深色模式"
+        >
+          {@html icons.moon}
+        </button>
+        <button
+          class="theme-button"
+          class:active={currentTheme === 'light'}
+          onclick={() => handleSwitchTheme('light')}
+          title="浅色模式"
+        >
+          {@html icons.sun}
+        </button>
+        <button
+          class="theme-button"
+          class:active={currentTheme === 'system'}
+          onclick={() => handleSwitchTheme('system')}
+          title="跟随系统"
+        >
+          {@html icons.laptop}
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Area -->
+  <main class="main-area">
+    <!-- Topbar -->
+    <header class="topbar">
+      <div class="breadcrumbs">
+        <span>TokenScope</span>
+        <span class="sep">/</span>
+        <strong>{navItems.find((t) => t.id === activeTab)?.label}</strong>
+      </div>
+
+      <div class="topbar-actions">
+        <div class="machine-capsule" title="当前连接的物理设备">
+          {@html icons.cpu}
+          <span>{snapshot?.identity?.display_name ?? '本机工作站'}</span>
+        </div>
+
+        <div class="range-capsule" aria-label="时间跨度">
+          {#each [
+            { value: 'today', label: '今天' },
+            { value: '7d', label: '7 天' },
+            { value: '30d', label: '30 天' },
+            { value: 'all', label: '全部' },
+          ] as opt}
+            <button
+              class="range-btn"
+              class:selected={range === opt.value}
+              onclick={() => handleSelectRange(opt.value as DashboardRange)}
+            >
+              {opt.label}
+            </button>
+          {/each}
+        </div>
+
+        <button
+          class="icon-btn"
+          aria-label="刷新数据"
+          title="刷新统计"
+          disabled={refreshing}
+          onclick={() => void loadDashboard()}
+        >
+          <span class:spin={refreshing}>{@html icons.refresh}</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Page Content Area -->
+    <section class="page-content">
+      {#if errorMessage}
+        <div class="notice-box" role="alert">
+          {@html icons.alert}
+          <p>{errorMessage}</p>
+          <button class="notice-btn" onclick={() => void loadDashboard()}>重试</button>
+        </div>
+      {/if}
+
+      {#if loading}
+        <div class="empty-box">
+          <p>正在连接本地守护进程并读取 SQLite 快照…</p>
+        </div>
+      {:else if snapshot}
+        <!-- TAB 1: OVERVIEW (DASHBOARD) -->
+        {#if activeTab === 'overview'}
+          <div class="page-header">
+            <h1>使用总览</h1>
+            <p>
+              统计时区 {snapshot.time_zone} · 生成于 {relativeTime(snapshot.generated_at_ms)} · 仅汇集物理单机有效事实
+            </p>
+          </div>
+
+          <!-- 4 Metric Cards -->
+          <div class="metric-grid">
+            <article class="metric-card hero-card">
+              <div class="metric-head">
+                <span>总 Token 消耗</span>
+                <span class="precision-chip exact">
+                  {@html icons.shield} {exactRatio}% 精确
+                </span>
+              </div>
+              <div class="metric-val tabular">
+                {formatNumber(local?.total_tokens)}
+              </div>
+              <div class="metric-foot">
+                <span>估算成本：<strong>{formatCost(local?.estimated_cost_microusd)}</strong></span>
+              </div>
+            </article>
+
+            <article class="metric-card">
+              <div class="metric-head">
+                <span>输入 Token</span>
+                <span class="metric-icon-wrap">{@html icons.arrowDown}</span>
+              </div>
+              <div class="metric-val tabular">
+                {formatNumber(local?.input_tokens)}
+              </div>
+              <div class="metric-foot">
+                <span>不含缓存读取与写入</span>
+              </div>
+            </article>
+
+            <article class="metric-card">
+              <div class="metric-head">
+                <span>输出 Token</span>
+                <span class="metric-icon-wrap">{@html icons.arrowUp}</span>
+              </div>
+              <div class="metric-val tabular">
+                {formatNumber(local?.output_tokens)}
+              </div>
+              <div class="metric-foot">
+                <span>含推理 {formatNumber(local?.reasoning_tokens)} (作为输出子集)</span>
+              </div>
+            </article>
+
+            <article class="metric-card">
+              <div class="metric-head">
+                <span>缓存命中节省</span>
+                <span class="precision-chip exact">命中率 {cacheHitRate}%</span>
+              </div>
+              <div class="metric-val tabular">
+                {formatNumber(cacheTokens)}
+              </div>
+              <div class="metric-foot">
+                <span>读 {formatNumber(local?.cache_read_tokens)} · 写 {formatNumber(local?.cache_write_tokens)}</span>
+              </div>
+            </article>
+          </div>
+
+          <!-- Data Precision Integrity Guardrail -->
+          <div class="integrity-banner">
+            <div class="integrity-left">
+              <span class="integrity-item">精确记录：<strong>{formatNumber(local?.exact_records)}</strong> 笔</span>
+              <span class="integrity-item">聚合粗粒度：<strong>{formatNumber(local?.aggregate_records)}</strong> 笔</span>
+              <span class="integrity-item">显式估算：<strong>{formatNumber(local?.estimated_records)}</strong> 笔</span>
+              <span class="integrity-item">已计价：<strong>{formatNumber(local?.priced_records)}</strong> 笔</span>
+            </div>
+            <div class="integrity-right">
+              隔离保护：未归属用量 {formatNumber(snapshot.unassigned.total_tokens)} Token，避免跨设备重复累加
+            </div>
+          </div>
+
+          <!-- Trend Chart & Tool Rankings (Two Column Grid) -->
+          <div class="two-col-grid">
+            <section class="panel-card">
+              <div class="panel-head">
+                <div>
+                  <h2>Token 使用趋势</h2>
+                  <p>按本机时区自然日汇集（时间未知记录不进入日趋势）</p>
+                </div>
+                <span class="panel-tag">{snapshot.daily.length} 天样本</span>
+              </div>
+
+              {#if chartValues.length > 0}
+                <div class="chart-wrap">
+                  <svg class="trend-svg" viewBox="0 0 800 180" role="img" aria-label="每日 Token 使用曲线">
+                    <defs>
+                      <linearGradient id="trendGradient" x1="0" x2="0" y1="0" y2="1">
+                        <stop offset="0%" stop-color="var(--brand-primary)" stop-opacity="0.32" />
+                        <stop offset="100%" stop-color="var(--brand-primary)" stop-opacity="0" />
+                      </linearGradient>
+                    </defs>
+                    {#each [30, 75, 120, 160] as y}
+                      <line x1="20" x2="780" y1={y} y2={y} stroke="var(--chart-grid)" stroke-dasharray="4 6" />
+                    {/each}
+                    {#if chartPoints.length > 1}
+                      <path
+                        d={`${chartPath} L ${chartPoints[chartPoints.length - 1].x} 165 L ${chartPoints[0].x} 165 Z`}
+                        fill="url(#trendGradient)"
+                      />
+                      <path
+                        d={chartPath}
+                        fill="none"
+                        stroke="var(--brand-primary)"
+                        stroke-width="2.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                      {#each chartPoints as point}
+                        <circle cx={point.x} cy={point.y} r="3.5" fill="var(--brand-primary)" />
+                      {/each}
+                    {/if}
+                  </svg>
+                  <div class="chart-axis-labels">
+                    <span>{chartValues[0]?.date ?? ''}</span>
+                    <span>{chartValues[chartValues.length - 1]?.date ?? ''}</span>
+                  </div>
+                </div>
+              {:else}
+                <div class="empty-box">当前时间范围暂无可绘制的用量记录</div>
+              {/if}
+            </section>
+
+            <section class="panel-card">
+              <div class="panel-head">
+                <div>
+                  <h2>工具用量分布</h2>
+                  <p>按工具归属汇总本机真实用量</p>
+                </div>
+                <button class="panel-tag" onclick={() => (activeTab = 'tools')}>查看明细 →</button>
+              </div>
+
+              {#if snapshot.by_tool.length > 0}
+                <div class="rank-list">
+                  {#each snapshot.by_tool.slice(0, 5) as tool, idx}
+                    <div class="rank-item">
+                      <div class="rank-row">
+                        <span class="rank-title">
+                          <span class="rank-num">0{idx + 1}</span>
+                          {tool.label}
+                        </span>
+                        <span class="rank-value tabular">{formatNumber(tool.total_tokens)}</span>
+                      </div>
+                      <div class="rank-track">
+                        <div class="rank-fill" style={`width: ${percentOf(tool.total_tokens, topToolTotal)}%`}></div>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <div class="empty-box">暂无工具消耗记录</div>
+              {/if}
+            </section>
+          </div>
+
+        <!-- TAB 2: MULTI-DEVICE (多设备网络) -->
+        {:else if activeTab === 'devices'}
+          <div class="page-header">
+            <h1>多设备网络</h1>
+            <p>基于自建私有 Hub 的去中心化同步状态；严格限定 device_local 物理单机归属</p>
+          </div>
+
+          <!-- Cross-device Summary -->
+          <div class="device-summary-strip">
+            <div class="summary-pill-card">
+              <span>全设备 Token 总计</span>
+              <strong class="tabular">{formatNumber((local?.total_tokens ?? 0) + snapshot.remote.total_tokens)}</strong>
+            </div>
+            <div class="summary-pill-card">
+              <span>本机设备用量</span>
+              <strong class="tabular">{formatNumber(local?.total_tokens)}</strong>
+            </div>
+            <div class="summary-pill-card">
+              <span>远端设备缓存</span>
+              <strong class="tabular">{formatNumber(snapshot.remote.total_tokens)}</strong>
+            </div>
+          </div>
+
+          <!-- Device Topology Matrix -->
+          <div class="panel-head">
+            <div>
+              <h2>设备拓扑与在线节点</h2>
+              <p>最近活跃代表最后一次访问 Hub 的时间戳；非持久心跳长连接</p>
+            </div>
+            <span class="panel-tag">{remoteDevices.length + 1} 台注册设备</span>
+          </div>
+
+          <div class="device-matrix-grid">
+            <!-- This Machine Card -->
+            <article class="device-matrix-card this-machine">
+              <div class="device-card-top">
+                <div class="device-avatar-wrap">
+                  <div class="device-os-icon">{@html icons.windows}</div>
+                  <div class="device-name-block">
+                    <strong>{snapshot.identity?.display_name ?? '本机设备'}</strong>
+                    <small>本机节点 · {snapshot.identity?.device_id ?? '未分配'}</small>
+                  </div>
+                </div>
+                <span class="precision-chip exact">THIS MACHINE</span>
+              </div>
+              <div class="device-token-total">
+                <span>本机 Token 消耗</span>
+                <strong class="tabular">{formatNumber(local?.total_tokens)}</strong>
+              </div>
+              <div class="metric-foot">
+                <span>时区：{snapshot.time_zone} · DB：v{snapshot.schema_version}</span>
+              </div>
+            </article>
+
+            <!-- Remote Devices Cards -->
+            {#each remoteDevices as dev}
+              {#if dev.device_id !== snapshot.identity?.device_id}
+                <article class="device-matrix-card">
+                  <div class="device-card-top">
+                    <div class="device-avatar-wrap">
+                      <div class="device-os-icon">
+                        {#if dev.os_name === 'macos'}
+                          {@html icons.macos}
+                        {:else if dev.os_name === 'linux'}
+                          {@html icons.linux}
+                        {:else}
+                          {@html icons.windows}
+                        {/if}
+                      </div>
+                      <div class="device-name-block">
+                        <strong>{dev.display_name}</strong>
+                        <small>{dev.device_id}</small>
+                      </div>
+                    </div>
+                    <span class="precision-chip quota">{dev.revoked_at_ms ? '已注销' : 'HUB CACHED'}</span>
+                  </div>
+                  <div class="device-token-total">
+                    <span>远端 Token 缓存</span>
+                    <strong class="tabular">
+                      {formatNumber(snapshot.remote_by_device.find((d) => d.owner_device_id === dev.device_id)?.total_tokens ?? 0)}
+                    </strong>
+                  </div>
+                  <div class="metric-foot">
+                    <span>{dev.os_name} · v{dev.app_version} · 上报：{relativeTime(dev.last_seen_ms)}</span>
+                  </div>
+                </article>
+              {/if}
+            {/each}
+          </div>
+
+          <!-- Single Device Drilldown -->
+          <section class="panel-card" style="margin-bottom: 24px;">
+            <div class="panel-head">
+              <div>
+                <h2>远端设备维度透视</h2>
+                <p>穿透查看指定远端设备的工具、模型与项目贡献分布</p>
+              </div>
+              <label class="field-label" style="flex-direction: row; align-items: center; gap: 8px;">
+                <span>选择设备：</span>
+                <select class="field-select" bind:value={remoteSelectedDevice}>
+                  <option value="all">全部远端设备汇总</option>
+                  {#each selectableRemoteDevices as d}
+                    <option value={d.device_id}>{d.display_name} ({d.device_id})</option>
+                  {/each}
+                </select>
+              </label>
+            </div>
+
+            <div class="two-col-grid" style="margin-bottom: 0;">
+              <div>
+                <h3 style="font-size: 12px; margin-top: 0; color: var(--text-secondary);">远端工具分布</h3>
+                {#if remoteToolRows.length > 0}
+                  <div class="rank-list">
+                    {#each remoteToolRows.slice(0, 6) as row}
+                      <div class="rank-item">
+                        <div class="rank-row">
+                          <span>{row.label}</span>
+                          <strong class="tabular">{formatNumber(row.total_tokens)}</strong>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {:else}
+                  <div class="empty-box">暂无远端工具记录</div>
+                {/if}
+              </div>
+
+              <div>
+                <h3 style="font-size: 12px; margin-top: 0; color: var(--text-secondary);">远端模型分布</h3>
+                {#if remoteModelRows.length > 0}
+                  <div class="rank-list">
+                    {#each remoteModelRows.slice(0, 6) as row}
+                      <div class="rank-item">
+                        <div class="rank-row">
+                          <span>{row.label}</span>
+                          <strong class="tabular">{formatNumber(row.total_tokens)}</strong>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {:else}
+                  <div class="empty-box">暂无远端模型记录</div>
+                {/if}
+              </div>
+            </div>
+          </section>
+
+          <!-- Hub Pairing Management -->
+          <section class="panel-card">
+            <div class="panel-head">
+              <div>
+                <h2>Hub 连接与设备配对</h2>
+                <p>凭证严格安全存储在操作系统原生安全密码库，SQLite 零残留</p>
+              </div>
+              <span class="precision-chip exact">KEYRING PROTECTED</span>
+            </div>
+
+            <div class="form-grid">
+              <label class="field-label">
+                <span>Hub 服务节点 (HTTPS 或 127.0.0.1)</span>
+                <input class="field-input" type="url" bind:value={hubUrl} placeholder="https://hub.example.com" />
+              </label>
+              <label class="field-label">
+                <span>一次性安全配对码 (52 位)</span>
+                <input class="field-input" type="password" bind:value={pairingCode} placeholder="粘贴由 Hub 生成的配对码" />
+              </label>
+              <label class="field-label">
+                <span>本机在 Hub 中的别名</span>
+                <input class="field-input" type="text" bind:value={hubDisplayName} placeholder="例如：办公室 Windows" />
+              </label>
+            </div>
+
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+              <button
+                class="btn-primary"
+                disabled={hubBusy || !hubUrl.trim() || !pairingCode.trim()}
+                onclick={() => void handlePairWithHub()}
+              >
+                {@html icons.shield} 配对此设备
+              </button>
+              <button class="btn-secondary" disabled={hubBusy || !hubUrl.trim()} onclick={() => void handleRefreshHubDevices()}>
+                {@html icons.refresh} 刷新设备列表
+              </button>
+              {#if hubPaired}
+                <button class="btn-secondary" disabled={hubBusy} onclick={() => void handleRenameHubDevice()}>
+                  {@html icons.edit} 重命名本机
+                </button>
+                <button class="btn-secondary" disabled={hubBusy} onclick={() => void handleRotateHubCredential()}>
+                  {@html icons.key} 轮换安全凭证
+                </button>
+                <button class="btn-danger" disabled={hubBusy} onclick={() => void handleDisconnectHub()}>
+                  {@html icons.unlink} 断开连接
+                </button>
+              {/if}
+            </div>
+
+            {#if hubError}
+              <p style="color: var(--color-danger); margin: 12px 0 0; font-size: 12px;">{hubError}</p>
+            {/if}
+            {#if hubSuccess}
+              <p style="color: var(--color-exact); margin: 12px 0 0; font-size: 12px;">{hubSuccess}</p>
+            {/if}
+          </section>
+
+        <!-- TAB 3: TOOLS ANALYSIS (工具分析) -->
+        {:else if activeTab === 'tools'}
+          <div class="page-header">
+            <h1>工具分析</h1>
+            <p>已接入 AI 工具的原生解析器监控、扫描健康状态与用量汇总</p>
+          </div>
+
+          <section class="panel-card" style="margin-bottom: 20px;">
+            <div class="panel-head">
+              <h2>工具用量详细矩阵</h2>
+              <span class="panel-tag">{snapshot.by_tool.length} 个本地来源</span>
+            </div>
+            {#if snapshot.by_tool.length > 0}
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>工具名称</th>
+                      <th>Token 总量</th>
+                      <th>有效记录数</th>
+                      <th>估算成本</th>
+                      <th>全机占比</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each snapshot.by_tool as tool}
+                      <tr>
+                        <td><strong>{tool.label}</strong></td>
+                        <td class="tabular">{formatNumber(tool.total_tokens)}</td>
+                        <td class="tabular">{formatNumber(tool.record_count)}</td>
+                        <td class="tabular">{formatCost(tool.estimated_cost_microusd)}</td>
+                        <td>
+                          <div class="rank-track" style="width: 100px;">
+                            <div class="rank-fill" style={`width: ${percentOf(tool.total_tokens, local?.total_tokens ?? 0)}%`}></div>
+                          </div>
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {:else}
+              <div class="empty-box">暂无工具统计记录</div>
+            {/if}
+          </section>
+
+          <!-- Collector Health -->
+          <section class="panel-card">
+            <div class="panel-head">
+              <h2>采集器健康度与检查点</h2>
+              <p>各工具最近扫描与完整事务写入时间戳</p>
+            </div>
+            {#if snapshot.source_health.length > 0}
+              <div class="form-grid">
+                {#each snapshot.source_health as source}
+                  <div class="metric-card">
+                    <div class="metric-head">
+                      <strong>{source.tool_id}</strong>
+                      <span class="precision-chip" class:exact={source.status === 'complete'} class:danger={source.status === 'degraded'}>
+                        {source.status === 'complete' ? '正常' : source.status === 'partial' ? '部分' : '异常'}
+                      </span>
+                    </div>
+                    <div style="margin-top: 8px; font-size: 11.5px; color: var(--text-secondary);">
+                      <div>最近扫描：{relativeTime(source.last_scan_ms)}</div>
+                      <div>完整扫描：{relativeTime(source.last_complete_scan_ms)}</div>
+                      <div>来源文件数：{source.source_count}</div>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <div class="empty-box">暂无来源检查点记录</div>
+            {/if}
+          </section>
+
+        <!-- TAB 4: MODELS ANALYSIS (模型分析) -->
+        {:else if activeTab === 'models'}
+          <div class="page-header">
+            <div style="display: flex; justify-content: space-between; align-items: flex-end;">
+              <div>
+                <h1>模型排行与用量分析</h1>
+                <p>严格遵循 Unicode NFC 规范化；真实来源未提供之模型不进行主观猜测</p>
+              </div>
+              <div class="range-capsule">
+                <button class="range-btn" class:selected={modelSortBy === 'tokens'} onclick={() => (modelSortBy = 'tokens')}>
+                  按 Token 排序
+                </button>
+                <button class="range-btn" class:selected={modelSortBy === 'cost'} onclick={() => (modelSortBy = 'cost')}>
+                  按 估算成本 排序
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <section class="panel-card">
+            {#if sortedModels.length > 0}
+              <div class="rank-list">
+                {#each sortedModels as item, index}
+                  <div class="rank-item" style="padding: 10px 0; border-bottom: 1px solid var(--border-subtle);">
+                    <div class="rank-row">
+                      <span class="rank-title">
+                        <span class="rank-num tabular">{String(index + 1).padStart(2, '0')}</span>
+                        <strong>{item.label}</strong>
+                      </span>
+                      <span class="rank-value tabular">
+                        {formatNumber(item.total_tokens)} Token
+                        <span style="font-size: 11px; color: var(--text-muted); margin-left: 8px;">
+                          ({formatCost(item.estimated_cost_microusd)})
+                        </span>
+                      </span>
+                    </div>
+                    <div class="rank-track">
+                      <div class="rank-fill" style={`width: ${percentOf(item.total_tokens, topModelTotal)}%`}></div>
+                    </div>
+                    <div class="metric-foot">
+                      <span>已记录 {formatNumber(item.record_count)} 轮会话调用事实</span>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <div class="empty-box">暂无模型记录</div>
+            {/if}
+          </section>
+
+        <!-- TAB 5: PROJECTS (项目分析) -->
+        {:else if activeTab === 'projects'}
+          <div class="page-header">
+            <h1>项目分析</h1>
+            <p>基于脱敏项目标识符归集；源码路径与仓库名留在本地，绝不上传</p>
+          </div>
+
+          <section class="panel-card">
+            {#if snapshot.by_project.length > 0}
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>项目脱敏标识 (Hash)</th>
+                      <th>Token 消耗量</th>
+                      <th>调用轮次</th>
+                      <th>全机份额</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each snapshot.by_project as prj}
+                      <tr>
+                        <td><code>{prj.label}</code></td>
+                        <td class="tabular">{formatNumber(prj.total_tokens)}</td>
+                        <td class="tabular">{formatNumber(prj.record_count)}</td>
+                        <td>
+                          <div class="rank-track" style="width: 120px;">
+                            <div class="rank-fill" style={`width: ${percentOf(prj.total_tokens, local?.total_tokens ?? 0)}%`}></div>
+                          </div>
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {:else}
+              <div class="empty-box">当前本地来源尚未解析出项目标识</div>
+            {/if}
+          </section>
+
+        <!-- TAB 6: ANTIGRAVITY QUOTA & ACTIVITY -->
+        {:else if activeTab === 'quota'}
+          <div class="page-header">
+            <h1>Antigravity 额度与活动</h1>
+            <p>本地 127.0.0.1 RPC 配额探针；额度百分比与响应次数绝非 Token 消耗</p>
+          </div>
+
+          <!-- Quota Snapshot Cards -->
+          <div class="panel-head">
+            <h2>实时配额快照</h2>
+            <span class="precision-chip quota">LOOPBACK RPC</span>
+          </div>
+
+          {#if snapshot.antigravity_quota.length > 0}
+            <div class="quota-grid">
+              {#each snapshot.antigravity_quota as q}
+                <article class="quota-item-card">
+                  <div class="quota-item-head">
+                    <span class="quota-pool-name">{q.pool_id.replaceAll('_', ' ')}</span>
+                    <span class="panel-tag">{q.window_id === 'five_hour' ? '5 小时周期' : '每周周期'}</span>
+                  </div>
+                  <div class="quota-gauge-val tabular">
+                    {formatPercent(q.remaining_basis_points)}
+                  </div>
+                  <div class="rank-track">
+                    <div
+                      class="rank-fill"
+                      style={`width: ${q.remaining_basis_points ? q.remaining_basis_points / 100 : 0}%; background-color: var(--color-quota);`}
+                    ></div>
+                  </div>
+                  <div class="quota-reset-countdown">
+                    {@html icons.quota}
+                    <span>{formatCountdown(q.reset_at_ms)}</span>
+                  </div>
+                </article>
+              {/each}
+            </div>
+          {:else}
+            <div class="empty-box" style="margin-bottom: 24px;">
+              暂无 Antigravity 配额快照。请确认 Antigravity IDE/CLI 正在运行。
+            </div>
+          {/if}
+
+          <!-- Model Activity Ledger -->
+          <section class="panel-card">
+            <div class="panel-head">
+              <div>
+                <h2>模型响应活动记账 (Turns)</h2>
+                <p>这是与模型交互的轮次次数，并非 Token 消耗，不计入总账单</p>
+              </div>
+              <span class="precision-chip exact">ACTIVITY LEDGER</span>
+            </div>
+
+            <div class="device-summary-strip">
+              <div class="summary-pill-card">
+                <span>已识别模型响应</span>
+                <strong class="tabular">{formatNumber(snapshot.antigravity_activity.known_turns)}</strong>
+              </div>
+              <div class="summary-pill-card">
+                <span>未识别响应</span>
+                <strong class="tabular">{formatNumber(snapshot.antigravity_activity.unknown_turns)}</strong>
+              </div>
+              <div class="summary-pill-card">
+                <span>完整会话数</span>
+                <strong class="tabular">{formatNumber(snapshot.antigravity_activity.conversations)}</strong>
+              </div>
+            </div>
+          </section>
+
+        <!-- TAB 7: SETTINGS (系统设置) -->
+        {:else if activeTab === 'settings'}
+          <div class="page-header">
+            <h1>系统设置与偏好</h1>
+            <p>控制系统常驻生命周期、主题外观与本地采集行为</p>
+          </div>
+
+          <!-- Theme Settings -->
+          <section class="panel-card" style="margin-bottom: 20px;">
+            <div class="panel-head">
+              <h2>界面主题外观</h2>
+              <span class="panel-tag">Linear Craft</span>
+            </div>
+            <div style="display: flex; gap: 12px;">
+              <button
+                class="btn-secondary"
+                class:selected={currentTheme === 'dark'}
+                onclick={() => handleSwitchTheme('dark')}
+              >
+                {@html icons.moon} 深色模式 (Obsidian)
+              </button>
+              <button
+                class="btn-secondary"
+                class:selected={currentTheme === 'light'}
+                onclick={() => handleSwitchTheme('light')}
+              >
+                {@html icons.sun} 浅色模式 (Soft Zinc)
+              </button>
+              <button
+                class="btn-secondary"
+                class:selected={currentTheme === 'system'}
+                onclick={() => handleSwitchTheme('system')}
+              >
+                {@html icons.laptop} 跟随操作系统
+              </button>
+            </div>
+          </section>
+
+          <!-- Autostart & Lifecycle -->
+          <section class="panel-card" style="margin-bottom: 20px;">
+            <div class="panel-head">
+              <div>
+                <h2>系统登录时自启动 (--background)</h2>
+                <p>遵循 ADR-0005 规范：启动后仅在系统托盘静默常驻，不创建 WebView，内存占用 ≤25 MiB</p>
+              </div>
+              <button
+                class="btn-primary"
+                disabled={autostartBusy || !runtimeAvailable}
+                onclick={() => void handleToggleAutostart()}
+              >
+                {autostartBusy ? '处理中…' : autostartEnabled ? '已启用 · 点击关闭' : '未启用 · 点击开启'}
+              </button>
+            </div>
+            {#if autostartError}
+              <p style="color: var(--color-danger); font-size: 12px;">{autostartError}</p>
+            {/if}
+          </section>
+
+          <!-- Supervisor Health Diagnostics -->
+          <section class="panel-card">
+            <div class="panel-head">
+              <h2>本地 Agent 守护进程诊断</h2>
+              <span class="precision-chip exact">{agent?.running ? 'RUNNING' : 'STOPPED'}</span>
+            </div>
+            <div style="font-size: 12.5px; line-height: 1.8; color: var(--text-secondary);">
+              <div>进程状态：<strong>{agent?.running ? '正常运行中' : '未连接'}</strong></div>
+              <div>二进制就绪：<strong>{agent?.binaryFound ? '已部署 (resources/tokenscope-agent)' : '未找到'}</strong></div>
+              <div>SQLite WAL 状态：<strong>{agent?.databaseReady ? '已就绪 (tokenscope.db)' : '初始化中'}</strong></div>
+              <div>桌面里程碑：<strong>{BOOTSTRAP_STAGE}</strong></div>
+            </div>
+          </section>
+        {/if}
+      {/if}
+    </section>
+  </main>
+</div>

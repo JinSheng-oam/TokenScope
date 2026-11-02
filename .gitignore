@@ -1,0 +1,48 @@
+# Rust
+/target/
+**/target/
+# Frontend
+**/node_modules/
+apps/desktop/dist/
+apps/desktop/.svelte-kit/
+apps/desktop/src-tauri/gen/
+# Go
+hub/bin/
+# Data and credentials
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!.env.example
+*.log
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+# Test/packaging
+coverage/
+*.dmg
+*.AppImage
+*.msi
+
+# Staged native Agent is embedded into the installer at build time
+apps/desktop/src-tauri/resources/tokenscope-agent*
+apps/desktop/src-tauri/resources/agent-build.json
+
+deploy/.env
+deploy/backups/
+*.tgz
+
+# 开发文档一律不上传到 GitHub
+docs/
+计划/
+设计基线/
+AGENTS.md
+DESIGN.md
+PRODUCT.md
+README_*.md
+

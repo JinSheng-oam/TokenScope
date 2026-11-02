@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/core-domain",
+  "crates/source-claude",
+  "crates/source-codex",
+  "crates/source-opencode",
+  "crates/source-antigravity",
+  "crates/collector-engine",
+  "crates/local-store",
+  "crates/sync-client",
+  "crates/local-ipc",
+  "crates/tokenscope-agent",
+]
+# Tauri shell is an independently built Cargo package due to OS WebView dependencies.
+exclude = ["apps/desktop/src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.90"

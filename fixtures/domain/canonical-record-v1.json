@@ -1,0 +1,27 @@
+{
+  "record": {
+    "record_id": "cb38507ac3893862a5f850a8ff8d8fdc43ee3ca0be04eb543c11de52f881121e",
+    "owner_device_id": "device-01",
+    "tool_id": "claude-code",
+    "scope": "device_local",
+    "precision": "exact",
+    "account_id": "acct_a1a43d774c45b218e191896619cf2becd7a3e74d93f652ab767dafe1d6cacc0a",
+    "model_id": "claude-sonnet",
+    "project_id": "prj_f32fd0c89e2e767ad8d5e4e5461cc00493fc2a28aa4134cd9ab70f0e6f0a03dc",
+    "session_id": "sess_6a0ffe02620953c91fbed4ecac6011a10117dab2e1446d167c96f02a150c6600",
+    "event_at_ms": 1700000000000,
+    "usage": {
+      "input_uncached_tokens": 100,
+      "cache_read_tokens": 20,
+      "cache_write_tokens": 10,
+      "output_tokens": 50,
+      "unclassified_tokens": 0,
+      "reasoning_tokens": 15
+    },
+    "estimated_cost_microusd": 125,
+    "price_version": "2026-11",
+    "is_deleted": false
+  },
+  "record_revision": 1,
+  "payload_hash": "fa0328d10329d3ab4757f41159b91a6dd162e7ebde8f9b2526e8d99af4299897"
+}

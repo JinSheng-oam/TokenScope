@@ -2,11 +2,17 @@
 //! opens SQLite in read-only mode; the desktop never queries the database.
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
-use std::{path::Path, str::FromStr, time::{SystemTime, UNIX_EPOCH}};
-use tokenscope_local_store::{DashboardSnapshot, LocalStore};
+use std::{
+    path::Path,
+    str::FromStr,
+    time::{SystemTime, UNIX_EPOCH},
+};
+use tokenscope_local_store::{DashboardQuery, DashboardSnapshot, LocalStore};
 
 fn now_ms() -> Result<i64, Box<dyn std::error::Error>> {
-    Ok(i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?)
+    Ok(i64::try_from(
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
+    )?)
 }
 
 fn local_midnight(date: NaiveDate, zone: Tz) -> Result<i64, Box<dyn std::error::Error>> {
@@ -30,13 +36,20 @@ fn local_midnight(date: NaiveDate, zone: Tz) -> Result<i64, Box<dyn std::error::
     }
 }
 
-pub fn read_snapshot(path: &Path, range: &str) -> Result<DashboardSnapshot, Box<dyn std::error::Error>> {
+pub fn read_snapshot(
+    path: &Path,
+    range: &str,
+    session_offset: u64,
+) -> Result<DashboardSnapshot, Box<dyn std::error::Error>> {
     if !["today", "7d", "30d", "all"].contains(&range) {
         return Err("range must be today, 7d, 30d or all".into());
     }
     let store = LocalStore::open_readonly(path)?;
     let identity = store.identity()?;
-    let requested_zone = identity.as_ref().map(|v| v.time_zone.as_str()).unwrap_or("UTC");
+    let requested_zone = identity
+        .as_ref()
+        .map(|v| v.time_zone.as_str())
+        .unwrap_or("UTC");
     let parsed_zone = Tz::from_str(requested_zone);
     let zone_valid = parsed_zone.is_ok();
     let zone = parsed_zone.unwrap_or(chrono_tz::UTC);
@@ -51,8 +64,16 @@ pub fn read_snapshot(path: &Path, range: &str) -> Result<DashboardSnapshot, Box<
         _ => unreachable!(),
     };
     let range_start_date = today - Duration::days(days_back);
-    let from_ms = if range == "all" { None } else { Some(local_midnight(range_start_date, zone)?) };
-    let to_ms = if range == "all" { None } else { Some(now.saturating_add(1)) };
+    let from_ms = if range == "all" {
+        None
+    } else {
+        Some(local_midnight(range_start_date, zone)?)
+    };
+    let to_ms = if range == "all" {
+        None
+    } else {
+        Some(now.saturating_add(1))
+    };
 
     // The trend follows the selected range, except `all` which remains bounded
     // to 30 days. Each boundary is resolved independently so DST transitions
@@ -66,7 +87,9 @@ pub fn read_snapshot(path: &Path, range: &str) -> Result<DashboardSnapshot, Box<
     let mut daily_ranges = Vec::with_capacity(30);
     for offset in 0..30 {
         let date = chart_start + Duration::days(offset);
-        if date > today { break; }
+        if date > today {
+            break;
+        }
         let start = local_midnight(date, zone)?;
         let next = local_midnight(date + Duration::days(1), zone)?;
         let end = next.min(now.saturating_add(1));
@@ -75,10 +98,21 @@ pub fn read_snapshot(path: &Path, range: &str) -> Result<DashboardSnapshot, Box<
         }
     }
 
-    let zone_name = if zone_valid { requested_zone.to_string() } else { "UTC".into() };
-    Ok(store.dashboard_snapshot(
-        range, from_ms, to_ms, &daily_ranges, now, zone_name, zone_valid,
-    )?)
+    let zone_name = if zone_valid {
+        requested_zone.to_string()
+    } else {
+        "UTC".into()
+    };
+    Ok(store.dashboard_snapshot(DashboardQuery {
+        range,
+        from_ms,
+        to_ms,
+        daily_ranges: &daily_ranges,
+        generated_at_ms: now,
+        time_zone: zone_name,
+        time_zone_valid: zone_valid,
+        session_offset,
+    })?)
 }
 
 #[cfg(test)]
@@ -87,7 +121,7 @@ mod tests {
 
     #[test]
     fn range_is_strictly_allowlisted() {
-        assert!(read_snapshot(Path::new("/path/does/not/exist"), "../../etc/passwd").is_err());
+        assert!(read_snapshot(Path::new("/path/does/not/exist"), "../../etc/passwd", 0).is_err());
     }
 
     #[test]

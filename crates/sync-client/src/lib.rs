@@ -7,8 +7,8 @@
 pub mod client;
 pub mod credentials;
 pub mod pairing;
-pub mod url;
 pub mod sync;
+pub mod url;
 pub mod worker;
 
 pub use client::{HubClient, HubClientError};

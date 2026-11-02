@@ -24,7 +24,9 @@ fn to_lower_hex(data: &[u8]) -> String {
 }
 
 pub(crate) fn valid_lower_hex(s: &str) -> bool {
-    s.len() == 64 && s.bytes().all(|x| x.is_ascii_hexdigit() && !x.is_ascii_uppercase())
+    s.len() == 64
+        && s.bytes()
+            .all(|x| x.is_ascii_hexdigit() && !x.is_ascii_uppercase())
 }
 
 pub(crate) fn valid_tool_id(id: &str) -> bool {
@@ -32,7 +34,9 @@ pub(crate) fn valid_tool_id(id: &str) -> bool {
     !bytes.is_empty()
         && bytes.len() <= 64
         && bytes[0].is_ascii_lowercase()
-        && bytes.iter().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
 }
 
 fn update_part(hasher: &mut Sha256, bytes: &[u8], name: &'static str) -> Result<(), DomainError> {
@@ -75,23 +79,46 @@ pub fn stable_record_id(
     canonical_source_identity: &[u8],
     native_record_identity: &[u8],
 ) -> Result<String, DomainError> {
-    opaque_id(RECORD_DOMAIN, "", tool_id, &[
-        ("source_identity", canonical_source_identity),
-        ("native_record_identity", native_record_identity),
-    ])
+    opaque_id(
+        RECORD_DOMAIN,
+        "",
+        tool_id,
+        &[
+            ("source_identity", canonical_source_identity),
+            ("native_record_identity", native_record_identity),
+        ],
+    )
 }
 
 /// Opaque hashed account identifier. Never persist raw email/cookie/API keys.
 pub fn account_key(tool_id: &str, stable_native_account_id: &[u8]) -> Result<String, DomainError> {
-    opaque_id(ACCOUNT_DOMAIN, "acct_", tool_id, &[("account_identity", stable_native_account_id)])
+    opaque_id(
+        ACCOUNT_DOMAIN,
+        "acct_",
+        tool_id,
+        &[("account_identity", stable_native_account_id)],
+    )
 }
 
 /// Opaque hashed project identifier. Raw absolute paths never leave the adapter.
-pub fn project_key(tool_id: &str, canonical_project_identity: &[u8]) -> Result<String, DomainError> {
-    opaque_id(PROJECT_DOMAIN, "prj_", tool_id, &[("project_identity", canonical_project_identity)])
+pub fn project_key(
+    tool_id: &str,
+    canonical_project_identity: &[u8],
+) -> Result<String, DomainError> {
+    opaque_id(
+        PROJECT_DOMAIN,
+        "prj_",
+        tool_id,
+        &[("project_identity", canonical_project_identity)],
+    )
 }
 
 /// Opaque hashed session identifier; a session can contain private metadata.
 pub fn session_key(tool_id: &str, stable_native_session_id: &[u8]) -> Result<String, DomainError> {
-    opaque_id(SESSION_DOMAIN, "sess_", tool_id, &[("session_identity", stable_native_session_id)])
+    opaque_id(
+        SESSION_DOMAIN,
+        "sess_",
+        tool_id,
+        &[("session_identity", stable_native_session_id)],
+    )
 }

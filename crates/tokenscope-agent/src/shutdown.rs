@@ -3,7 +3,9 @@ use std::{fs, path::Path};
 
 /// Consume a shutdown marker exactly once. Missing paths are normal for CLI use.
 pub fn consume(path: Option<&Path>) -> bool {
-    let Some(path) = path else { return false; };
+    let Some(path) = path else {
+        return false;
+    };
     match fs::remove_file(path) {
         Ok(()) => true,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
@@ -14,17 +16,26 @@ pub fn consume(path: Option<&Path>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::consume;
-    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn temp_path() -> PathBuf {
-        let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let n = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         std::env::temp_dir().join(format!("tokenscope-shutdown-{n}.signal"))
     }
 
     #[test]
     fn missing_marker_is_not_a_shutdown_request() {
         assert!(!consume(None));
-        assert!(!consume(Some(std::path::Path::new("/definitely/not/a/tokenscope-marker"))));
+        assert!(!consume(Some(std::path::Path::new(
+            "/definitely/not/a/tokenscope-marker"
+        ))));
     }
 
     #[test]

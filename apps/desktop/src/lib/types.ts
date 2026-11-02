@@ -23,6 +23,44 @@ export type UsageBreakdown = {
   total_tokens: number;
   record_count: number;
   estimated_cost_microusd: number | null;
+  exact_records: number;
+  aggregate_records: number;
+  estimated_records: number;
+  unknown_precision_records: number;
+  untimed_records: number;
+};
+
+export type CodexQuota = {
+  source_id: string;
+  pool_id: string;
+  window_duration_minutes: number;
+  remaining_basis_points: number | null;
+  reset_at_ms: number | null;
+  observed_at_ms: number;
+};
+
+export type ModelActivityBreakdown = {
+  tool_id: string;
+  model_id: string;
+  response_count: number;
+  time_scope: 'selected_range' | 'all_time';
+};
+
+export type SessionUsage = {
+  session_id: string;
+  tool_id: string;
+  total_tokens: number;
+  usage_record_count: number;
+  exact_records: number;
+  aggregate_records: number;
+  estimated_records: number;
+  unknown_precision_records: number;
+  untimed_records: number;
+  model_count: number;
+  known_response_count: number | null;
+  unknown_response_count: number | null;
+  last_event_at_ms: number | null;
+  activity_observed_at_ms: number | null;
 };
 
 export type RemoteUsageBreakdown = {
@@ -57,7 +95,14 @@ export type DashboardSnapshot = {
   account_global: UsageTotals;
   by_tool: UsageBreakdown[];
   by_model: UsageBreakdown[];
+  model_activity: ModelActivityBreakdown[];
   by_project: UsageBreakdown[];
+  session_usage: {
+    sessions: SessionUsage[];
+    total: number;
+    offset: number;
+    limit: number;
+  };
   daily: { date: string; total_tokens: number; input_tokens: number; output_tokens: number }[];
   source_health: {
     tool_id: string;
@@ -74,6 +119,7 @@ export type DashboardSnapshot = {
     reset_at_ms: number | null;
     observed_at_ms: number;
   }[];
+  codex_quota: CodexQuota[];
   antigravity_activity: {
     known_turns: number;
     unknown_turns: number;

@@ -2,14 +2,21 @@ use std::{fmt, io::Read, time::Duration};
 
 use reqwest::{
     blocking::{Client, Response},
-    header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue},
+    header::{HeaderValue, AUTHORIZATION, CONTENT_TYPE},
     redirect::Policy,
     Method, StatusCode,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use crate::{pairing::{DeviceListResponse, DeviceToken, PairRequest, PairResponse, RenameDeviceResponse, RotateTokenResponse, PROTOCOL_VERSION}, sync::UsageChangesResponse, url::HubUrl};
+use crate::{
+    pairing::{
+        DeviceListResponse, DeviceToken, PairRequest, PairResponse, RenameDeviceResponse,
+        RotateTokenResponse, PROTOCOL_VERSION,
+    },
+    sync::UsageChangesResponse,
+    url::HubUrl,
+};
 
 const MAX_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
 
@@ -78,7 +85,11 @@ impl HubClient {
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(15))
             .pool_max_idle_per_host(0)
-            .user_agent(concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!(
+                env!("CARGO_PKG_NAME"),
+                "/",
+                env!("CARGO_PKG_VERSION")
+            ))
             .build()
             .map_err(|_| HubClientError::Transport)?;
         Ok(Self { base, http })
@@ -88,14 +99,21 @@ impl HubClient {
     /// after the Hub has consumed the one-time code and committed registration.
     pub fn pair(&self, request: &PairRequest) -> Result<PairResponse, HubClientError> {
         request.validate().map_err(HubClientError::InvalidRequest)?;
-        let response = self.send_json::<_, PairResponse>(Method::POST, "/api/v1/pair", Some(request), None)
+        let response = self
+            .send_json::<_, PairResponse>(Method::POST, "/api/v1/pair", Some(request), None)
             .map_err(|error| match error {
                 HubClientError::Unauthorized => HubClientError::PairingCodeInvalid,
-                HubClientError::Transport | HubClientError::ResponseTooLarge | HubClientError::InvalidResponse => HubClientError::PairOutcomeUnknown,
+                HubClientError::Transport
+                | HubClientError::ResponseTooLarge
+                | HubClientError::InvalidResponse => HubClientError::PairOutcomeUnknown,
                 other => other,
             })?;
-        if response.protocol_version != PROTOCOL_VERSION { return Err(HubClientError::ProtocolMismatch); }
-        response.validate().map_err(HubClientError::InvalidRequest)?;
+        if response.protocol_version != PROTOCOL_VERSION {
+            return Err(HubClientError::ProtocolMismatch);
+        }
+        response
+            .validate()
+            .map_err(HubClientError::InvalidRequest)?;
         if response.device_id != request.device_id {
             return Err(HubClientError::ProtocolMismatch);
         }
@@ -103,35 +121,68 @@ impl HubClient {
     }
 
     pub fn list_devices(&self, token: &DeviceToken) -> Result<DeviceListResponse, HubClientError> {
-        let response = self.send_json::<(), DeviceListResponse>(Method::GET, "/api/v1/devices", None, Some(token))?;
+        let response = self.send_json::<(), DeviceListResponse>(
+            Method::GET,
+            "/api/v1/devices",
+            None,
+            Some(token),
+        )?;
         response.validate()?;
         Ok(response)
     }
 
-    pub fn pull_usage_changes(&self, token:&DeviceToken, cursor:u64, limit:usize) -> Result<UsageChangesResponse,HubClientError> {
-        if limit==0 || limit>500 { return Err(HubClientError::InvalidRequest("pull_limit")); }
-        let path=format!("/api/v1/usage/changes?cursor={cursor}&limit={limit}");
-        let response:UsageChangesResponse=self.send_json::<(),_>(Method::GET,&path,None,Some(token))?;
-        response.validate(cursor,limit)?;
+    pub fn pull_usage_changes(
+        &self,
+        token: &DeviceToken,
+        cursor: u64,
+        limit: usize,
+    ) -> Result<UsageChangesResponse, HubClientError> {
+        if limit == 0 || limit > 500 {
+            return Err(HubClientError::InvalidRequest("pull_limit"));
+        }
+        let path = format!("/api/v1/usage/changes?cursor={cursor}&limit={limit}");
+        let response: UsageChangesResponse =
+            self.send_json::<(), _>(Method::GET, &path, None, Some(token))?;
+        response.validate(cursor, limit)?;
         Ok(response)
     }
 
-    pub fn rename_self(&self, token: &DeviceToken, display_name: &str) -> Result<RenameDeviceResponse, HubClientError> {
+    pub fn rename_self(
+        &self,
+        token: &DeviceToken,
+        display_name: &str,
+    ) -> Result<RenameDeviceResponse, HubClientError> {
         #[derive(Serialize)]
-        struct Request<'a> { display_name: &'a str }
+        struct Request<'a> {
+            display_name: &'a str,
+        }
         let name = display_name.trim();
         if name.is_empty() || name.chars().count() > 64 || name.chars().any(char::is_control) {
             return Err(HubClientError::InvalidRequest("display_name"));
         }
-        let response: RenameDeviceResponse = self.send_json(Method::PATCH, "/api/v1/devices/self", Some(&Request { display_name: name }), Some(token))?;
+        let response: RenameDeviceResponse = self.send_json(
+            Method::PATCH,
+            "/api/v1/devices/self",
+            Some(&Request { display_name: name }),
+            Some(token),
+        )?;
         response.validate()?;
         Ok(response)
     }
 
-    pub fn rotate_self_token(&self, token: &DeviceToken, expected_device_id: &str) -> Result<RotateTokenResponse, HubClientError> {
+    pub fn rotate_self_token(
+        &self,
+        token: &DeviceToken,
+        expected_device_id: &str,
+    ) -> Result<RotateTokenResponse, HubClientError> {
         #[derive(Serialize)]
         struct EmptyRequest {}
-        let response = self.send_json::<EmptyRequest, RotateTokenResponse>(Method::POST, "/api/v1/devices/self/rotate-token", Some(&EmptyRequest {}), Some(token))?;
+        let response = self.send_json::<EmptyRequest, RotateTokenResponse>(
+            Method::POST,
+            "/api/v1/devices/self/rotate-token",
+            Some(&EmptyRequest {}),
+            Some(token),
+        )?;
         response.validate()?;
         if response.device_id != expected_device_id {
             return Err(HubClientError::ProtocolMismatch);
@@ -157,7 +208,8 @@ impl HubClient {
         }
         if let Some(token) = token {
             let header = Zeroizing::new(format!("Bearer {}", token.expose_for_authorization()));
-            let value = HeaderValue::from_str(header.as_str()).map_err(|_| HubClientError::InvalidRequest("device_token"))?;
+            let value = HeaderValue::from_str(header.as_str())
+                .map_err(|_| HubClientError::InvalidRequest("device_token"))?;
             request = request.header(AUTHORIZATION, value);
         }
         let response = request.send().map_err(|_| HubClientError::Transport)?;
@@ -166,17 +218,24 @@ impl HubClient {
         if !status.is_success() {
             return Err(map_status(status, &bytes));
         }
-        let decoded: R = serde_json::from_slice(&bytes).map_err(|_| HubClientError::InvalidResponse)?;
+        let decoded: R =
+            serde_json::from_slice(&bytes).map_err(|_| HubClientError::InvalidResponse)?;
         Ok(decoded)
     }
 }
 
 fn read_bounded(response: Response) -> Result<Vec<u8>, HubClientError> {
-    if response.content_length().is_some_and(|length| length > MAX_RESPONSE_BYTES) {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_RESPONSE_BYTES)
+    {
         return Err(HubClientError::ResponseTooLarge);
     }
     let mut bytes = Vec::new();
-    response.take(MAX_RESPONSE_BYTES + 1).read_to_end(&mut bytes).map_err(|_| HubClientError::Transport)?;
+    response
+        .take(MAX_RESPONSE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| HubClientError::Transport)?;
     if bytes.len() as u64 > MAX_RESPONSE_BYTES {
         return Err(HubClientError::ResponseTooLarge);
     }
@@ -188,31 +247,59 @@ struct ErrorEnvelope {
     error: ErrorCode,
 }
 #[derive(Deserialize)]
-struct ErrorCode { code: String }
+struct ErrorCode {
+    code: String,
+}
 
 fn map_status(status: StatusCode, body: &[u8]) -> HubClientError {
-    let code = serde_json::from_slice::<ErrorEnvelope>(body).ok().map(|e| e.error.code);
+    let code = serde_json::from_slice::<ErrorEnvelope>(body)
+        .ok()
+        .map(|e| e.error.code);
     match status.as_u16() {
-        401 if matches!(code.as_deref(), Some("device_auth_required" | "device_credential_invalid" | "pairing_code_invalid_or_expired")) => HubClientError::Unauthorized,
+        401 if matches!(
+            code.as_deref(),
+            Some(
+                "device_auth_required"
+                    | "device_credential_invalid"
+                    | "pairing_code_invalid_or_expired"
+            )
+        ) =>
+        {
+            HubClientError::Unauthorized
+        }
         403 if matches!(code.as_deref(), Some("device_revoked")) => HubClientError::DeviceRevoked,
-        409 if matches!(code.as_deref(), Some("device_already_registered")) => HubClientError::DeviceAlreadyRegistered,
+        409 if matches!(code.as_deref(), Some("device_already_registered")) => {
+            HubClientError::DeviceAlreadyRegistered
+        }
         404 => HubClientError::NotFound,
         429 => HubClientError::RateLimited,
-        502 | 503 | 504 => HubClientError::ServerUnavailable,
+        502..=504 => HubClientError::ServerUnavailable,
         value => HubClientError::ServerRejected(value),
     }
 }
 
 pub fn ensure_protocol_version(version: u32) -> Result<(), HubClientError> {
-    if version == PROTOCOL_VERSION { Ok(()) } else { Err(HubClientError::ProtocolMismatch) }
+    if version == PROTOCOL_VERSION {
+        Ok(())
+    } else {
+        Err(HubClientError::ProtocolMismatch)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{io::{Read, Write}, net::TcpListener, thread};
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+    };
 
-    fn mock_server(status: &'static str, body: &'static str, capture: Option<std::sync::mpsc::Sender<String>>) -> String {
+    fn mock_server(
+        status: &'static str,
+        body: &'static str,
+        capture: Option<std::sync::mpsc::Sender<String>>,
+    ) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         thread::spawn(move || {
@@ -223,20 +310,29 @@ mod tests {
                 let mut expected = 0usize;
                 loop {
                     let n = stream.read(&mut buffer).unwrap_or(0);
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                     request.extend_from_slice(&buffer[..n]);
                     if header_end.is_none() {
                         if let Some(pos) = request.windows(4).position(|w| w == b"\r\n\r\n") {
                             header_end = Some(pos + 4);
                             let headers = String::from_utf8_lossy(&request[..pos]);
-                            expected = headers.lines().find_map(|line| {
-                                let (key, value) = line.split_once(':')?;
-                                key.eq_ignore_ascii_case("content-length").then(|| value.trim().parse::<usize>().ok()).flatten()
-                            }).unwrap_or(0);
+                            expected = headers
+                                .lines()
+                                .find_map(|line| {
+                                    let (key, value) = line.split_once(':')?;
+                                    key.eq_ignore_ascii_case("content-length")
+                                        .then(|| value.trim().parse::<usize>().ok())
+                                        .flatten()
+                                })
+                                .unwrap_or(0);
                         }
                     }
                     if let Some(end) = header_end {
-                        if request.len() >= end + expected { break; }
+                        if request.len() >= end + expected {
+                            break;
+                        }
                     }
                 }
                 if let Some(sender) = capture {
@@ -252,11 +348,19 @@ mod tests {
     #[test]
     fn pairing_posts_once_and_returns_validated_token() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let address = mock_server("201 Created", r#"{"protocol_version":1,"device_id":"office-pc-01","device_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","created_at_ms":10}"#, Some(tx));
+        let address = mock_server(
+            "201 Created",
+            r#"{"protocol_version":1,"device_id":"office-pc-01","device_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","created_at_ms":10}"#,
+            Some(tx),
+        );
         let client = HubClient::new(HubUrl::parse(&address).unwrap()).unwrap();
         let request = PairRequest {
-            pairing_code: "A".repeat(52), device_id: "office-pc-01".into(), display_name: "Office PC".into(),
-            os_name: "linux".into(), app_version: "0.1.0".into(), time_zone: "UTC".into(),
+            pairing_code: "A".repeat(52),
+            device_id: "office-pc-01".into(),
+            display_name: "Office PC".into(),
+            os_name: "linux".into(),
+            app_version: "0.1.0".into(),
+            time_zone: "UTC".into(),
         };
         let response = client.pair(&request).unwrap();
         assert_eq!(response.device_id, request.device_id);
@@ -267,10 +371,17 @@ mod tests {
 
     #[test]
     fn revoked_and_expired_credentials_are_mapped_without_echoing_body() {
-        let address = mock_server("403 Forbidden", r#"{"error":{"code":"device_revoked"}}"#, None);
+        let address = mock_server(
+            "403 Forbidden",
+            r#"{"error":{"code":"device_revoked"}}"#,
+            None,
+        );
         let client = HubClient::new(HubUrl::parse(&address).unwrap()).unwrap();
         let token = DeviceToken::new("A".repeat(43)).unwrap();
-        assert_eq!(client.list_devices(&token).unwrap_err(), HubClientError::DeviceRevoked);
+        assert_eq!(
+            client.list_devices(&token).unwrap_err(),
+            HubClientError::DeviceRevoked
+        );
     }
 
     #[test]
@@ -278,12 +389,19 @@ mod tests {
         let address = mock_server("302 Found", r#"{"error":{"code":"redirect"}}"#, None);
         let client = HubClient::new(HubUrl::parse(&address).unwrap()).unwrap();
         let token = DeviceToken::new("A".repeat(43)).unwrap();
-        assert!(matches!(client.list_devices(&token), Err(HubClientError::ServerRejected(302))));
+        assert!(matches!(
+            client.list_devices(&token),
+            Err(HubClientError::ServerRejected(302))
+        ));
     }
 
     #[test]
     fn response_body_is_not_used_as_an_error_message() {
-        let address = mock_server("401 Unauthorized", r#"{"error":{"code":"device_credential_invalid"},"secret":"DO_NOT_ECHO"}"#, None);
+        let address = mock_server(
+            "401 Unauthorized",
+            r#"{"error":{"code":"device_credential_invalid"},"secret":"DO_NOT_ECHO"}"#,
+            None,
+        );
         let client = HubClient::new(HubUrl::parse(&address).unwrap()).unwrap();
         let token = DeviceToken::new("A".repeat(43)).unwrap();
         let error = client.list_devices(&token).unwrap_err();
@@ -293,26 +411,43 @@ mod tests {
 
     #[test]
     fn pairing_rejection_is_reported_as_invalid_code() {
-        let address = mock_server("401 Unauthorized", r#"{"error":{"code":"pairing_code_invalid_or_expired"}}"#, None);
+        let address = mock_server(
+            "401 Unauthorized",
+            r#"{"error":{"code":"pairing_code_invalid_or_expired"}}"#,
+            None,
+        );
         let client = HubClient::new(HubUrl::parse(&address).unwrap()).unwrap();
         let request = PairRequest {
-            pairing_code: "A".repeat(52), device_id: "office-pc-01".into(), display_name: "Office PC".into(),
-            os_name: "linux".into(), app_version: "0.1.0".into(), time_zone: "UTC".into(),
+            pairing_code: "A".repeat(52),
+            device_id: "office-pc-01".into(),
+            display_name: "Office PC".into(),
+            os_name: "linux".into(),
+            app_version: "0.1.0".into(),
+            time_zone: "UTC".into(),
         };
-        assert_eq!(client.pair(&request).unwrap_err(), HubClientError::PairingCodeInvalid);
+        assert_eq!(
+            client.pair(&request).unwrap_err(),
+            HubClientError::PairingCodeInvalid
+        );
     }
 
     #[test]
     fn list_devices_sends_bearer_token_and_validates_payload() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let address = mock_server("200 OK", r#"{"protocol_version":1,"devices":[{"device_id":"office-pc-01","display_name":"Office PC","os_name":"windows","app_version":"0.1.0","time_zone":"UTC","created_at_ms":1,"last_seen_ms":2,"revoked_at_ms":null}]}"#, Some(tx));
+        let address = mock_server(
+            "200 OK",
+            r#"{"protocol_version":1,"devices":[{"device_id":"office-pc-01","display_name":"Office PC","os_name":"windows","app_version":"0.1.0","time_zone":"UTC","created_at_ms":1,"last_seen_ms":2,"revoked_at_ms":null}]}"#,
+            Some(tx),
+        );
         let client = HubClient::new(HubUrl::parse(&address).unwrap()).unwrap();
         let token = DeviceToken::new("Z".repeat(43)).unwrap();
         let response = client.list_devices(&token).unwrap();
         assert_eq!(response.devices.len(), 1);
         let wire = rx.recv().unwrap();
         assert!(wire.starts_with("GET /api/v1/devices HTTP/1.1"));
-        assert!(wire.to_ascii_lowercase().contains(&format!("authorization: bearer {}", "Z".repeat(43)).to_ascii_lowercase()));
+        assert!(wire
+            .to_ascii_lowercase()
+            .contains(&format!("authorization: bearer {}", "Z".repeat(43)).to_ascii_lowercase()));
     }
 
     #[test]
@@ -320,13 +455,20 @@ mod tests {
         let address = mock_server("200 OK", r#"{"protocol_version":2,"devices":[]}"#, None);
         let client = HubClient::new(HubUrl::parse(&address).unwrap()).unwrap();
         let token = DeviceToken::new("Z".repeat(43)).unwrap();
-        assert_eq!(client.list_devices(&token).unwrap_err(), HubClientError::ProtocolMismatch);
+        assert_eq!(
+            client.list_devices(&token).unwrap_err(),
+            HubClientError::ProtocolMismatch
+        );
     }
 
     #[test]
     fn rename_self_posts_only_display_name_and_returns_safe_result() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let address = mock_server("200 OK", r#"{"protocol_version":1,"device_id":"office-pc-01","display_name":"New Office"}"#, Some(tx));
+        let address = mock_server(
+            "200 OK",
+            r#"{"protocol_version":1,"device_id":"office-pc-01","display_name":"New Office"}"#,
+            Some(tx),
+        );
         let client = HubClient::new(HubUrl::parse(&address).unwrap()).unwrap();
         let token = DeviceToken::new("Z".repeat(43)).unwrap();
         let response = client.rename_self(&token, " New Office ").unwrap();
@@ -339,7 +481,11 @@ mod tests {
     #[test]
     fn rotate_self_token_posts_empty_object_and_redacts_returned_token() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let address = mock_server("200 OK", r#"{"protocol_version":1,"device_id":"office-pc-01","device_token":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","created_at_ms":20}"#, Some(tx));
+        let address = mock_server(
+            "200 OK",
+            r#"{"protocol_version":1,"device_id":"office-pc-01","device_token":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","created_at_ms":20}"#,
+            Some(tx),
+        );
         let client = HubClient::new(HubUrl::parse(&address).unwrap()).unwrap();
         let token = DeviceToken::new("Z".repeat(43)).unwrap();
         let response = client.rotate_self_token(&token, "office-pc-01").unwrap();
@@ -356,7 +502,9 @@ mod tests {
         let address = mock_server("200 OK", body, None);
         let client = HubClient::new(HubUrl::parse(&address).unwrap()).unwrap();
         let token = DeviceToken::new("Z".repeat(43)).unwrap();
-        assert_eq!(client.list_devices(&token).unwrap_err(), HubClientError::ResponseTooLarge);
+        assert_eq!(
+            client.list_devices(&token).unwrap_err(),
+            HubClientError::ResponseTooLarge
+        );
     }
-
 }

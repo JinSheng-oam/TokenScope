@@ -76,8 +76,13 @@ impl PairRequest {
         if !valid_version {
             return Err("app_version");
         }
-        if self.time_zone.is_empty() || self.time_zone.len() > 64
-            || !self.time_zone.bytes().all(|b| b.is_ascii_alphanumeric() || b"/_+-".contains(&b)) {
+        if self.time_zone.is_empty()
+            || self.time_zone.len() > 64
+            || !self
+                .time_zone
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"/_+-".contains(&b))
+        {
             return Err("time_zone");
         }
         Ok(())
@@ -117,7 +122,6 @@ impl DeviceToken {
     pub(crate) fn expose_for_authorization(&self) -> &str {
         &self.0
     }
-
 }
 
 impl Drop for DeviceToken {
@@ -185,13 +189,23 @@ pub struct RotateTokenResponse {
 
 impl RotateTokenResponse {
     pub fn validate(&self) -> Result<(), HubClientError> {
-        if self.protocol_version != PROTOCOL_VERSION { return Err(HubClientError::ProtocolMismatch); }
-        if self.device_id.len() < 8 || self.device_id.len() > 128 || self.created_at_ms < 0
+        if self.protocol_version != PROTOCOL_VERSION {
+            return Err(HubClientError::ProtocolMismatch);
+        }
+        if self.device_id.len() < 8
+            || self.device_id.len() > 128
+            || self.created_at_ms < 0
             || !self.device_id.as_bytes()[0].is_ascii_alphanumeric()
-            || !self.device_id.bytes().all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)) {
+            || !self
+                .device_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+        {
             return Err(HubClientError::InvalidResponse);
         }
-        self.device_token.validate().map_err(HubClientError::InvalidRequest)
+        self.device_token
+            .validate()
+            .map_err(HubClientError::InvalidRequest)
     }
 }
 
@@ -223,17 +237,47 @@ impl DeviceSummary {
     pub fn validate(&self) -> Result<(), &'static str> {
         let valid_device_id = (8..=128).contains(&self.device_id.len())
             && self.device_id.as_bytes()[0].is_ascii_alphanumeric()
-            && self.device_id.bytes().all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b));
-        if !valid_device_id { return Err("device_id"); }
-        if self.display_name.trim().is_empty() || self.display_name.chars().count() > 64
-            || self.display_name.chars().any(char::is_control) { return Err("display_name"); }
-        if !["windows", "macos", "linux", "other"].contains(&self.os_name.as_str()) { return Err("os_name"); }
-        if self.app_version.is_empty() || self.app_version.len() > 64
+            && self
+                .device_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b));
+        if !valid_device_id {
+            return Err("device_id");
+        }
+        if self.display_name.trim().is_empty()
+            || self.display_name.chars().count() > 64
+            || self.display_name.chars().any(char::is_control)
+        {
+            return Err("display_name");
+        }
+        if !["windows", "macos", "linux", "other"].contains(&self.os_name.as_str()) {
+            return Err("os_name");
+        }
+        if self.app_version.is_empty()
+            || self.app_version.len() > 64
             || !self.app_version.as_bytes()[0].is_ascii_alphanumeric()
-            || !self.app_version.bytes().all(|b| b.is_ascii_alphanumeric() || b".+_-".contains(&b)) { return Err("app_version"); }
-        if self.time_zone.is_empty() || self.time_zone.len() > 64
-            || !self.time_zone.bytes().all(|b| b.is_ascii_alphanumeric() || b"/_+-".contains(&b)) { return Err("time_zone"); }
-        if self.created_at_ms < 0 || self.last_seen_ms.is_some_and(|v| v < 0) || self.revoked_at_ms.is_some_and(|v| v < 0) { return Err("timestamp"); }
+            || !self
+                .app_version
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b".+_-".contains(&b))
+        {
+            return Err("app_version");
+        }
+        if self.time_zone.is_empty()
+            || self.time_zone.len() > 64
+            || !self
+                .time_zone
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"/_+-".contains(&b))
+        {
+            return Err("time_zone");
+        }
+        if self.created_at_ms < 0
+            || self.last_seen_ms.is_some_and(|v| v < 0)
+            || self.revoked_at_ms.is_some_and(|v| v < 0)
+        {
+            return Err("timestamp");
+        }
         Ok(())
     }
 }
@@ -247,12 +291,20 @@ pub struct DeviceListResponse {
 
 impl DeviceListResponse {
     pub fn validate(&self) -> Result<(), HubClientError> {
-        if self.protocol_version != PROTOCOL_VERSION { return Err(HubClientError::ProtocolMismatch); }
-        if self.devices.len() > 1000 { return Err(HubClientError::InvalidResponse); }
+        if self.protocol_version != PROTOCOL_VERSION {
+            return Err(HubClientError::ProtocolMismatch);
+        }
+        if self.devices.len() > 1000 {
+            return Err(HubClientError::InvalidResponse);
+        }
         let mut seen = HashSet::with_capacity(self.devices.len());
         for device in &self.devices {
-            device.validate().map_err(|_| HubClientError::InvalidResponse)?;
-            if !seen.insert(device.device_id.as_str()) { return Err(HubClientError::InvalidResponse); }
+            device
+                .validate()
+                .map_err(|_| HubClientError::InvalidResponse)?;
+            if !seen.insert(device.device_id.as_str()) {
+                return Err(HubClientError::InvalidResponse);
+            }
         }
         Ok(())
     }
@@ -268,11 +320,25 @@ pub struct RenameDeviceResponse {
 
 impl RenameDeviceResponse {
     pub fn validate(&self) -> Result<(), HubClientError> {
-        if self.protocol_version != PROTOCOL_VERSION { return Err(HubClientError::ProtocolMismatch); }
-        if self.device_id.len() < 8 || self.device_id.len() > 128
+        if self.protocol_version != PROTOCOL_VERSION {
+            return Err(HubClientError::ProtocolMismatch);
+        }
+        if self.device_id.len() < 8
+            || self.device_id.len() > 128
             || !self.device_id.as_bytes()[0].is_ascii_alphanumeric()
-            || !self.device_id.bytes().all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)) { return Err(HubClientError::InvalidResponse); }
-        if self.display_name.trim().is_empty() || self.display_name.chars().count() > 64 || self.display_name.chars().any(char::is_control) { return Err(HubClientError::InvalidResponse); }
+            || !self
+                .device_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+        {
+            return Err(HubClientError::InvalidResponse);
+        }
+        if self.display_name.trim().is_empty()
+            || self.display_name.chars().count() > 64
+            || self.display_name.chars().any(char::is_control)
+        {
+            return Err(HubClientError::InvalidResponse);
+        }
         Ok(())
     }
 }
@@ -360,7 +426,6 @@ mod tests {
         assert!(response.validate().is_ok());
     }
 
-
     #[test]
     fn rotate_response_debug_redacts_token() {
         let response = RotateTokenResponse {
@@ -373,18 +438,31 @@ mod tests {
         assert!(response.validate().is_ok());
     }
 
-
     #[test]
     fn device_list_rejects_duplicate_ids_and_unknown_protocol() {
         let device = DeviceSummary {
-            device_id: "office-pc-01".into(), display_name: "Office PC".into(),
-            os_name: "windows".into(), app_version: "0.1.0".into(), time_zone: "UTC".into(),
-            created_at_ms: 1, last_seen_ms: None, revoked_at_ms: None,
+            device_id: "office-pc-01".into(),
+            display_name: "Office PC".into(),
+            os_name: "windows".into(),
+            app_version: "0.1.0".into(),
+            time_zone: "UTC".into(),
+            created_at_ms: 1,
+            last_seen_ms: None,
+            revoked_at_ms: None,
         };
-        let duplicate = DeviceListResponse { protocol_version: 1, devices: vec![device.clone(), device] };
+        let duplicate = DeviceListResponse {
+            protocol_version: 1,
+            devices: vec![device.clone(), device],
+        };
         assert!(duplicate.validate().is_err());
-        let incompatible = DeviceListResponse { protocol_version: 99, devices: vec![] };
-        assert_eq!(incompatible.validate(), Err(HubClientError::ProtocolMismatch));
+        let incompatible = DeviceListResponse {
+            protocol_version: 99,
+            devices: vec![],
+        };
+        assert_eq!(
+            incompatible.validate(),
+            Err(HubClientError::ProtocolMismatch)
+        );
     }
 
     #[test]

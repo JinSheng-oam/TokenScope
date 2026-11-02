@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use tokenscope_local_store::DashboardSnapshot;
 
 pub const MODULE_ID: &str = "local-ipc";
-pub const PROTOCOL_VERSION: u32 = 1;
-pub const SUPPORTED_DB_SCHEMA_VERSION: i64 = 4;
+pub const PROTOCOL_VERSION: u32 = 2;
+pub const SUPPORTED_DB_SCHEMA_VERSION: i64 = 5;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -17,7 +17,10 @@ pub struct DashboardResponse {
 
 impl DashboardResponse {
     pub fn new(snapshot: DashboardSnapshot) -> Self {
-        Self { protocol_version: PROTOCOL_VERSION, snapshot }
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            snapshot,
+        }
     }
 
     pub fn validate(&self) -> Result<(), &'static str> {
@@ -37,11 +40,14 @@ impl DashboardResponse {
 #[cfg(test)]
 mod tests {
     use super::{DashboardResponse, MODULE_ID, PROTOCOL_VERSION};
-    use tokenscope_local_store::{AntigravityActivitySummary, DashboardSnapshot, UsageTotals};
+    use tokenscope_local_store::{
+        AntigravityActivitySummary, DashboardSnapshot, ModelActivityBreakdown, SessionUsagePage,
+        UsageTotals,
+    };
 
     fn snapshot() -> DashboardSnapshot {
         DashboardSnapshot {
-            schema_version: 4,
+            schema_version: 5,
             generated_at_ms: 1,
             range: "7d".into(),
             range_start_ms: Some(1),
@@ -52,13 +58,30 @@ mod tests {
             local: UsageTotals::default(),
             remote: tokenscope_local_store::RemoteUsageTotals::default(),
             remote_by_device: vec![],
-            remote_by_tool: vec![], remote_by_model: vec![], remote_by_project: vec![],
+            remote_by_tool: vec![],
+            remote_by_model: vec![],
+            remote_by_project: vec![],
             unassigned: UsageTotals::default(),
             account_global: UsageTotals::default(),
-            by_tool: vec![], by_model: vec![], by_project: vec![], daily: vec![],
-            source_health: vec![], antigravity_quota: vec![],
+            by_tool: vec![],
+            by_model: vec![],
+            by_project: vec![],
+            daily: vec![],
+            model_activity: Vec::<ModelActivityBreakdown>::new(),
+            session_usage: SessionUsagePage {
+                sessions: vec![],
+                total: 0,
+                offset: 0,
+                limit: 50,
+            },
+            source_health: vec![],
+            antigravity_quota: vec![],
+            codex_quota: vec![],
             antigravity_activity: AntigravityActivitySummary {
-                known_turns: 0, unknown_turns: 0, conversations: 0, by_model: vec![],
+                known_turns: 0,
+                unknown_turns: 0,
+                conversations: 0,
+                by_model: vec![],
             },
             sync_status: tokenscope_local_store::SyncOutboxStatus::default(),
         }
@@ -67,7 +90,7 @@ mod tests {
     #[test]
     fn reports_module_and_protocol_version() {
         assert_eq!(MODULE_ID, "local-ipc");
-        assert_eq!(PROTOCOL_VERSION, 1);
+        assert_eq!(PROTOCOL_VERSION, 2);
     }
 
     #[test]

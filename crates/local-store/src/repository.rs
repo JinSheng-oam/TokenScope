@@ -1,12 +1,12 @@
-use std::collections::HashSet;
-use std::path::Path;
+use crate::error::{db_int, pos_u64, Result, StoreError};
+use crate::schema;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::path::Path;
 use tokenscope_core_domain::{
     payload_hash, CanonicalRecord, Precision, RevisionedRecord, TokenBreakdown, UsageScope,
 };
-use crate::error::{db_int, pos_u64, Result, StoreError};
-use crate::schema;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalIdentity {
@@ -30,20 +30,35 @@ pub struct SourceCheckpoint {
 
 impl SourceCheckpoint {
     fn validate(&self) -> Result<()> {
-        if self.tool_id.is_empty() || self.tool_id.len() > 64 ||
-            !self.tool_id.bytes().next().is_some_and(|c| c.is_ascii_lowercase()) ||
-            !self.tool_id.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-') {
+        if self.tool_id.is_empty()
+            || self.tool_id.len() > 64
+            || !self
+                .tool_id
+                .bytes()
+                .next()
+                .is_some_and(|c| c.is_ascii_lowercase())
+            || !self
+                .tool_id
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        {
             return Err(StoreError::InvalidInput("checkpoint tool_id"));
         }
-        if self.source_key.is_empty() || self.source_key.len() > 1024 ||
-            self.source_key.chars().any(char::is_control) {
+        if self.source_key.is_empty()
+            || self.source_key.len() > 1024
+            || self.source_key.chars().any(char::is_control)
+        {
             return Err(StoreError::InvalidInput("source_key"));
         }
-        if self.source_fingerprint.is_empty() || self.source_fingerprint.len() > 1024 ||
-            self.source_fingerprint.chars().any(char::is_control) {
+        if self.source_fingerprint.is_empty()
+            || self.source_fingerprint.len() > 1024
+            || self.source_fingerprint.chars().any(char::is_control)
+        {
             return Err(StoreError::InvalidInput("source_fingerprint"));
         }
-        if self.parser_version == 0 { return Err(StoreError::InvalidInput("parser_version")); }
+        if self.parser_version == 0 {
+            return Err(StoreError::InvalidInput("parser_version"));
+        }
         if !["complete", "partial", "degraded"].contains(&self.last_status.as_str()) {
             return Err(StoreError::InvalidInput("last_status"));
         }
@@ -125,18 +140,31 @@ pub struct AntigravityActivity {
 }
 impl AntigravityActivity {
     fn validate(&self) -> Result<()> {
-        if self.models.len() > 512 { return Err(StoreError::InvalidInput("activity model cardinality")); }
+        if self.models.len() > 512 {
+            return Err(StoreError::InvalidInput("activity model cardinality"));
+        }
         let mut seen = HashSet::new();
         let mut sum = 0u64;
         for (model, count) in &self.models {
-            if model.is_empty() || model.len() > 128 || !model.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.:/".contains(&b)) {
+            if model.is_empty()
+                || model.len() > 128
+                || !model
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.:/".contains(&b))
+            {
                 return Err(StoreError::InvalidInput("activity model id"));
             }
-            if !seen.insert(model) || *count == 0 { return Err(StoreError::InvalidInput("activity model duplicate/zero")); }
+            if !seen.insert(model) || *count == 0 {
+                return Err(StoreError::InvalidInput("activity model duplicate/zero"));
+            }
             db_int(*count)?;
-            sum = sum.checked_add(*count).ok_or(StoreError::IntegerOutOfRange)?;
+            sum = sum
+                .checked_add(*count)
+                .ok_or(StoreError::IntegerOutOfRange)?;
         }
-        if sum != self.known_turns { return Err(StoreError::InvalidInput("activity count mismatch")); }
+        if sum != self.known_turns {
+            return Err(StoreError::InvalidInput("activity count mismatch"));
+        }
         db_int(self.known_turns)?;
         db_int(self.unknown_turns)?;
         Ok(())
@@ -164,13 +192,51 @@ pub struct AntigravityQuota {
 impl AntigravityQuota {
     fn validate(&self) -> Result<()> {
         fn safe(v: &str, limit: usize) -> bool {
-            !v.is_empty() && v.len() <= limit && v.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+            !v.is_empty()
+                && v.len() <= limit
+                && v.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
         }
-        if !safe(&self.source_id, 128) || !safe(&self.pool_id, 128) ||
-            !["five_hour", "weekly", "daily", "other"].contains(&self.window_id.as_str()) ||
-            self.remaining_basis_points.is_some_and(|v| v > 10000) || self.observed_at_ms < 0 ||
-            self.reset_at_ms.is_some_and(|v| v < 0) {
+        if !safe(&self.source_id, 128)
+            || !safe(&self.pool_id, 128)
+            || !["five_hour", "weekly", "daily", "other"].contains(&self.window_id.as_str())
+            || self.remaining_basis_points.is_some_and(|v| v > 10000)
+            || self.observed_at_ms < 0
+            || self.reset_at_ms.is_some_and(|v| v < 0)
+        {
             return Err(StoreError::InvalidInput("quota snapshot"));
+        }
+        Ok(())
+    }
+}
+
+/// Codex rate-limit window observed through the local Codex app-server.
+/// This is an account quota snapshot, not Token consumption.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodexQuota {
+    pub source_id: String,
+    pub pool_id: String,
+    pub window_duration_minutes: u32,
+    pub remaining_basis_points: Option<u16>,
+    pub reset_at_ms: Option<i64>,
+    pub observed_at_ms: i64,
+}
+impl CodexQuota {
+    fn validate(&self) -> Result<()> {
+        let safe = |v: &str, limit: usize| {
+            !v.is_empty()
+                && v.len() <= limit
+                && v.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        };
+        if !safe(&self.source_id, 128)
+            || !safe(&self.pool_id, 128)
+            || self.window_duration_minutes == 0
+            || self.remaining_basis_points.is_some_and(|v| v > 10000)
+            || self.reset_at_ms.is_some_and(|v| v < 0)
+            || self.observed_at_ms < 0
+        {
+            return Err(StoreError::InvalidInput("Codex quota snapshot"));
         }
         Ok(())
     }
@@ -192,9 +258,19 @@ pub struct SyncOutboxStatus {
 }
 impl Default for SyncOutboxStatus {
     fn default() -> Self {
-        Self { pending: 0, deferred: 0, blocked: 0, oldest_pending_at_ms: None,
-            next_attempt_at_ms: None, last_attempt_ms: None, last_success_ms: None, last_pull_seq: 0, last_pull_ms: None,
-            last_status: "never".into(), last_error: None }
+        Self {
+            pending: 0,
+            deferred: 0,
+            blocked: 0,
+            oldest_pending_at_ms: None,
+            next_attempt_at_ms: None,
+            last_attempt_ms: None,
+            last_success_ms: None,
+            last_pull_seq: 0,
+            last_pull_ms: None,
+            last_status: "never".into(),
+            last_error: None,
+        }
     }
 }
 
@@ -229,6 +305,47 @@ pub struct UsageBreakdown {
     pub total_tokens: u64,
     pub record_count: u64,
     pub estimated_cost_microusd: Option<i64>,
+    pub exact_records: u64,
+    pub aggregate_records: u64,
+    pub estimated_records: u64,
+    pub unknown_precision_records: u64,
+    pub untimed_records: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ModelActivityBreakdown {
+    pub tool_id: String,
+    pub model_id: String,
+    pub response_count: u64,
+    /// `selected_range` for timestamped Codex events; `all_time` for Antigravity metadata.
+    pub time_scope: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionUsage {
+    /// Stable opaque session key; never a title, file path, or native account ID.
+    pub session_id: String,
+    pub tool_id: String,
+    pub total_tokens: u64,
+    pub usage_record_count: u64,
+    pub exact_records: u64,
+    pub aggregate_records: u64,
+    pub estimated_records: u64,
+    pub unknown_precision_records: u64,
+    pub untimed_records: u64,
+    pub model_count: u64,
+    pub known_response_count: Option<u64>,
+    pub unknown_response_count: Option<u64>,
+    pub last_event_at_ms: Option<i64>,
+    pub activity_observed_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionUsagePage {
+    pub sessions: Vec<SessionUsage>,
+    pub total: u64,
+    pub offset: u64,
+    pub limit: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -268,12 +385,43 @@ pub struct DashboardSnapshot {
     pub account_global: UsageTotals,
     pub by_tool: Vec<UsageBreakdown>,
     pub by_model: Vec<UsageBreakdown>,
+    pub model_activity: Vec<ModelActivityBreakdown>,
     pub by_project: Vec<UsageBreakdown>,
+    pub session_usage: SessionUsagePage,
     pub daily: Vec<DailyUsage>,
     pub source_health: Vec<SourceHealth>,
     pub antigravity_quota: Vec<AntigravityQuota>,
+    pub codex_quota: Vec<CodexQuota>,
     pub antigravity_activity: AntigravityActivitySummary,
     pub sync_status: SyncOutboxStatus,
+}
+
+/// Inputs for a read-only dashboard projection.
+pub struct DashboardQuery<'a> {
+    pub range: &'a str,
+    pub from_ms: Option<i64>,
+    pub to_ms: Option<i64>,
+    pub daily_ranges: &'a [(String, i64, i64)],
+    pub generated_at_ms: i64,
+    pub time_zone: String,
+    pub time_zone_valid: bool,
+    pub session_offset: u64,
+}
+
+struct RemoteUsageTotalsRow {
+    total: i64,
+    input: i64,
+    cache_read: i64,
+    cache_write: i64,
+    output: i64,
+    unclassified: i64,
+    count: i64,
+    priced: i64,
+    exact: i64,
+    aggregate: i64,
+    estimated: i64,
+    unknown: i64,
+    cost: Option<i64>,
 }
 
 impl LocalStore {
@@ -299,19 +447,27 @@ impl LocalStore {
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA query_only=ON;")?;
+        conn.execute_batch(
+            "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA query_only=ON;",
+        )?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version != schema::VERSION {
             return Err(StoreError::UnsupportedSchema(version));
         }
         let migration_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4)", [], |r| r.get(0)
+            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4,5)",
+            [],
+            |r| r.get(0),
         )?;
         let highest: i64 = conn.query_row(
-            "SELECT COALESCE(MAX(version),0) FROM schema_migrations", [], |r| r.get(0)
+            "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
+            [],
+            |r| r.get(0),
         )?;
-        if migration_count != 4 || highest != schema::VERSION {
-            return Err(StoreError::DatabaseInconsistent("schema_migrations disagrees with user_version"));
+        if migration_count != 5 || highest != schema::VERSION {
+            return Err(StoreError::DatabaseInconsistent(
+                "schema_migrations disagrees with user_version",
+            ));
         }
         Ok(Self { conn })
     }
@@ -336,7 +492,9 @@ impl LocalStore {
                 "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('usage_records','source_checkpoints','schema_migrations')",
                 [], |r| r.get(0)
             )?;
-            if legacy != 0 { return Err(StoreError::UnsupportedSchema(0)); }
+            if legacy != 0 {
+                return Err(StoreError::UnsupportedSchema(0));
+            }
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             tx.execute_batch(schema::MIGRATION_001)?;
             tx.execute("INSERT INTO schema_migrations(version,applied_at_ms) VALUES (1,CAST(strftime('%s','now') AS INTEGER)*1000)", [])?;
@@ -345,10 +503,20 @@ impl LocalStore {
         }
         if version <= 1 {
             // Fail closed on mismatched legacy metadata before any v2 DDL.
-            let v1: i64 = conn.query_row("SELECT COUNT(*) FROM schema_migrations WHERE version=1", [], |r| r.get(0))?;
-            let highest: i64 = conn.query_row("SELECT COALESCE(MAX(version),0) FROM schema_migrations", [], |r| r.get(0))?;
+            let v1: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version=1",
+                [],
+                |r| r.get(0),
+            )?;
+            let highest: i64 = conn.query_row(
+                "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
+                [],
+                |r| r.get(0),
+            )?;
             if v1 != 1 || highest != 1 {
-                return Err(StoreError::DatabaseInconsistent("legacy migration metadata invalid"));
+                return Err(StoreError::DatabaseInconsistent(
+                    "legacy migration metadata invalid",
+                ));
             }
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             tx.execute_batch(schema::MIGRATION_002)?;
@@ -357,10 +525,20 @@ impl LocalStore {
             tx.commit()?;
         }
         if version <= 2 {
-            let prior: i64 = conn.query_row("SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2)", [], |r| r.get(0))?;
-            let highest: i64 = conn.query_row("SELECT COALESCE(MAX(version),0) FROM schema_migrations", [], |r| r.get(0))?;
+            let prior: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2)",
+                [],
+                |r| r.get(0),
+            )?;
+            let highest: i64 = conn.query_row(
+                "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
+                [],
+                |r| r.get(0),
+            )?;
             if prior != 2 || highest != 2 {
-                return Err(StoreError::DatabaseInconsistent("legacy migration metadata invalid before v3"));
+                return Err(StoreError::DatabaseInconsistent(
+                    "legacy migration metadata invalid before v3",
+                ));
             }
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             tx.execute_batch(schema::MIGRATION_003)?;
@@ -369,45 +547,102 @@ impl LocalStore {
             tx.commit()?;
         }
         if version <= 3 {
-            let prior: i64 = conn.query_row("SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3)", [], |r| r.get(0))?;
-            let highest: i64 = conn.query_row("SELECT COALESCE(MAX(version),0) FROM schema_migrations", [], |r| r.get(0))?;
-            if prior != 3 || highest != 3 { return Err(StoreError::DatabaseInconsistent("legacy migration metadata invalid before v4")); }
+            let prior: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3)",
+                [],
+                |r| r.get(0),
+            )?;
+            let highest: i64 = conn.query_row(
+                "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
+                [],
+                |r| r.get(0),
+            )?;
+            if prior != 3 || highest != 3 {
+                return Err(StoreError::DatabaseInconsistent(
+                    "legacy migration metadata invalid before v4",
+                ));
+            }
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             tx.execute_batch(schema::MIGRATION_004)?;
             tx.execute("INSERT INTO schema_migrations(version,applied_at_ms) VALUES (4,CAST(strftime('%s','now') AS INTEGER)*1000)", [])?;
             tx.execute_batch("PRAGMA user_version=4;")?;
             tx.commit()?;
         }
-        let count: i64 = conn.query_row(
-            "SELECT count(*) FROM schema_migrations WHERE version IN (1,2,3,4)", [], |r| r.get(0)
-        )?;
-        let future: i64 = conn.query_row("SELECT COALESCE(MAX(version),0) FROM schema_migrations", [], |r| r.get(0))?;
-        if count != 4 || future != schema::VERSION {
-            return Err(StoreError::DatabaseInconsistent("schema_migrations disagrees with user_version"));
+        if version <= 4 {
+            let prior: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4)",
+                [],
+                |r| r.get(0),
+            )?;
+            let highest: i64 = conn.query_row(
+                "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
+                [],
+                |r| r.get(0),
+            )?;
+            if prior != 4 || highest != 4 {
+                return Err(StoreError::DatabaseInconsistent(
+                    "legacy migration metadata invalid before v5",
+                ));
+            }
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(schema::MIGRATION_005)?;
+            tx.execute("INSERT INTO schema_migrations(version,applied_at_ms) VALUES (5,CAST(strftime('%s','now') AS INTEGER)*1000)", [])?;
+            tx.execute_batch("PRAGMA user_version=5;")?;
+            tx.commit()?;
         }
-        let foreign_key_violations: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0)
+        let count: i64 = conn.query_row(
+            "SELECT count(*) FROM schema_migrations WHERE version IN (1,2,3,4,5)",
+            [],
+            |r| r.get(0),
         )?;
-        if foreign_key_violations != 0 { return Err(StoreError::DatabaseInconsistent("foreign key violation")); }
+        let future: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
+            [],
+            |r| r.get(0),
+        )?;
+        if count != 5 || future != schema::VERSION {
+            return Err(StoreError::DatabaseInconsistent(
+                "schema_migrations disagrees with user_version",
+            ));
+        }
+        let foreign_key_violations: i64 =
+            conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
+                r.get(0)
+            })?;
+        if foreign_key_violations != 0 {
+            return Err(StoreError::DatabaseInconsistent("foreign key violation"));
+        }
         Ok(Self { conn })
     }
 
     pub fn schema_version(&self) -> Result<i64> {
-        Ok(self.conn.query_row("PRAGMA user_version", [], |r| r.get(0))?)
+        Ok(self
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))?)
     }
 
     /// Transactionally consistent online snapshot. The destination must not
     /// already exist. Never copy a live main DB file without its WAL state.
     pub fn backup_to(&self, destination: &Path) -> Result<()> {
-        let path = destination.to_str().ok_or(StoreError::InvalidInput("backup path encoding"))?;
-        if destination.exists() { return Err(StoreError::InvalidInput("backup destination exists")); }
+        let path = destination
+            .to_str()
+            .ok_or(StoreError::InvalidInput("backup path encoding"))?;
+        if destination.exists() {
+            return Err(StoreError::InvalidInput("backup destination exists"));
+        }
         self.conn.execute("VACUUM INTO ?1", [path])?;
         Ok(())
     }
 
     pub fn quick_integrity_check(&self) -> Result<()> {
-        let status: String = self.conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
-        if status != "ok" { return Err(StoreError::DatabaseInconsistent("SQLite quick_check failed")); }
+        let status: String = self
+            .conn
+            .query_row("PRAGMA quick_check", [], |r| r.get(0))?;
+        if status != "ok" {
+            return Err(StoreError::DatabaseInconsistent(
+                "SQLite quick_check failed",
+            ));
+        }
         Ok(())
     }
 
@@ -416,23 +651,36 @@ impl LocalStore {
         fn valid_text(v: &str, max: usize) -> bool {
             !v.trim().is_empty() && v.len() <= max && !v.chars().any(char::is_control)
         }
-        if !valid_text(&identity.device_id, 128) ||
-            !identity.device_id.is_ascii() || identity.device_id.chars().any(char::is_whitespace) ||
-            !valid_text(&identity.display_name, 128) || !valid_text(&identity.time_zone, 128) {
+        if !valid_text(&identity.device_id, 128)
+            || !identity.device_id.is_ascii()
+            || identity.device_id.chars().any(char::is_whitespace)
+            || !valid_text(&identity.display_name, 128)
+            || !valid_text(&identity.time_zone, 128)
+        {
             return Err(StoreError::InvalidInput("local identity"));
         }
-        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let existing: Option<String> = tx.query_row(
-            "SELECT device_id FROM local_identity WHERE singleton=1", [], |r| r.get(0)
-        ).optional()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let existing: Option<String> = tx
+            .query_row(
+                "SELECT device_id FROM local_identity WHERE singleton=1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
         match existing {
-            None => { tx.execute(
+            None => {
+                tx.execute(
                 "INSERT INTO local_identity(singleton,device_id,display_name,time_zone) VALUES(1,?1,?2,?3)",
                 params![identity.device_id, identity.display_name, identity.time_zone]
-            )?; }
+            )?;
+            }
             Some(id) if id == identity.device_id => {
-                tx.execute("UPDATE local_identity SET display_name=?1, time_zone=?2 WHERE singleton=1",
-                    params![identity.display_name, identity.time_zone])?;
+                tx.execute(
+                    "UPDATE local_identity SET display_name=?1, time_zone=?2 WHERE singleton=1",
+                    params![identity.display_name, identity.time_zone],
+                )?;
             }
             _ => return Err(StoreError::IdentityMismatch),
         }
@@ -441,12 +689,20 @@ impl LocalStore {
     }
 
     pub fn identity(&self) -> Result<Option<LocalIdentity>> {
-        Ok(self.conn.query_row(
-            "SELECT device_id,display_name,time_zone FROM local_identity WHERE singleton=1",
-            [], |r| Ok(LocalIdentity {
-                device_id: r.get(0)?, display_name: r.get(1)?, time_zone: r.get(2)?
-            })
-        ).optional()?)
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT device_id,display_name,time_zone FROM local_identity WHERE singleton=1",
+                [],
+                |r| {
+                    Ok(LocalIdentity {
+                        device_id: r.get(0)?,
+                        display_name: r.get(1)?,
+                        time_zone: r.get(2)?,
+                    })
+                },
+            )
+            .optional()?)
     }
 
     pub fn checkpoint(&self, tool_id: &str, source_key: &str) -> Result<Option<SourceCheckpoint>> {
@@ -467,7 +723,9 @@ impl LocalStore {
         next.validate()?;
         // Incremental-only API is bounded; a *complete* source containing more
         // records must use reconcile_complete_source for atomic reconciliation.
-        if proposed.len() > 2000 { return Err(StoreError::InvalidInput("scan batch limit (2000)")); }
+        if proposed.len() > 2000 {
+            return Err(StoreError::InvalidInput("scan batch limit (2000)"));
+        }
         if let Some(old) = expected {
             old.validate()?;
             if old.tool_id != next.tool_id || old.source_key != next.source_key {
@@ -479,16 +737,21 @@ impl LocalStore {
         }
         if next.last_status == "degraded" {
             if !proposed.is_empty() {
-                return Err(StoreError::InvalidInput("degraded scan cannot publish records"));
+                return Err(StoreError::InvalidInput(
+                    "degraded scan cannot publish records",
+                ));
             }
             // A failed read may update health, but it must not advance the
             // last-known-good byte cursor, parser or source fingerprint.
             if let Some(old) = expected {
-                if next.read_offset != old.read_offset ||
-                    next.source_fingerprint != old.source_fingerprint ||
-                    next.parser_version != old.parser_version ||
-                    next.last_complete_scan_ms != old.last_complete_scan_ms {
-                    return Err(StoreError::InvalidInput("degraded checkpoint advances cursor"));
+                if next.read_offset != old.read_offset
+                    || next.source_fingerprint != old.source_fingerprint
+                    || next.parser_version != old.parser_version
+                    || next.last_complete_scan_ms != old.last_complete_scan_ms
+                {
+                    return Err(StoreError::InvalidInput(
+                        "degraded checkpoint advances cursor",
+                    ));
                 }
             } else if next.read_offset != 0 || next.last_complete_scan_ms.is_some() {
                 return Err(StoreError::InvalidInput("degraded initial checkpoint"));
@@ -503,29 +766,54 @@ impl LocalStore {
         let mut canonical = Vec::with_capacity(proposed.len());
         for rec in proposed {
             let rec = rec.clone().normalized()?;
-            if rec.tool_id != next.tool_id { return Err(StoreError::InvalidInput("tool mismatch")); }
-            if rec.is_deleted && !allow_explicit_tombstones {
-                return Err(StoreError::InvalidInput("tombstones require explicit authorization"));
+            if rec.tool_id != next.tool_id {
+                return Err(StoreError::InvalidInput("tool mismatch"));
             }
-            if !seen.insert(rec.record_id.clone()) { return Err(StoreError::DuplicateBatchRecord); }
+            if rec.is_deleted && !allow_explicit_tombstones {
+                return Err(StoreError::InvalidInput(
+                    "tombstones require explicit authorization",
+                ));
+            }
+            if !seen.insert(rec.record_id.clone()) {
+                return Err(StoreError::DuplicateBatchRecord);
+            }
             // SQLite stores signed 64-bit counters even though the domain accepts u64.
-            for n in [rec.usage.input_uncached_tokens, rec.usage.cache_read_tokens,
-                      rec.usage.cache_write_tokens, rec.usage.output_tokens,
-                      rec.usage.unclassified_tokens] { db_int(n)?; }
-            if let Some(n) = rec.usage.reasoning_tokens { db_int(n)?; }
+            for n in [
+                rec.usage.input_uncached_tokens,
+                rec.usage.cache_read_tokens,
+                rec.usage.cache_write_tokens,
+                rec.usage.output_tokens,
+                rec.usage.unclassified_tokens,
+            ] {
+                db_int(n)?;
+            }
+            if let Some(n) = rec.usage.reasoning_tokens {
+                db_int(n)?;
+            }
             canonical.push((payload_hash(&rec)?, rec));
         }
-        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current = load_checkpoint(&tx, &next.tool_id, &next.source_key)?;
-        if current.as_ref() != expected { return Err(StoreError::CheckpointConflict); }
-        let owner: Option<String> = tx.query_row(
-            "SELECT device_id FROM local_identity WHERE singleton=1", [], |r| r.get(0)
-        ).optional()?;
+        if current.as_ref() != expected {
+            return Err(StoreError::CheckpointConflict);
+        }
+        let owner: Option<String> = tx
+            .query_row(
+                "SELECT device_id FROM local_identity WHERE singleton=1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
         let owner = owner.ok_or(StoreError::NotInitialized)?;
         let mut report = ApplyReport::default();
         for (hash, rec) in canonical {
-            if rec.owner_device_id != owner { return Err(StoreError::IdentityMismatch); }
-            match upsert_source_record(&tx, &rec, &hash, &next.source_key, &owner, observed_at_ms)? {
+            if rec.owner_device_id != owner {
+                return Err(StoreError::IdentityMismatch);
+            }
+            match upsert_source_record(&tx, &rec, &hash, &next.source_key, &owner, observed_at_ms)?
+            {
                 RecordChange::Inserted => report.inserted += 1,
                 RecordChange::Revised => report.revised += 1,
                 RecordChange::Unchanged => report.unchanged += 1,
@@ -580,25 +868,41 @@ impl LocalStore {
         I: IntoIterator<Item = CanonicalRecord>,
     {
         next.validate()?;
-        if let Some(a) = activity { a.validate()?;
-            if next.tool_id != "antigravity" { return Err(StoreError::InvalidInput("activity tool")); }
+        if let Some(a) = activity {
+            a.validate()?;
+            if next.tool_id != "antigravity" {
+                return Err(StoreError::InvalidInput("activity tool"));
+            }
         }
         if next.last_status != "complete" || next.last_complete_scan_ms != Some(next.last_scan_ms) {
-            return Err(StoreError::InvalidInput("complete reconciliation requires full scan"));
+            return Err(StoreError::InvalidInput(
+                "complete reconciliation requires full scan",
+            ));
         }
         if let Some(old) = expected {
             old.validate()?;
-            if old.tool_id != next.tool_id || old.source_key != next.source_key ||
-                next.last_scan_ms < old.last_scan_ms {
+            if old.tool_id != next.tool_id
+                || old.source_key != next.source_key
+                || next.last_scan_ms < old.last_scan_ms
+            {
                 return Err(StoreError::InvalidInput("checkpoint identity/time"));
             }
         }
-        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let actual = load_checkpoint(&tx, &next.tool_id, &next.source_key)?;
-        if actual.as_ref() != expected { return Err(StoreError::CheckpointConflict); }
-        let owner: String = tx.query_row(
-            "SELECT device_id FROM local_identity WHERE singleton=1", [], |r| r.get(0)
-        ).optional()?.ok_or(StoreError::NotInitialized)?;
+        if actual.as_ref() != expected {
+            return Err(StoreError::CheckpointConflict);
+        }
+        let owner: String = tx
+            .query_row(
+                "SELECT device_id FROM local_identity WHERE singleton=1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotInitialized)?;
         tx.execute_batch(
             "CREATE TEMP TABLE IF NOT EXISTS tokenscope_seen (record_id TEXT PRIMARY KEY) WITHOUT ROWID; \
              DELETE FROM temp.tokenscope_seen;"
@@ -609,18 +913,31 @@ impl LocalStore {
             if rec.tool_id != next.tool_id || rec.is_deleted {
                 return Err(StoreError::InvalidInput("source reconciliation record"));
             }
-            if rec.owner_device_id != owner { return Err(StoreError::IdentityMismatch); }
-            for n in [rec.usage.input_uncached_tokens, rec.usage.cache_read_tokens,
-                rec.usage.cache_write_tokens, rec.usage.output_tokens,
-                rec.usage.unclassified_tokens] { db_int(n)?; }
-            if let Some(n) = rec.usage.reasoning_tokens { db_int(n)?; }
+            if rec.owner_device_id != owner {
+                return Err(StoreError::IdentityMismatch);
+            }
+            for n in [
+                rec.usage.input_uncached_tokens,
+                rec.usage.cache_read_tokens,
+                rec.usage.cache_write_tokens,
+                rec.usage.output_tokens,
+                rec.usage.unclassified_tokens,
+            ] {
+                db_int(n)?;
+            }
+            if let Some(n) = rec.usage.reasoning_tokens {
+                db_int(n)?;
+            }
             let changed = tx.execute(
                 "INSERT OR IGNORE INTO temp.tokenscope_seen(record_id) VALUES (?1)",
                 [&rec.record_id],
             )?;
-            if changed != 1 { return Err(StoreError::DuplicateBatchRecord); }
+            if changed != 1 {
+                return Err(StoreError::DuplicateBatchRecord);
+            }
             let hash = payload_hash(&rec)?;
-            match upsert_source_record(&tx, &rec, &hash, &next.source_key, &owner, observed_at_ms)? {
+            match upsert_source_record(&tx, &rec, &hash, &next.source_key, &owner, observed_at_ms)?
+            {
                 RecordChange::Inserted => report.applied.inserted += 1,
                 RecordChange::Revised => report.applied.revised += 1,
                 RecordChange::Unchanged => report.applied.unchanged += 1,
@@ -645,23 +962,40 @@ impl LocalStore {
                 params![next.tool_id, next.source_key, last_rowid],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             ).optional()?;
-            let Some((rowid, record_id)) = missing else { break; };
+            let Some((rowid, record_id)) = missing else {
+                break;
+            };
             last_rowid = rowid;
             let source_count: i64 = tx.query_row(
                 "SELECT COUNT(*) FROM record_sources WHERE record_id=?1",
-                [&record_id], |r| r.get(0),
+                [&record_id],
+                |r| r.get(0),
             )?;
-            if source_count != 1 { return Err(StoreError::SourceArbitrationConflict); }
+            if source_count != 1 {
+                return Err(StoreError::SourceArbitrationConflict);
+            }
             let mut record = read_record(&tx, &record_id)?
-                .ok_or(StoreError::DatabaseInconsistent("source record missing"))?.record;
+                .ok_or(StoreError::DatabaseInconsistent("source record missing"))?
+                .record;
             record.is_deleted = true;
             record.usage = TokenBreakdown::default();
             record.estimated_cost_microusd = None;
             record.price_version = None;
             let hash = payload_hash(&record)?;
-            match upsert_source_record(&tx, &record, &hash, &next.source_key, &owner, observed_at_ms)? {
+            match upsert_source_record(
+                &tx,
+                &record,
+                &hash,
+                &next.source_key,
+                &owner,
+                observed_at_ms,
+            )? {
                 RecordChange::Revised => report.tombstoned += 1,
-                _ => return Err(StoreError::DatabaseInconsistent("unexpected tombstone result")),
+                _ => {
+                    return Err(StoreError::DatabaseInconsistent(
+                        "unexpected tombstone result",
+                    ))
+                }
             }
         }
         tx.execute(
@@ -678,8 +1012,11 @@ impl LocalStore {
                 VALUES (?1,?2,?3,?4) ON CONFLICT(source_key) DO UPDATE SET \
                 known_turns=excluded.known_turns,unknown_turns=excluded.unknown_turns,observed_at_ms=excluded.observed_at_ms",
                 params![next.source_key, db_int(a.known_turns)?, db_int(a.unknown_turns)?, observed_at_ms])?;
-            tx.execute("DELETE FROM antigravity_model_activity WHERE source_key=?1", [&next.source_key])?;
-            for (model,count) in &a.models {
+            tx.execute(
+                "DELETE FROM antigravity_model_activity WHERE source_key=?1",
+                [&next.source_key],
+            )?;
+            for (model, count) in &a.models {
                 tx.execute("INSERT INTO antigravity_model_activity(source_key,model_id,response_count) VALUES(?1,?2,?3)",
                     params![next.source_key,model,db_int(*count)?])?;
             }
@@ -691,7 +1028,13 @@ impl LocalStore {
         Ok(report)
     }
 
-    fn usage_totals(&self, owner_device_id: &str, scope: &str, from_ms: Option<i64>, to_ms: Option<i64>) -> Result<UsageTotals> {
+    fn usage_totals(
+        &self,
+        owner_device_id: &str,
+        scope: &str,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+    ) -> Result<UsageTotals> {
         let row = self.conn.query_row(
             "SELECT \
              COALESCE(SUM(input_uncached_tokens + cache_read_tokens + cache_write_tokens + output_tokens + unclassified_tokens),0), \
@@ -716,42 +1059,105 @@ impl LocalStore {
                 r.get::<_,i64>(12)?,r.get::<_,i64>(13)?,r.get::<_,i64>(14)?,r.get::<_,i64>(15)?,
             )),
         )?;
-        let (total,input,cache_read,cache_write,output,unclassified,reasoning,reasoning_known,count,cost,priced,unpriced,exact,aggregate,estimated,unknown) = row;
+        let (
+            total,
+            input,
+            cache_read,
+            cache_write,
+            output,
+            unclassified,
+            reasoning,
+            reasoning_known,
+            count,
+            cost,
+            priced,
+            unpriced,
+            exact,
+            aggregate,
+            estimated,
+            unknown,
+        ) = row;
         Ok(UsageTotals {
-            total_tokens: pos_u64(total)?, input_tokens: pos_u64(input)?,
-            cache_read_tokens: pos_u64(cache_read)?, cache_write_tokens: pos_u64(cache_write)?,
-            output_tokens: pos_u64(output)?, unclassified_tokens: pos_u64(unclassified)?,
-            reasoning_tokens: pos_u64(reasoning)?, reasoning_known_records: pos_u64(reasoning_known)?,
-            record_count: pos_u64(count)?, estimated_cost_microusd: if priced > 0 { Some(cost) } else { None },
-            priced_records: pos_u64(priced)?, unpriced_records: pos_u64(unpriced)?,
-            exact_records: pos_u64(exact)?, aggregate_records: pos_u64(aggregate)?,
-            estimated_records: pos_u64(estimated)?, unknown_precision_records: pos_u64(unknown)?,
+            total_tokens: pos_u64(total)?,
+            input_tokens: pos_u64(input)?,
+            cache_read_tokens: pos_u64(cache_read)?,
+            cache_write_tokens: pos_u64(cache_write)?,
+            output_tokens: pos_u64(output)?,
+            unclassified_tokens: pos_u64(unclassified)?,
+            reasoning_tokens: pos_u64(reasoning)?,
+            reasoning_known_records: pos_u64(reasoning_known)?,
+            record_count: pos_u64(count)?,
+            estimated_cost_microusd: if priced > 0 { Some(cost) } else { None },
+            priced_records: pos_u64(priced)?,
+            unpriced_records: pos_u64(unpriced)?,
+            exact_records: pos_u64(exact)?,
+            aggregate_records: pos_u64(aggregate)?,
+            estimated_records: pos_u64(estimated)?,
+            unknown_precision_records: pos_u64(unknown)?,
         })
     }
 
-    fn usage_breakdown(&self, column: &'static str, owner_device_id: &str, scope: &str, from_ms: Option<i64>, to_ms: Option<i64>) -> Result<Vec<UsageBreakdown>> {
+    fn usage_breakdown(
+        &self,
+        column: &'static str,
+        owner_device_id: &str,
+        scope: &str,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+    ) -> Result<Vec<UsageBreakdown>> {
         // `column` is a compile-time allowlist supplied only by dashboard_snapshot.
         if !["tool_id", "model_id", "project_id"].contains(&column) {
             return Err(StoreError::InvalidInput("dashboard breakdown column"));
         }
+        let limit_clause = if column == "model_id" {
+            ""
+        } else {
+            " LIMIT 20"
+        };
         let sql = format!(
             "SELECT {column}, COUNT(*), \
              COALESCE(SUM(input_uncached_tokens + cache_read_tokens + cache_write_tokens + output_tokens + unclassified_tokens),0), \
              COALESCE(SUM(CASE WHEN estimated_cost_microusd IS NOT NULL THEN estimated_cost_microusd ELSE 0 END),0), \
-             COALESCE(SUM(CASE WHEN estimated_cost_microusd IS NOT NULL THEN 1 ELSE 0 END),0) \
+             COALESCE(SUM(CASE WHEN estimated_cost_microusd IS NOT NULL THEN 1 ELSE 0 END),0), \
+             COALESCE(SUM(CASE WHEN precision='exact' THEN 1 ELSE 0 END),0), \
+             COALESCE(SUM(CASE WHEN precision='aggregate' THEN 1 ELSE 0 END),0), \
+             COALESCE(SUM(CASE WHEN precision='estimated' THEN 1 ELSE 0 END),0), \
+             COALESCE(SUM(CASE WHEN precision='unknown' THEN 1 ELSE 0 END),0), \
+             COALESCE(SUM(CASE WHEN event_at_ms IS NULL THEN 1 ELSE 0 END),0) \
              FROM usage_records WHERE owner_device_id=?1 AND scope=?2 AND is_deleted=0 \
              AND (?3 IS NULL OR event_at_ms >= ?3) AND (?4 IS NULL OR event_at_ms < ?4) \
-             GROUP BY {column} ORDER BY 3 DESC LIMIT 20"
+             GROUP BY {column} ORDER BY 3 DESC{limit_clause}"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![owner_device_id, scope, from_ms, to_ms], |r| Ok((
-            r.get::<_,Option<String>>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,
-            r.get::<_,i64>(3)?,r.get::<_,i64>(4)?,
-        )))?;
+        let rows = stmt.query_map(params![owner_device_id, scope, from_ms, to_ms], |r| {
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, i64>(5)?,
+                r.get::<_, i64>(6)?,
+                r.get::<_, i64>(7)?,
+                r.get::<_, i64>(8)?,
+                r.get::<_, i64>(9)?,
+            ))
+        })?;
         let mut result = Vec::new();
         for row in rows {
-            let (raw_key,count,total,cost,priced) = row?;
-            let (key,label) = match (column, raw_key) {
+            let (
+                raw_key,
+                count,
+                total,
+                cost,
+                priced,
+                exact,
+                aggregate,
+                estimated,
+                unknown,
+                untimed,
+            ) = row?;
+            let (key, label) = match (column, raw_key) {
                 ("tool_id", Some(value)) => (value.clone(), value),
                 ("model_id", Some(value)) => (value.clone(), value),
                 ("project_id", Some(value)) => {
@@ -765,50 +1171,294 @@ impl LocalStore {
                 _ => return Err(StoreError::InvalidInput("dashboard breakdown column")),
             };
             result.push(UsageBreakdown {
-                key, label, total_tokens: pos_u64(total)?, record_count: pos_u64(count)?,
+                key,
+                label,
+                total_tokens: pos_u64(total)?,
+                record_count: pos_u64(count)?,
                 estimated_cost_microusd: if priced > 0 { Some(cost) } else { None },
+                exact_records: pos_u64(exact)?,
+                aggregate_records: pos_u64(aggregate)?,
+                estimated_records: pos_u64(estimated)?,
+                unknown_precision_records: pos_u64(unknown)?,
+                untimed_records: pos_u64(untimed)?,
             });
         }
         Ok(result)
     }
 
+    fn model_activity_breakdown(
+        &self,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+    ) -> Result<Vec<ModelActivityBreakdown>> {
+        let mut activity = Vec::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT COALESCE(u.model_id,'unknown-model'),COUNT(*) \
+             FROM usage_records u JOIN source_checkpoints cp \
+               ON cp.tool_id='codex' AND cp.source_key=u.session_id \
+             WHERE u.tool_id='codex' AND u.scope='device_local' AND u.is_deleted=0 \
+               AND cp.source_fingerprint LIKE '%\"mode\":\"modern\"%' \
+               AND (?1 IS NULL OR u.event_at_ms >= ?1) AND (?2 IS NULL OR u.event_at_ms < ?2) \
+             GROUP BY u.model_id ORDER BY 2 DESC,1",
+        )?;
+        let rows = stmt.query_map(params![from_ms, to_ms], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (model_id, response_count) = row?;
+            activity.push(ModelActivityBreakdown {
+                tool_id: "codex".into(),
+                model_id,
+                response_count: pos_u64(response_count)?,
+                time_scope: "selected_range".into(),
+            });
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT model_id,SUM(response_count) FROM antigravity_model_activity \
+             GROUP BY model_id ORDER BY 2 DESC,1",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (model_id, response_count) = row?;
+            activity.push(ModelActivityBreakdown {
+                tool_id: "antigravity".into(),
+                model_id,
+                response_count: pos_u64(response_count)?,
+                time_scope: "all_time".into(),
+            });
+        }
+        activity.sort_by(|a, b| {
+            b.response_count
+                .cmp(&a.response_count)
+                .then_with(|| a.tool_id.cmp(&b.tool_id))
+                .then_with(|| a.model_id.cmp(&b.model_id))
+        });
+        Ok(activity)
+    }
+
+    fn session_usage_page(
+        &self,
+        owner_device_id: &str,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+        offset: u64,
+        limit: u32,
+    ) -> Result<SessionUsagePage> {
+        if limit == 0 || limit > 200 || offset > i64::MAX as u64 {
+            return Err(StoreError::InvalidInput("session page bounds"));
+        }
+        let cte = r#"
+            WITH usage_sessions AS (
+                SELECT u.session_id,u.tool_id,
+                    COALESCE(SUM(u.input_uncached_tokens+u.cache_read_tokens+u.cache_write_tokens+u.output_tokens+u.unclassified_tokens),0) AS total_tokens,
+                    COUNT(*) AS usage_record_count,
+                    SUM(CASE WHEN u.precision='exact' THEN 1 ELSE 0 END) AS exact_records,
+                    SUM(CASE WHEN u.precision='aggregate' THEN 1 ELSE 0 END) AS aggregate_records,
+                    SUM(CASE WHEN u.precision='estimated' THEN 1 ELSE 0 END) AS estimated_records,
+                    SUM(CASE WHEN u.precision='unknown' THEN 1 ELSE 0 END) AS unknown_precision_records,
+                    SUM(CASE WHEN u.event_at_ms IS NULL THEN 1 ELSE 0 END) AS untimed_records,
+                    COUNT(DISTINCT u.model_id) AS model_count,
+                    CASE WHEN u.tool_id='codex' AND EXISTS (
+                        SELECT 1 FROM source_checkpoints cp
+                        WHERE cp.tool_id='codex' AND cp.source_key=u.session_id
+                            AND cp.source_fingerprint LIKE '%"mode":"modern"%'
+                    ) THEN SUM(CASE WHEN u.model_id IS NOT NULL THEN 1 ELSE 0 END) ELSE NULL END AS known_response_count,
+                    CASE WHEN u.tool_id='codex' AND EXISTS (
+                        SELECT 1 FROM source_checkpoints cp
+                        WHERE cp.tool_id='codex' AND cp.source_key=u.session_id
+                            AND cp.source_fingerprint LIKE '%"mode":"modern"%'
+                    ) THEN SUM(CASE WHEN u.model_id IS NULL THEN 1 ELSE 0 END) ELSE NULL END AS unknown_response_count,
+                    MAX(u.event_at_ms) AS last_event_at_ms,NULL AS activity_observed_at_ms
+                FROM usage_records u
+                WHERE u.owner_device_id=?1 AND u.scope='device_local' AND u.is_deleted=0
+                    AND u.session_id IS NOT NULL AND u.tool_id<>'antigravity'
+                    AND (?2 IS NULL OR u.event_at_ms >= ?2) AND (?3 IS NULL OR u.event_at_ms < ?3)
+                GROUP BY u.tool_id,u.session_id
+            ),
+            ag_usage AS (
+                SELECT rs.source_key,
+                    SUM(u.input_uncached_tokens+u.cache_read_tokens+u.cache_write_tokens+u.output_tokens+u.unclassified_tokens) AS total_tokens,
+                    COUNT(*) AS usage_record_count,
+                    SUM(CASE WHEN u.precision='exact' THEN 1 ELSE 0 END) AS exact_records,
+                    SUM(CASE WHEN u.precision='aggregate' THEN 1 ELSE 0 END) AS aggregate_records,
+                    SUM(CASE WHEN u.precision='estimated' THEN 1 ELSE 0 END) AS estimated_records,
+                    SUM(CASE WHEN u.precision='unknown' THEN 1 ELSE 0 END) AS unknown_precision_records,
+                    SUM(CASE WHEN u.event_at_ms IS NULL THEN 1 ELSE 0 END) AS untimed_records,
+                    COUNT(DISTINCT u.model_id) AS model_count,MAX(u.event_at_ms) AS last_event_at_ms
+                FROM record_sources rs JOIN usage_records u ON u.record_id=rs.record_id
+                WHERE rs.tool_id='antigravity' AND u.owner_device_id=?1
+                    AND u.scope='device_local' AND u.is_deleted=0
+                    AND (?2 IS NULL OR u.event_at_ms >= ?2) AND (?3 IS NULL OR u.event_at_ms < ?3)
+                GROUP BY rs.source_key
+            ),
+            ag_models AS (
+                SELECT source_key,COUNT(*) AS model_count
+                FROM antigravity_model_activity GROUP BY source_key
+            ),
+            all_sessions AS (
+                SELECT session_id,tool_id,total_tokens,usage_record_count,exact_records,aggregate_records,
+                    estimated_records,unknown_precision_records,untimed_records,model_count,
+                    known_response_count,unknown_response_count,last_event_at_ms,activity_observed_at_ms
+                FROM usage_sessions
+                UNION ALL
+                SELECT a.source_key,'antigravity',COALESCE(u.total_tokens,0),COALESCE(u.usage_record_count,0),
+                    COALESCE(u.exact_records,0),COALESCE(u.aggregate_records,0),COALESCE(u.estimated_records,0),
+                    COALESCE(u.unknown_precision_records,0),COALESCE(u.untimed_records,0),COALESCE(u.model_count,m.model_count,0),
+                    a.known_turns,a.unknown_turns,u.last_event_at_ms,a.observed_at_ms
+                FROM antigravity_activity_sources a
+                LEFT JOIN ag_usage u ON u.source_key=a.source_key
+                LEFT JOIN ag_models m ON m.source_key=a.source_key
+            )
+        "#;
+        let count_sql = format!("{cte} SELECT COUNT(*) FROM all_sessions");
+        let total: i64 =
+            self.conn
+                .query_row(&count_sql, params![owner_device_id, from_ms, to_ms], |r| {
+                    r.get(0)
+                })?;
+        let page_sql = format!(
+            r#"{cte}
+            SELECT session_id,tool_id,total_tokens,usage_record_count,exact_records,aggregate_records,
+                estimated_records,unknown_precision_records,untimed_records,model_count,
+                known_response_count,unknown_response_count,last_event_at_ms,activity_observed_at_ms
+            FROM all_sessions
+            ORDER BY CASE WHEN last_event_at_ms IS NULL THEN 1 ELSE 0 END,
+                last_event_at_ms DESC,tool_id,session_id
+            LIMIT ?4 OFFSET ?5"#
+        );
+        let mut stmt = self.conn.prepare(&page_sql)?;
+        let rows = stmt.query_map(
+            params![
+                owner_device_id,
+                from_ms,
+                to_ms,
+                i64::from(limit),
+                i64::try_from(offset).map_err(|_| StoreError::IntegerOutOfRange)?
+            ],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, i64>(5)?,
+                    r.get::<_, i64>(6)?,
+                    r.get::<_, i64>(7)?,
+                    r.get::<_, i64>(8)?,
+                    r.get::<_, i64>(9)?,
+                    r.get::<_, Option<i64>>(10)?,
+                    r.get::<_, Option<i64>>(11)?,
+                    r.get::<_, Option<i64>>(12)?,
+                    r.get::<_, Option<i64>>(13)?,
+                ))
+            },
+        )?;
+        let sessions = rows
+            .map(|row| {
+                let (
+                    session_id,
+                    tool_id,
+                    total_tokens,
+                    usage_record_count,
+                    exact_records,
+                    aggregate_records,
+                    estimated_records,
+                    unknown_precision_records,
+                    untimed_records,
+                    model_count,
+                    known_response_count,
+                    unknown_response_count,
+                    last_event_at_ms,
+                    activity_observed_at_ms,
+                ) = row?;
+                Ok(SessionUsage {
+                    session_id,
+                    tool_id,
+                    total_tokens: pos_u64(total_tokens)?,
+                    usage_record_count: pos_u64(usage_record_count)?,
+                    exact_records: pos_u64(exact_records)?,
+                    aggregate_records: pos_u64(aggregate_records)?,
+                    estimated_records: pos_u64(estimated_records)?,
+                    unknown_precision_records: pos_u64(unknown_precision_records)?,
+                    untimed_records: pos_u64(untimed_records)?,
+                    model_count: pos_u64(model_count)?,
+                    known_response_count: known_response_count.map(pos_u64).transpose()?,
+                    unknown_response_count: unknown_response_count.map(pos_u64).transpose()?,
+                    last_event_at_ms,
+                    activity_observed_at_ms,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(SessionUsagePage {
+            sessions,
+            total: pos_u64(total)?,
+            offset,
+            limit,
+        })
+    }
+
     /// Read-only dashboard aggregate. Daily ranges are calculated by the Agent
     /// with the device IANA timezone, so DST boundaries are not assumed to be 24h.
-    pub fn dashboard_snapshot(
-        &self, range: &str, from_ms: Option<i64>, to_ms: Option<i64>,
-        daily_ranges: &[(String, i64, i64)], generated_at_ms: i64,
-        time_zone: String, time_zone_valid: bool,
-    ) -> Result<DashboardSnapshot> {
-        if !["today", "7d", "30d", "all"].contains(&range) || generated_at_ms < 0 ||
-            to_ms.is_some_and(|v| v < 0) || from_ms.is_some_and(|v| v < 0) ||
-            from_ms.zip(to_ms).is_some_and(|(a,b)| a >= b) || daily_ranges.len() > 31 {
+    pub fn dashboard_snapshot(&self, query: DashboardQuery<'_>) -> Result<DashboardSnapshot> {
+        let DashboardQuery {
+            range,
+            from_ms,
+            to_ms,
+            daily_ranges,
+            generated_at_ms,
+            time_zone,
+            time_zone_valid,
+            session_offset,
+        } = query;
+        if !["today", "7d", "30d", "all"].contains(&range)
+            || generated_at_ms < 0
+            || to_ms.is_some_and(|v| v < 0)
+            || from_ms.is_some_and(|v| v < 0)
+            || from_ms.zip(to_ms).is_some_and(|(a, b)| a >= b)
+            || daily_ranges.len() > 31
+        {
             return Err(StoreError::InvalidInput("dashboard query"));
         }
         let identity = self.identity()?;
-        let owner_device_id = identity.as_ref().map(|v| v.device_id.as_str()).unwrap_or("");
+        let owner_device_id = identity
+            .as_ref()
+            .map(|v| v.device_id.as_str())
+            .unwrap_or("");
         let mut daily = Vec::with_capacity(daily_ranges.len());
-        for (date,start,end) in daily_ranges {
+        for (date, start, end) in daily_ranges {
             if date.len() != 10 || *start < 0 || *end <= *start {
                 return Err(StoreError::InvalidInput("dashboard daily range"));
             }
-            let totals = self.usage_totals(owner_device_id, "device_local", Some(*start), Some(*end))?;
+            let totals =
+                self.usage_totals(owner_device_id, "device_local", Some(*start), Some(*end))?;
             daily.push(DailyUsage {
-                date: date.clone(), total_tokens: totals.total_tokens,
-                input_tokens: totals.input_tokens, output_tokens: totals.output_tokens,
+                date: date.clone(),
+                total_tokens: totals.total_tokens,
+                input_tokens: totals.input_tokens,
+                output_tokens: totals.output_tokens,
             });
         }
         let mut health = std::collections::BTreeMap::<String, SourceHealth>::new();
         let mut stmt = self.conn.prepare(
             "SELECT tool_id,last_scan_ms,last_complete_scan_ms,last_status FROM source_checkpoints ORDER BY tool_id,last_scan_ms"
         )?;
-        let rows = stmt.query_map([], |r| Ok((
-            r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,Option<i64>>(2)?,r.get::<_,String>(3)?,
-        )))?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?;
         for row in rows {
-            let (tool,last_scan,last_complete,status) = row?;
+            let (tool, last_scan, last_complete, status) = row?;
             let entry = health.entry(tool.clone()).or_insert(SourceHealth {
-                tool_id: tool, last_scan_ms: None, last_complete_scan_ms: None,
-                status: "unknown".into(), source_count: 0,
+                tool_id: tool,
+                last_scan_ms: None,
+                last_complete_scan_ms: None,
+                status: "unknown".into(),
+                source_count: 0,
             });
             entry.source_count += 1;
             if entry.last_scan_ms.is_none_or(|old| last_scan >= old) {
@@ -822,8 +1472,13 @@ impl LocalStore {
             }
         }
         Ok(DashboardSnapshot {
-            schema_version: schema::VERSION, generated_at_ms, range: range.into(),
-            range_start_ms: from_ms, range_end_ms: to_ms, time_zone, time_zone_valid,
+            schema_version: schema::VERSION,
+            generated_at_ms,
+            range: range.into(),
+            range_start_ms: from_ms,
+            range_end_ms: to_ms,
+            time_zone,
+            time_zone_valid,
             identity: identity.clone(),
             local: self.usage_totals(owner_device_id, "device_local", from_ms, to_ms)?,
             remote: self.remote_usage_totals(None, from_ms, to_ms)?,
@@ -833,11 +1488,39 @@ impl LocalStore {
             remote_by_project: self.remote_usage_breakdown("project_id", from_ms, to_ms)?,
             unassigned: self.usage_totals(owner_device_id, "unknown", from_ms, to_ms)?,
             account_global: self.usage_totals(owner_device_id, "account_global", from_ms, to_ms)?,
-            by_tool: self.usage_breakdown("tool_id", owner_device_id, "device_local", from_ms, to_ms)?,
-            by_model: self.usage_breakdown("model_id", owner_device_id, "device_local", from_ms, to_ms)?,
-            by_project: self.usage_breakdown("project_id", owner_device_id, "device_local", from_ms, to_ms)?,
-            daily, source_health: health.into_values().collect(),
+            by_tool: self.usage_breakdown(
+                "tool_id",
+                owner_device_id,
+                "device_local",
+                from_ms,
+                to_ms,
+            )?,
+            by_model: self.usage_breakdown(
+                "model_id",
+                owner_device_id,
+                "device_local",
+                from_ms,
+                to_ms,
+            )?,
+            model_activity: self.model_activity_breakdown(from_ms, to_ms)?,
+            by_project: self.usage_breakdown(
+                "project_id",
+                owner_device_id,
+                "device_local",
+                from_ms,
+                to_ms,
+            )?,
+            session_usage: self.session_usage_page(
+                owner_device_id,
+                from_ms,
+                to_ms,
+                session_offset,
+                50,
+            )?,
+            daily,
+            source_health: health.into_values().collect(),
             antigravity_quota: self.antigravity_quota_snapshots(200)?,
+            codex_quota: self.codex_quota_snapshots(32)?,
             antigravity_activity: self.antigravity_activity_summary()?,
             sync_status: self.sync_outbox_status(generated_at_ms)?,
         })
@@ -849,19 +1532,30 @@ impl LocalStore {
             "SELECT COALESCE(SUM(known_turns),0),COALESCE(SUM(unknown_turns),0),COUNT(*) FROM antigravity_activity_sources",
             [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
         let mut stmt = self.conn.prepare("SELECT model_id,SUM(response_count) FROM antigravity_model_activity GROUP BY model_id ORDER BY model_id LIMIT 513")?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_,String>(0)?, r.get::<_,i64>(1)?)))?
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        if rows.len() > 512 { return Err(StoreError::InvalidInput("activity summary too many models")); }
+        if rows.len() > 512 {
+            return Err(StoreError::InvalidInput("activity summary too many models"));
+        }
         Ok(AntigravityActivitySummary {
-            known_turns: pos_u64(known)?, unknown_turns: pos_u64(unknown)?,
+            known_turns: pos_u64(known)?,
+            unknown_turns: pos_u64(unknown)?,
             conversations: pos_u64(conversations)?,
-            by_model: rows.into_iter().map(|(m,n)| Ok((m,pos_u64(n)?))).collect::<Result<Vec<_>>>()?,
+            by_model: rows
+                .into_iter()
+                .map(|(m, n)| Ok((m, pos_u64(n)?)))
+                .collect::<Result<Vec<_>>>()?,
         })
     }
 
     /// Atomic import of a bounded list of manually observed quota snapshots.
     /// This never touches Token usage, revision/outbox, or OAuth credentials.
-    pub fn upsert_antigravity_quotas(&mut self, batch: &[AntigravityQuota], received_at_ms: i64) -> Result<usize> {
+    pub fn upsert_antigravity_quotas(
+        &mut self,
+        batch: &[AntigravityQuota],
+        received_at_ms: i64,
+    ) -> Result<usize> {
         if batch.is_empty() || batch.len() > 200 || received_at_ms < 0 {
             return Err(StoreError::InvalidInput("quota batch size/time"));
         }
@@ -871,11 +1565,13 @@ impl LocalStore {
             if row.observed_at_ms > received_at_ms.saturating_add(60_000) {
                 return Err(StoreError::InvalidInput("quota future observation"));
             }
-            if !seen.insert((&row.source_id,&row.pool_id,&row.window_id)) {
+            if !seen.insert((&row.source_id, &row.pool_id, &row.window_id)) {
                 return Err(StoreError::InvalidInput("duplicate quota identity"));
             }
         }
-        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut changed = 0;
         for snapshot in batch {
             changed += tx.execute(
@@ -894,56 +1590,185 @@ impl LocalStore {
     }
 
     pub fn antigravity_quota_snapshots(&self, limit: usize) -> Result<Vec<AntigravityQuota>> {
-        if limit == 0 || limit > 200 { return Err(StoreError::InvalidInput("quota read limit")); }
+        if limit == 0 || limit > 200 {
+            return Err(StoreError::InvalidInput("quota read limit"));
+        }
         let mut stmt = self.conn.prepare(
             "SELECT source_id,pool_id,window_id,remaining_basis_points,reset_at_ms,observed_at_ms \
-             FROM antigravity_quota_snapshots ORDER BY source_id,pool_id,window_id LIMIT ?1")?;
-        let iter = stmt.query_map([i64::try_from(limit).map_err(|_| StoreError::IntegerOutOfRange)?], |r| {
-            let fraction: Option<i64> = r.get(3)?;
-            Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,fraction,
-                r.get::<_,Option<i64>>(4)?,r.get::<_,i64>(5)?))
-        })?;
+             FROM antigravity_quota_snapshots ORDER BY source_id,pool_id,window_id LIMIT ?1",
+        )?;
+        let iter = stmt.query_map(
+            [i64::try_from(limit).map_err(|_| StoreError::IntegerOutOfRange)?],
+            |r| {
+                let fraction: Option<i64> = r.get(3)?;
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    fraction,
+                    r.get::<_, Option<i64>>(4)?,
+                    r.get::<_, i64>(5)?,
+                ))
+            },
+        )?;
         iter.map(|entry| {
-            let (source_id,pool_id,window_id,remaining,reset_at_ms,observed_at_ms) = entry?;
-            let remaining_basis_points = remaining.map(|n| u16::try_from(n).map_err(|_| StoreError::IntegerOutOfRange)).transpose()?;
-            Ok(AntigravityQuota { source_id,pool_id,window_id,remaining_basis_points,reset_at_ms,observed_at_ms })
-        }).collect::<Result<Vec<_>>>()
+            let (source_id, pool_id, window_id, remaining, reset_at_ms, observed_at_ms) = entry?;
+            let remaining_basis_points = remaining
+                .map(|n| u16::try_from(n).map_err(|_| StoreError::IntegerOutOfRange))
+                .transpose()?;
+            Ok(AntigravityQuota {
+                source_id,
+                pool_id,
+                window_id,
+                remaining_basis_points,
+                reset_at_ms,
+                observed_at_ms,
+            })
+        })
+        .collect::<Result<Vec<_>>>()
+    }
+
+    /// Atomically persist a complete Codex quota observation. Older snapshots
+    /// cannot replace newer values, and no usage/outbox rows are touched.
+    pub fn upsert_codex_quotas(
+        &mut self,
+        batch: &[CodexQuota],
+        received_at_ms: i64,
+    ) -> Result<usize> {
+        if batch.is_empty() || batch.len() > 32 || received_at_ms < 0 {
+            return Err(StoreError::InvalidInput("Codex quota batch size/time"));
+        }
+        let mut seen = HashSet::with_capacity(batch.len());
+        for row in batch {
+            row.validate()?;
+            if row.observed_at_ms > received_at_ms.saturating_add(60_000)
+                || !seen.insert((&row.source_id, &row.pool_id, row.window_duration_minutes))
+            {
+                return Err(StoreError::InvalidInput("Codex quota observation/identity"));
+            }
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut changed = 0;
+        for row in batch {
+            changed += tx.execute(
+                "INSERT INTO codex_quota_snapshots(source_id,pool_id,window_duration_minutes,remaining_basis_points,reset_at_ms,observed_at_ms,received_at_ms) \
+                 VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(source_id,pool_id,window_duration_minutes) DO UPDATE SET \
+                 remaining_basis_points=excluded.remaining_basis_points,reset_at_ms=excluded.reset_at_ms, \
+                 observed_at_ms=excluded.observed_at_ms,received_at_ms=excluded.received_at_ms \
+                 WHERE excluded.observed_at_ms > codex_quota_snapshots.observed_at_ms",
+                params![row.source_id,row.pool_id,i64::from(row.window_duration_minutes),
+                    row.remaining_basis_points.map(i64::from),row.reset_at_ms,row.observed_at_ms,received_at_ms],
+            )?;
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+
+    pub fn codex_quota_snapshots(&self, limit: usize) -> Result<Vec<CodexQuota>> {
+        if limit == 0 || limit > 32 {
+            return Err(StoreError::InvalidInput("Codex quota read limit"));
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT source_id,pool_id,window_duration_minutes,remaining_basis_points,reset_at_ms,observed_at_ms \
+             FROM codex_quota_snapshots ORDER BY pool_id,window_duration_minutes LIMIT ?1")?;
+        let rows = stmt.query_map(
+            [i64::try_from(limit).map_err(|_| StoreError::IntegerOutOfRange)?],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                    r.get::<_, Option<i64>>(4)?,
+                    r.get::<_, i64>(5)?,
+                ))
+            },
+        )?;
+        rows.map(|row| {
+            let (source_id, pool_id, duration, remaining, reset_at_ms, observed_at_ms) = row?;
+            Ok(CodexQuota {
+                source_id,
+                pool_id,
+                window_duration_minutes: u32::try_from(duration)
+                    .map_err(|_| StoreError::IntegerOutOfRange)?,
+                remaining_basis_points: remaining
+                    .map(|n| u16::try_from(n).map_err(|_| StoreError::IntegerOutOfRange))
+                    .transpose()?,
+                reset_at_ms,
+                observed_at_ms,
+            })
+        })
+        .collect::<Result<Vec<_>>>()
     }
 
     /// Apply a bounded Hub change-feed page and advance its cursor atomically.
     /// Older revisions are ignored; same-revision hash conflicts abort the entire page.
     pub fn pull_cursor(&self) -> Result<u64> {
-        let value:i64=self.conn.query_row("SELECT last_pull_seq FROM sync_state WHERE singleton=1", [], |r| r.get(0))?;
+        let value: i64 = self.conn.query_row(
+            "SELECT last_pull_seq FROM sync_state WHERE singleton=1",
+            [],
+            |r| r.get(0),
+        )?;
         pos_u64(value)
     }
 
-    pub fn apply_remote_changes(&mut self, changes: &[RemoteUsageChange], next_cursor: u64) -> Result<usize> {
-        if changes.len() > 500 { return Err(StoreError::InvalidInput("remote page limit")); }
+    pub fn apply_remote_changes(
+        &mut self,
+        changes: &[RemoteUsageChange],
+        next_cursor: u64,
+    ) -> Result<usize> {
+        if changes.len() > 500 {
+            return Err(StoreError::InvalidInput("remote page limit"));
+        }
         let local_device_id = self.identity()?.map(|i| i.device_id).unwrap_or_default();
-        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let current_cursor: i64 = tx.query_row("SELECT last_pull_seq FROM sync_state WHERE singleton=1", [], |r| r.get(0))?;
-        let mut previous = u64::try_from(current_cursor).map_err(|_| StoreError::IntegerOutOfRange)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current_cursor: i64 = tx.query_row(
+            "SELECT last_pull_seq FROM sync_state WHERE singleton=1",
+            [],
+            |r| r.get(0),
+        )?;
+        let mut previous =
+            u64::try_from(current_cursor).map_err(|_| StoreError::IntegerOutOfRange)?;
         let mut applied = 0usize;
         for change in changes {
-            if change.change_seq <= previous || change.change_seq > next_cursor || change.owner_device_id != change.envelope.record.owner_device_id {
+            if change.change_seq <= previous
+                || change.change_seq > next_cursor
+                || change.owner_device_id != change.envelope.record.owner_device_id
+            {
                 return Err(StoreError::InvalidInput("remote change sequence/owner"));
             }
-            change.envelope.validate().map_err(|_| StoreError::InvalidInput("remote envelope"))?;
+            change
+                .envelope
+                .validate()
+                .map_err(|_| StoreError::InvalidInput("remote envelope"))?;
             if change.owner_device_id == local_device_id {
                 previous = change.change_seq;
                 continue;
             }
-            let raw = serde_json::to_string(&change.envelope.record).map_err(|_| StoreError::InvalidInput("remote serialization"))?;
+            let raw = serde_json::to_string(&change.envelope.record)
+                .map_err(|_| StoreError::InvalidInput("remote serialization"))?;
             let rev = db_int(change.envelope.record_revision)?;
             let mut old: Option<(i64,String)> = tx.query_row(
                 "SELECT record_revision,payload_hash FROM remote_usage_cache WHERE owner_device_id=?1 AND record_id=?2",
                 params![change.owner_device_id,change.envelope.record.record_id], |r| Ok((r.get(0)?,r.get(1)?))
             ).optional()?;
-            if let Some((old_rev,old_hash)) = old.take() {
-                if rev < old_rev { previous = change.change_seq; continue; }
+            if let Some((old_rev, old_hash)) = old.take() {
+                if rev < old_rev {
+                    previous = change.change_seq;
+                    continue;
+                }
                 if rev == old_rev && !old_hash.is_empty() {
-                    if old_hash != change.envelope.payload_hash { return Err(StoreError::DatabaseInconsistent("remote same-revision payload conflict")); }
-                    previous = change.change_seq; continue;
+                    if old_hash != change.envelope.payload_hash {
+                        return Err(StoreError::DatabaseInconsistent(
+                            "remote same-revision payload conflict",
+                        ));
+                    }
+                    previous = change.change_seq;
+                    continue;
                 }
             }
             tx.execute(
@@ -954,33 +1779,100 @@ impl LocalStore {
             previous = change.change_seq;
         }
         if next_cursor != previous {
-            return Err(StoreError::InvalidInput("remote cursor must match last applied sequence"));
+            return Err(StoreError::InvalidInput(
+                "remote cursor must match last applied sequence",
+            ));
         }
         tx.execute("UPDATE sync_state SET last_pull_seq=?1,last_pull_ms=CAST(strftime('%s','now') AS INTEGER)*1000 WHERE singleton=1", [db_int(next_cursor)?])?;
         tx.commit()?;
         Ok(applied)
     }
 
-    pub fn remote_usage_totals(&self, owner_device_id: Option<&str>, start_ms: Option<i64>, end_ms: Option<i64>) -> Result<RemoteUsageTotals> {
-        let (total,input,cache_read,cache_write,output,unclassified,count,priced,exact,aggregate,estimated,unknown,cost):(i64,i64,i64,i64,i64,i64,i64,i64,i64,i64,i64,i64,Option<i64>) = self.conn.query_row(
+    pub fn remote_usage_totals(
+        &self,
+        owner_device_id: Option<&str>,
+        start_ms: Option<i64>,
+        end_ms: Option<i64>,
+    ) -> Result<RemoteUsageTotals> {
+        let row = self.conn.query_row(
             "SELECT COALESCE(SUM(CAST(json_extract(payload_json,'$.usage.input_uncached_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.cache_read_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.cache_write_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.output_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.unclassified_tokens') AS INTEGER)),0),COALESCE(SUM(CAST(json_extract(payload_json,'$.usage.input_uncached_tokens') AS INTEGER)),0),COALESCE(SUM(CAST(json_extract(payload_json,'$.usage.cache_read_tokens') AS INTEGER)),0),COALESCE(SUM(CAST(json_extract(payload_json,'$.usage.cache_write_tokens') AS INTEGER)),0),COALESCE(SUM(CAST(json_extract(payload_json,'$.usage.output_tokens') AS INTEGER)),0),COALESCE(SUM(CAST(json_extract(payload_json,'$.usage.unclassified_tokens') AS INTEGER)),0),COUNT(*),COALESCE(SUM(CASE WHEN json_extract(payload_json,'$.estimated_cost_microusd') IS NOT NULL THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN json_extract(payload_json,'$.precision')='exact' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN json_extract(payload_json,'$.precision')='aggregate' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN json_extract(payload_json,'$.precision')='estimated' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN json_extract(payload_json,'$.precision')='unknown' THEN 1 ELSE 0 END),0),SUM(json_extract(payload_json,'$.estimated_cost_microusd')) FROM remote_usage_cache WHERE is_deleted=0 AND json_extract(payload_json,'$.scope')='device_local' AND (?1 IS NULL OR owner_device_id=?1) AND (?2 IS NULL OR json_extract(payload_json,'$.event_at_ms')>=?2) AND (?3 IS NULL OR json_extract(payload_json,'$.event_at_ms')<?3)",
-            params![owner_device_id,start_ms,end_ms], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?,r.get(12)?))
+            params![owner_device_id,start_ms,end_ms], |r| Ok(RemoteUsageTotalsRow {
+                total: r.get(0)?, input: r.get(1)?, cache_read: r.get(2)?, cache_write: r.get(3)?,
+                output: r.get(4)?, unclassified: r.get(5)?, count: r.get(6)?, priced: r.get(7)?,
+                exact: r.get(8)?, aggregate: r.get(9)?, estimated: r.get(10)?, unknown: r.get(11)?,
+                cost: r.get(12)?,
+            })
         )?;
-        let record_count=pos_u64(count)?; let priced_records=pos_u64(priced)?;
-        Ok(RemoteUsageTotals { total_tokens:pos_u64(total)?,input_tokens:pos_u64(input)?,cache_read_tokens:pos_u64(cache_read)?,cache_write_tokens:pos_u64(cache_write)?,output_tokens:pos_u64(output)?,unclassified_tokens:pos_u64(unclassified)?,record_count,priced_records,unpriced_records:record_count.saturating_sub(priced_records),exact_records:pos_u64(exact)?,aggregate_records:pos_u64(aggregate)?,estimated_records:pos_u64(estimated)?,unknown_precision_records:pos_u64(unknown)?,estimated_cost_microusd:cost })
+        let RemoteUsageTotalsRow {
+            total,
+            input,
+            cache_read,
+            cache_write,
+            output,
+            unclassified,
+            count,
+            priced,
+            exact,
+            aggregate,
+            estimated,
+            unknown,
+            cost,
+        } = row;
+        let record_count = pos_u64(count)?;
+        let priced_records = pos_u64(priced)?;
+        Ok(RemoteUsageTotals {
+            total_tokens: pos_u64(total)?,
+            input_tokens: pos_u64(input)?,
+            cache_read_tokens: pos_u64(cache_read)?,
+            cache_write_tokens: pos_u64(cache_write)?,
+            output_tokens: pos_u64(output)?,
+            unclassified_tokens: pos_u64(unclassified)?,
+            record_count,
+            priced_records,
+            unpriced_records: record_count.saturating_sub(priced_records),
+            exact_records: pos_u64(exact)?,
+            aggregate_records: pos_u64(aggregate)?,
+            estimated_records: pos_u64(estimated)?,
+            unknown_precision_records: pos_u64(unknown)?,
+            estimated_cost_microusd: cost,
+        })
     }
 
-    pub fn remote_usage_by_device(&self, start_ms: Option<i64>, end_ms: Option<i64>) -> Result<Vec<RemoteDeviceUsage>> {
+    pub fn remote_usage_by_device(
+        &self,
+        start_ms: Option<i64>,
+        end_ms: Option<i64>,
+    ) -> Result<Vec<RemoteDeviceUsage>> {
         let mut stmt=self.conn.prepare("SELECT owner_device_id,COALESCE(SUM(CAST(json_extract(payload_json,'$.usage.input_uncached_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.cache_read_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.cache_write_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.output_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.unclassified_tokens') AS INTEGER)),0),COUNT(*),SUM(json_extract(payload_json,'$.estimated_cost_microusd')) FROM remote_usage_cache WHERE is_deleted=0 AND json_extract(payload_json,'$.scope')='device_local' AND (?1 IS NULL OR json_extract(payload_json,'$.event_at_ms')>=?1) AND (?2 IS NULL OR json_extract(payload_json,'$.event_at_ms')<?2) GROUP BY owner_device_id ORDER BY owner_device_id")?;
-        let rows=stmt.query_map(params![start_ms,end_ms],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,Option<i64>>(3)?)))?;
-        let mut out=Vec::new();
-        for row in rows { let (id,total,count,cost)=row?; out.push(RemoteDeviceUsage{owner_device_id:id,total_tokens:pos_u64(total)?,record_count:pos_u64(count)?,estimated_cost_microusd:cost}); }
+        let rows = stmt.query_map(params![start_ms, end_ms], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, Option<i64>>(3)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, total, count, cost) = row?;
+            out.push(RemoteDeviceUsage {
+                owner_device_id: id,
+                total_tokens: pos_u64(total)?,
+                record_count: pos_u64(count)?,
+                estimated_cost_microusd: cost,
+            });
+        }
         Ok(out)
     }
 
     /// Remote breakdowns preserve device ownership. Only device-local usage is
     /// included; account-global and unknown-scope rows are never apportioned.
-    pub fn remote_usage_breakdown(&self, dimension: &'static str, start_ms: Option<i64>, end_ms: Option<i64>) -> Result<Vec<RemoteUsageBreakdown>> {
+    pub fn remote_usage_breakdown(
+        &self,
+        dimension: &'static str,
+        start_ms: Option<i64>,
+        end_ms: Option<i64>,
+    ) -> Result<Vec<RemoteUsageBreakdown>> {
         let json_path = match dimension {
             "tool_id" => "$.tool_id",
             "model_id" => "$.model_id",
@@ -997,11 +1889,22 @@ impl LocalStore {
              GROUP BY owner_device_id, json_extract(payload_json,'{json_path}') ORDER BY 4 DESC LIMIT 1001"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![start_ms, end_ms], |r| Ok((
-            r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, i64>(2)?,
-            r.get::<_, i64>(3)?, r.get::<_, Option<i64>>(4)?,
-        )))?.collect::<rusqlite::Result<Vec<_>>>()?;
-        if rows.len() > 1000 { return Err(StoreError::InvalidInput("remote breakdown cardinality exceeds 1000")); }
+        let rows = stmt
+            .query_map(params![start_ms, end_ms], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, Option<i64>>(4)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if rows.len() > 1000 {
+            return Err(StoreError::InvalidInput(
+                "remote breakdown cardinality exceeds 1000",
+            ));
+        }
         let mut out = Vec::with_capacity(rows.len());
         for (owner, raw_key, count, total, cost) in rows {
             let key = raw_key.unwrap_or_else(|| match dimension {
@@ -1010,12 +1913,23 @@ impl LocalStore {
                 _ => "no-project".into(),
             });
             let label = if dimension == "project_id" {
-                let short = key.strip_prefix("prj_").unwrap_or(&key).chars().take(8).collect::<String>();
+                let short = key
+                    .strip_prefix("prj_")
+                    .unwrap_or(&key)
+                    .chars()
+                    .take(8)
+                    .collect::<String>();
                 format!("项目 {short}")
-            } else { key.clone() };
+            } else {
+                key.clone()
+            };
             out.push(RemoteUsageBreakdown {
-                owner_device_id: owner, key, label, total_tokens: pos_u64(total)?,
-                record_count: pos_u64(count)?, estimated_cost_microusd: cost,
+                owner_device_id: owner,
+                key,
+                label,
+                total_tokens: pos_u64(total)?,
+                record_count: pos_u64(count)?,
+                estimated_cost_microusd: cost,
             });
         }
         Ok(out)
@@ -1028,66 +1942,136 @@ impl LocalStore {
     /// Current records associated with one authoritative source. Used only for
     /// explicit full reconciliation and parser-version upgrades. Bounded so a
     /// corrupted/adversarial source cannot exhaust memory.
-    pub fn records_for_source(&self, tool: &str, source_key: &str, limit: usize) -> Result<Vec<RevisionedRecord>> {
-        if limit == 0 || limit > 2000 { return Err(StoreError::InvalidInput("source read limit")); }
+    pub fn records_for_source(
+        &self,
+        tool: &str,
+        source_key: &str,
+        limit: usize,
+    ) -> Result<Vec<RevisionedRecord>> {
+        if limit == 0 || limit > 2000 {
+            return Err(StoreError::InvalidInput("source read limit"));
+        }
         let mut stmt = self.conn.prepare(
             "SELECT record_id FROM record_sources WHERE tool_id=?1 AND source_key=?2 ORDER BY record_id LIMIT ?3"
         )?;
-        let ids = stmt.query_map(params![tool, source_key, i64::try_from(limit + 1).map_err(|_| StoreError::IntegerOutOfRange)?],
-            |r| r.get::<_, String>(0))?
+        let ids = stmt
+            .query_map(
+                params![
+                    tool,
+                    source_key,
+                    i64::try_from(limit + 1).map_err(|_| StoreError::IntegerOutOfRange)?
+                ],
+                |r| r.get::<_, String>(0),
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        if ids.len() > limit { return Err(StoreError::InvalidInput("source exceeds reconciliation limit")); }
+        if ids.len() > limit {
+            return Err(StoreError::InvalidInput(
+                "source exceeds reconciliation limit",
+            ));
+        }
         let mut result = Vec::with_capacity(ids.len());
         for id in ids {
-            result.push(self.get_record(&id)?.ok_or(StoreError::DatabaseInconsistent("source record missing"))?);
+            result.push(
+                self.get_record(&id)?
+                    .ok_or(StoreError::DatabaseInconsistent("source record missing"))?,
+            );
         }
         Ok(result)
     }
 
     /// Returns only due, non-quarantined outbox entries. Retry scheduling survives restarts.
     pub fn pending_outbox_due(&self, limit: usize, now_ms: i64) -> Result<Vec<OutboxEntry>> {
-        if limit == 0 || limit > 200 || now_ms < 0 { return Err(StoreError::InvalidInput("outbox due query")); }
+        if limit == 0 || limit > 200 || now_ms < 0 {
+            return Err(StoreError::InvalidInput("outbox due query"));
+        }
         let mut stmt = self.conn.prepare(
             "SELECT record_id,record_revision,enqueued_at_ms,attempts FROM sync_outbox \
              WHERE blocked_at_ms IS NULL AND next_attempt_at_ms <= ?1 \
-             ORDER BY enqueued_at_ms,record_id LIMIT ?2"
+             ORDER BY enqueued_at_ms,record_id LIMIT ?2",
         )?;
-        let raw = stmt.query_map(params![now_ms, i64::try_from(limit).map_err(|_| StoreError::IntegerOutOfRange)?],
-            |r| Ok((r.get::<_, String>(0)?,r.get::<_, i64>(1)?,r.get::<_, i64>(2)?,r.get::<_, i64>(3)?)))?
+        let raw = stmt
+            .query_map(
+                params![
+                    now_ms,
+                    i64::try_from(limit).map_err(|_| StoreError::IntegerOutOfRange)?
+                ],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, i64>(3)?,
+                    ))
+                },
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let mut entries = Vec::with_capacity(raw.len());
         for (record_id, rev, enqueued_at_ms, attempts) in raw {
-            let envelope = self.get_record(&record_id)?.ok_or(StoreError::DatabaseInconsistent("outbox record missing"))?;
-            if envelope.record_revision != pos_u64(rev)? { return Err(StoreError::DatabaseInconsistent("outbox revision does not match record")); }
-            entries.push(OutboxEntry { envelope, enqueued_at_ms, attempts: pos_u64(attempts)? });
+            let envelope = self
+                .get_record(&record_id)?
+                .ok_or(StoreError::DatabaseInconsistent("outbox record missing"))?;
+            if envelope.record_revision != pos_u64(rev)? {
+                return Err(StoreError::DatabaseInconsistent(
+                    "outbox revision does not match record",
+                ));
+            }
+            entries.push(OutboxEntry {
+                envelope,
+                enqueued_at_ms,
+                attempts: pos_u64(attempts)?,
+            });
         }
         Ok(entries)
     }
 
     /// Persist exponential backoff: 5s, 10s, ... capped at one hour.
-    pub fn schedule_outbox_retry(&mut self, record_id: &str, revision: u64, now_ms: i64, error_code: &str) -> Result<Option<i64>> {
-        if revision == 0 || now_ms < 0 || error_code.is_empty() || error_code.len() > 128 || error_code.chars().any(char::is_control) {
+    pub fn schedule_outbox_retry(
+        &mut self,
+        record_id: &str,
+        revision: u64,
+        now_ms: i64,
+        error_code: &str,
+    ) -> Result<Option<i64>> {
+        if revision == 0
+            || now_ms < 0
+            || error_code.is_empty()
+            || error_code.len() > 128
+            || error_code.chars().any(char::is_control)
+        {
             return Err(StoreError::InvalidInput("outbox retry"));
         }
         let attempts: Option<i64> = self.conn.query_row(
             "SELECT attempts FROM sync_outbox WHERE record_id=?1 AND record_revision=?2 AND blocked_at_ms IS NULL",
             params![record_id, db_int(revision)?], |r| r.get(0)
         ).optional()?;
-        let Some(attempts) = attempts else { return Ok(None); };
+        let Some(attempts) = attempts else {
+            return Ok(None);
+        };
         let exponent = attempts.clamp(0, 10) as u32;
         let delay_ms = 5_000_i64.saturating_mul(1_i64 << exponent).min(3_600_000);
         let next_at = now_ms.saturating_add(delay_ms);
         let changed = self.conn.execute(
             "UPDATE sync_outbox SET attempts=attempts+1,last_error=?3,next_attempt_at_ms=?4 \
              WHERE record_id=?1 AND record_revision=?2 AND blocked_at_ms IS NULL",
-            params![record_id, db_int(revision)?, error_code, next_at]
+            params![record_id, db_int(revision)?, error_code, next_at],
         )?;
         Ok((changed == 1).then_some(next_at))
     }
 
     /// A superseded revision is quarantined until explicit remote reconciliation; never retry forever.
-    pub fn block_outbox_revision(&mut self, record_id: &str, revision: u64, now_ms: i64, reason: &str) -> Result<bool> {
-        if revision == 0 || now_ms < 0 || reason.is_empty() || reason.len() > 128 || reason.chars().any(char::is_control) {
+    pub fn block_outbox_revision(
+        &mut self,
+        record_id: &str,
+        revision: u64,
+        now_ms: i64,
+        reason: &str,
+    ) -> Result<bool> {
+        if revision == 0
+            || now_ms < 0
+            || reason.is_empty()
+            || reason.len() > 128
+            || reason.chars().any(char::is_control)
+        {
             return Err(StoreError::InvalidInput("outbox block"));
         }
         let changed = self.conn.execute(
@@ -1111,16 +2095,43 @@ impl LocalStore {
             "SELECT last_attempt_ms,last_success_ms,last_pull_seq,last_pull_ms,last_status,last_error FROM sync_state WHERE singleton=1", [],
             |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))
         )?;
-        Ok(SyncOutboxStatus { pending: pending.max(0) as u64, deferred: deferred.max(0) as u64, blocked: blocked.max(0) as u64,
-            oldest_pending_at_ms: oldest, next_attempt_at_ms: next, last_attempt_ms: last_attempt, last_success_ms: last_success,
-            last_pull_seq: pos_u64(last_pull_seq)?, last_pull_ms, last_status, last_error })
+        Ok(SyncOutboxStatus {
+            pending: pending.max(0) as u64,
+            deferred: deferred.max(0) as u64,
+            blocked: blocked.max(0) as u64,
+            oldest_pending_at_ms: oldest,
+            next_attempt_at_ms: next,
+            last_attempt_ms: last_attempt,
+            last_success_ms: last_success,
+            last_pull_seq: pos_u64(last_pull_seq)?,
+            last_pull_ms,
+            last_status,
+            last_error,
+        })
     }
 
-    pub fn update_sync_state(&mut self, now_ms: i64, status: &str, error: Option<&str>) -> Result<()> {
-        if now_ms < 0 || !["idle","success","deferred","blocked","auth_required","error"].contains(&status) {
+    pub fn update_sync_state(
+        &mut self,
+        now_ms: i64,
+        status: &str,
+        error: Option<&str>,
+    ) -> Result<()> {
+        if now_ms < 0
+            || ![
+                "idle",
+                "success",
+                "deferred",
+                "blocked",
+                "auth_required",
+                "error",
+            ]
+            .contains(&status)
+        {
             return Err(StoreError::InvalidInput("sync state"));
         }
-        if error.is_some_and(|v| v.len() > 128 || v.chars().any(char::is_control)) { return Err(StoreError::InvalidInput("sync error")); }
+        if error.is_some_and(|v| v.len() > 128 || v.chars().any(char::is_control)) {
+            return Err(StoreError::InvalidInput("sync error"));
+        }
         self.conn.execute(
             "UPDATE sync_state SET last_attempt_ms=?1,last_status=?2,last_error=?3, \
              last_success_ms=CASE WHEN ?2='success' THEN ?1 ELSE last_success_ms END WHERE singleton=1",
@@ -1131,21 +2142,40 @@ impl LocalStore {
 
     /// Bounded reads: never copy the whole archive into memory for a push.
     pub fn pending_outbox(&self, limit: usize) -> Result<Vec<OutboxEntry>> {
-        if limit == 0 || limit > 200 { return Err(StoreError::InvalidInput("outbox batch limit (1..200)")); }
+        if limit == 0 || limit > 200 {
+            return Err(StoreError::InvalidInput("outbox batch limit (1..200)"));
+        }
         let mut stmt = self.conn.prepare(
             "SELECT record_id,record_revision,enqueued_at_ms,attempts FROM sync_outbox ORDER BY enqueued_at_ms,record_id LIMIT ?1"
         )?;
-        let raw = stmt.query_map([i64::try_from(limit).map_err(|_| StoreError::IntegerOutOfRange)?],
-            |r| Ok((r.get::<_, String>(0)?,r.get::<_, i64>(1)?,r.get::<_, i64>(2)?,r.get::<_, i64>(3)?)))?
+        let raw = stmt
+            .query_map(
+                [i64::try_from(limit).map_err(|_| StoreError::IntegerOutOfRange)?],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, i64>(3)?,
+                    ))
+                },
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let mut entries = Vec::with_capacity(raw.len());
         for (record_id, rev, enqueued_at_ms, attempts) in raw {
-            let envelope = self.get_record(&record_id)?
+            let envelope = self
+                .get_record(&record_id)?
                 .ok_or(StoreError::DatabaseInconsistent("outbox record missing"))?;
             if envelope.record_revision != pos_u64(rev)? {
-                return Err(StoreError::DatabaseInconsistent("outbox revision does not match record"));
+                return Err(StoreError::DatabaseInconsistent(
+                    "outbox revision does not match record",
+                ));
             }
-            entries.push(OutboxEntry { envelope, enqueued_at_ms, attempts: pos_u64(attempts)? });
+            entries.push(OutboxEntry {
+                envelope,
+                enqueued_at_ms,
+                attempts: pos_u64(attempts)?,
+            });
         }
         Ok(entries)
     }
@@ -1153,29 +2183,43 @@ impl LocalStore {
     /// Delete only on an authoritative Hub accepted/unchanged response. The
     /// network layer must NOT interpret `superseded` as a safe acknowledgement.
     pub fn ack_outbox_if_revision(&mut self, record_id: &str, revision: u64) -> Result<bool> {
-        if revision == 0 { return Err(StoreError::InvalidInput("ack revision")); }
+        if revision == 0 {
+            return Err(StoreError::InvalidInput("ack revision"));
+        }
         let changed = self.conn.execute(
             "DELETE FROM sync_outbox WHERE record_id=?1 AND record_revision=?2",
-            params![record_id, db_int(revision)?]
+            params![record_id, db_int(revision)?],
         )?;
         Ok(changed == 1)
     }
 
-    pub fn note_outbox_failure(&mut self, record_id: &str, revision: u64, error_code: &str) -> Result<bool> {
-        if error_code.is_empty() || error_code.len() > 128 || error_code.chars().any(char::is_control) {
+    pub fn note_outbox_failure(
+        &mut self,
+        record_id: &str,
+        revision: u64,
+        error_code: &str,
+    ) -> Result<bool> {
+        if error_code.is_empty()
+            || error_code.len() > 128
+            || error_code.chars().any(char::is_control)
+        {
             return Err(StoreError::InvalidInput("safe error code"));
         }
         let changed = self.conn.execute(
             "UPDATE sync_outbox SET attempts=attempts+1,last_error=?3 \
              WHERE record_id=?1 AND record_revision=?2 AND attempts < 9223372036854775807",
-            params![record_id, db_int(revision)?, error_code]
+            params![record_id, db_int(revision)?, error_code],
         )?;
         Ok(changed == 1)
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-enum RecordChange { Inserted, Revised, Unchanged }
+enum RecordChange {
+    Inserted,
+    Revised,
+    Unchanged,
+}
 
 fn upsert_source_record(
     tx: &rusqlite::Transaction<'_>,
@@ -1185,57 +2229,70 @@ fn upsert_source_record(
     owner: &str,
     observed_at_ms: i64,
 ) -> Result<RecordChange> {
-    if rec.owner_device_id != owner { return Err(StoreError::IdentityMismatch); }
+    if rec.owner_device_id != owner {
+        return Err(StoreError::IdentityMismatch);
+    }
     let previous: Option<(String, String, String, i64)> = tx.query_row(
                 "SELECT owner_device_id,tool_id,payload_hash,record_revision FROM usage_records WHERE record_id=?1",
                 [&rec.record_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))
             ).optional()?;
     let change;
     match previous {
-                Some((old_owner, old_tool, old_hash, revision)) => {
-                    if old_owner != owner || old_tool != rec.tool_id {
-                        return Err(StoreError::RecordOwnershipConflict);
-                    }
-                    let mut sources = tx.prepare("SELECT source_key FROM record_sources WHERE record_id=?1 AND tool_id=?2")?;
-                    let found = sources.query_map(params![rec.record_id, rec.tool_id], |r| r.get::<_, String>(0))?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
-                    if found.is_empty() { return Err(StoreError::DatabaseInconsistent("record lacks source provenance")); }
-                    if old_hash != hash {
-                        // Once multiple observers claim a logical record, require
-                        // upstream arbitration. Never oscillate between values.
-                        if found.len() != 1 || found[0] != source_key {
-                            return Err(StoreError::SourceArbitrationConflict);
-                        }
-                        let newer = revision.checked_add(1).ok_or(StoreError::RevisionOverflow)?;
-                        write_record(tx, rec, newer, hash, observed_at_ms)?;
-                        enqueue(tx, &rec.record_id, newer, observed_at_ms)?;
-                        change = RecordChange::Revised;
-                    } else {
-                        change = RecordChange::Unchanged;
-                    }
-                }
-                None => {
-                    write_record(tx, rec, 1, hash, observed_at_ms)?;
-                    enqueue(tx, &rec.record_id, 1, observed_at_ms)?;
-                    change = RecordChange::Inserted;
-                }
+        Some((old_owner, old_tool, old_hash, revision)) => {
+            if old_owner != owner || old_tool != rec.tool_id {
+                return Err(StoreError::RecordOwnershipConflict);
             }
-            tx.execute(
-                "INSERT OR IGNORE INTO record_sources(record_id,tool_id,source_key) VALUES(?1,?2,?3)",
-                params![rec.record_id, rec.tool_id, source_key]
+            let mut sources = tx.prepare(
+                "SELECT source_key FROM record_sources WHERE record_id=?1 AND tool_id=?2",
             )?;
+            let found = sources
+                .query_map(params![rec.record_id, rec.tool_id], |r| {
+                    r.get::<_, String>(0)
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            if found.is_empty() {
+                return Err(StoreError::DatabaseInconsistent(
+                    "record lacks source provenance",
+                ));
+            }
+            if old_hash != hash {
+                // Once multiple observers claim a logical record, require
+                // upstream arbitration. Never oscillate between values.
+                if found.len() != 1 || found[0] != source_key {
+                    return Err(StoreError::SourceArbitrationConflict);
+                }
+                let newer = revision
+                    .checked_add(1)
+                    .ok_or(StoreError::RevisionOverflow)?;
+                write_record(tx, rec, newer, hash, observed_at_ms)?;
+                enqueue(tx, &rec.record_id, newer, observed_at_ms)?;
+                change = RecordChange::Revised;
+            } else {
+                change = RecordChange::Unchanged;
+            }
+        }
+        None => {
+            write_record(tx, rec, 1, hash, observed_at_ms)?;
+            enqueue(tx, &rec.record_id, 1, observed_at_ms)?;
+            change = RecordChange::Inserted;
+        }
+    }
+    tx.execute(
+        "INSERT OR IGNORE INTO record_sources(record_id,tool_id,source_key) VALUES(?1,?2,?3)",
+        params![rec.record_id, rec.tool_id, source_key],
+    )?;
     Ok(change)
 }
 
 fn read_record(conn: &Connection, record_id: &str) -> Result<Option<RevisionedRecord>> {
-        let raw = conn.query_row(
+    let raw = conn.query_row(
             "SELECT record_id,owner_device_id,tool_id,scope,account_id,model_id,project_id,session_id,event_at_ms, \
                 input_uncached_tokens,cache_read_tokens,cache_write_tokens,output_tokens,unclassified_tokens, \
                 reasoning_tokens,estimated_cost_microusd,price_version,precision,record_revision,payload_hash,is_deleted \
              FROM usage_records WHERE record_id=?1",
             [record_id], RawRecord::read
         ).optional()?;
-        raw.map(RawRecord::into_envelope).transpose()
+    raw.map(RawRecord::into_envelope).transpose()
 }
 
 fn load_checkpoint(conn: &Connection, tool: &str, key: &str) -> Result<Option<SourceCheckpoint>> {
@@ -1246,12 +2303,28 @@ fn load_checkpoint(conn: &Connection, tool: &str, key: &str) -> Result<Option<So
                  r.get::<_, i64>(3)?,r.get::<_, Option<i64>>(4)?,r.get::<_, String>(5)?))
     ).optional()?;
     match stored {
-        Some((source_fingerprint, offset, parser, last_scan_ms, last_complete_scan_ms, last_status)) => {
-            let parser_version = u32::try_from(parser).map_err(|_| StoreError::DatabaseInconsistent("invalid parser version"))?;
-            Ok(Some(SourceCheckpoint {tool_id: tool.to_string(),source_key:key.to_string(),source_fingerprint,
-                read_offset:pos_u64(offset)?,parser_version,last_scan_ms,last_complete_scan_ms,last_status}))
+        Some((
+            source_fingerprint,
+            offset,
+            parser,
+            last_scan_ms,
+            last_complete_scan_ms,
+            last_status,
+        )) => {
+            let parser_version = u32::try_from(parser)
+                .map_err(|_| StoreError::DatabaseInconsistent("invalid parser version"))?;
+            Ok(Some(SourceCheckpoint {
+                tool_id: tool.to_string(),
+                source_key: key.to_string(),
+                source_fingerprint,
+                read_offset: pos_u64(offset)?,
+                parser_version,
+                last_scan_ms,
+                last_complete_scan_ms,
+                last_status,
+            }))
         }
-        None => Ok(None)
+        None => Ok(None),
     }
 }
 
@@ -1263,9 +2336,24 @@ fn enqueue(tx: &rusqlite::Transaction<'_>, id: &str, rev: i64, now: i64) -> Resu
     Ok(())
 }
 
-fn write_record(tx: &rusqlite::Transaction<'_>, rec: &CanonicalRecord, rev: i64, hash: &str, now: i64) -> Result<()> {
-    let scope = match rec.scope { UsageScope::DeviceLocal => "device_local", UsageScope::AccountGlobal => "account_global", UsageScope::Unknown => "unknown" };
-    let precision = match rec.precision { Precision::Exact => "exact", Precision::Aggregate => "aggregate", Precision::Estimated => "estimated", Precision::Unknown => "unknown" };
+fn write_record(
+    tx: &rusqlite::Transaction<'_>,
+    rec: &CanonicalRecord,
+    rev: i64,
+    hash: &str,
+    now: i64,
+) -> Result<()> {
+    let scope = match rec.scope {
+        UsageScope::DeviceLocal => "device_local",
+        UsageScope::AccountGlobal => "account_global",
+        UsageScope::Unknown => "unknown",
+    };
+    let precision = match rec.precision {
+        Precision::Exact => "exact",
+        Precision::Aggregate => "aggregate",
+        Precision::Estimated => "estimated",
+        Precision::Unknown => "unknown",
+    };
     tx.execute(
         "INSERT INTO usage_records( \
             record_id,owner_device_id,tool_id,scope,account_id,model_id,project_id,session_id,event_at_ms, \
@@ -1291,46 +2379,100 @@ fn write_record(tx: &rusqlite::Transaction<'_>, rec: &CanonicalRecord, rev: i64,
 }
 
 struct RawRecord {
-    record_id: String, owner_device_id: String, tool_id: String, scope: String,
-    account_id: Option<String>, model_id: Option<String>, project_id: Option<String>, session_id: Option<String>,
-    event_at_ms: Option<i64>, input: i64, cache_read: i64, cache_write: i64, output: i64,
-    unclassified: i64, reasoning: Option<i64>, cost: Option<i64>, price: Option<String>,
-    precision: String, revision: i64, hash: String, deleted: i64,
+    record_id: String,
+    owner_device_id: String,
+    tool_id: String,
+    scope: String,
+    account_id: Option<String>,
+    model_id: Option<String>,
+    project_id: Option<String>,
+    session_id: Option<String>,
+    event_at_ms: Option<i64>,
+    input: i64,
+    cache_read: i64,
+    cache_write: i64,
+    output: i64,
+    unclassified: i64,
+    reasoning: Option<i64>,
+    cost: Option<i64>,
+    price: Option<String>,
+    precision: String,
+    revision: i64,
+    hash: String,
+    deleted: i64,
 }
 impl RawRecord {
     fn read(r: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
-            record_id:r.get(0)?,owner_device_id:r.get(1)?,tool_id:r.get(2)?,scope:r.get(3)?,
-            account_id:r.get(4)?,model_id:r.get(5)?,project_id:r.get(6)?,session_id:r.get(7)?,
-            event_at_ms:r.get(8)?,input:r.get(9)?,cache_read:r.get(10)?,cache_write:r.get(11)?,
-            output:r.get(12)?,unclassified:r.get(13)?,reasoning:r.get(14)?,cost:r.get(15)?,
-            price:r.get(16)?,precision:r.get(17)?,revision:r.get(18)?,hash:r.get(19)?,deleted:r.get(20)?
+            record_id: r.get(0)?,
+            owner_device_id: r.get(1)?,
+            tool_id: r.get(2)?,
+            scope: r.get(3)?,
+            account_id: r.get(4)?,
+            model_id: r.get(5)?,
+            project_id: r.get(6)?,
+            session_id: r.get(7)?,
+            event_at_ms: r.get(8)?,
+            input: r.get(9)?,
+            cache_read: r.get(10)?,
+            cache_write: r.get(11)?,
+            output: r.get(12)?,
+            unclassified: r.get(13)?,
+            reasoning: r.get(14)?,
+            cost: r.get(15)?,
+            price: r.get(16)?,
+            precision: r.get(17)?,
+            revision: r.get(18)?,
+            hash: r.get(19)?,
+            deleted: r.get(20)?,
         })
     }
     fn into_envelope(self) -> Result<RevisionedRecord> {
         let scope = match self.scope.as_str() {
-            "device_local" => UsageScope::DeviceLocal, "account_global" => UsageScope::AccountGlobal,
-            "unknown" => UsageScope::Unknown, _ => return Err(StoreError::DatabaseInconsistent("scope")),
+            "device_local" => UsageScope::DeviceLocal,
+            "account_global" => UsageScope::AccountGlobal,
+            "unknown" => UsageScope::Unknown,
+            _ => return Err(StoreError::DatabaseInconsistent("scope")),
         };
         let precision = match self.precision.as_str() {
-            "exact" => Precision::Exact, "aggregate" => Precision::Aggregate,
-            "estimated" => Precision::Estimated, "unknown" => Precision::Unknown,
+            "exact" => Precision::Exact,
+            "aggregate" => Precision::Aggregate,
+            "estimated" => Precision::Estimated,
+            "unknown" => Precision::Unknown,
             _ => return Err(StoreError::DatabaseInconsistent("precision")),
         };
         let rec = CanonicalRecord {
-            record_id:self.record_id,owner_device_id:self.owner_device_id,tool_id:self.tool_id,
-            scope,precision,account_id:self.account_id,model_id:self.model_id,
-            project_id:self.project_id,session_id:self.session_id,event_at_ms:self.event_at_ms,
-            usage:TokenBreakdown {
-                input_uncached_tokens:pos_u64(self.input)?,cache_read_tokens:pos_u64(self.cache_read)?,
-                cache_write_tokens:pos_u64(self.cache_write)?,output_tokens:pos_u64(self.output)?,
-                unclassified_tokens:pos_u64(self.unclassified)?,reasoning_tokens:self.reasoning.map(pos_u64).transpose()?
+            record_id: self.record_id,
+            owner_device_id: self.owner_device_id,
+            tool_id: self.tool_id,
+            scope,
+            precision,
+            account_id: self.account_id,
+            model_id: self.model_id,
+            project_id: self.project_id,
+            session_id: self.session_id,
+            event_at_ms: self.event_at_ms,
+            usage: TokenBreakdown {
+                input_uncached_tokens: pos_u64(self.input)?,
+                cache_read_tokens: pos_u64(self.cache_read)?,
+                cache_write_tokens: pos_u64(self.cache_write)?,
+                output_tokens: pos_u64(self.output)?,
+                unclassified_tokens: pos_u64(self.unclassified)?,
+                reasoning_tokens: self.reasoning.map(pos_u64).transpose()?,
             },
-            estimated_cost_microusd:self.cost,price_version:self.price,is_deleted:match self.deleted {
-                0 => false,1 => true,_ => return Err(StoreError::DatabaseInconsistent("is_deleted")),
-            }
+            estimated_cost_microusd: self.cost,
+            price_version: self.price,
+            is_deleted: match self.deleted {
+                0 => false,
+                1 => true,
+                _ => return Err(StoreError::DatabaseInconsistent("is_deleted")),
+            },
         };
-        let envelope = RevisionedRecord {record:rec,record_revision:pos_u64(self.revision)?,payload_hash:self.hash};
+        let envelope = RevisionedRecord {
+            record: rec,
+            record_revision: pos_u64(self.revision)?,
+            payload_hash: self.hash,
+        };
         envelope.validate()?;
         Ok(envelope)
     }
@@ -1348,7 +2490,11 @@ mod dashboard_tests {
             tool_id: "codex".into(),
             scope,
             precision: Precision::Aggregate,
-            account_id: if scope == UsageScope::AccountGlobal { Some(format!("acct_{}", "a".repeat(64))) } else { None },
+            account_id: if scope == UsageScope::AccountGlobal {
+                Some(format!("acct_{}", "a".repeat(64)))
+            } else {
+                None
+            },
             model_id: Some("gpt-5".into()),
             project_id: Some(format!("prj_{}", "b".repeat(64))),
             session_id: None,
@@ -1370,25 +2516,49 @@ mod dashboard_tests {
     #[test]
     fn dashboard_keeps_scope_and_reasoning_semantics_separate() {
         let mut store = LocalStore::open_in_memory().unwrap();
-        store.init_identity(&LocalIdentity {
-            device_id: "device-a".into(), display_name: "Office PC".into(), time_zone: "Asia/Shanghai".into(),
-        }).unwrap();
+        store
+            .init_identity(&LocalIdentity {
+                device_id: "device-a".into(),
+                display_name: "Office PC".into(),
+                time_zone: "Asia/Shanghai".into(),
+            })
+            .unwrap();
         let checkpoint = SourceCheckpoint {
-            tool_id: "codex".into(), source_key: "test-source".into(),
-            source_fingerprint: "fingerprint-v1".into(), read_offset: 100,
-            parser_version: 1, last_scan_ms: 2_000, last_complete_scan_ms: Some(2_000),
+            tool_id: "codex".into(),
+            source_key: "test-source".into(),
+            source_fingerprint: "fingerprint-v1".into(),
+            read_offset: 100,
+            parser_version: 1,
+            last_scan_ms: 2_000,
+            last_complete_scan_ms: Some(2_000),
             last_status: "complete".into(),
         };
-        store.apply_scan(None, &checkpoint, &[
-            record('a', UsageScope::DeviceLocal, Some(1_500)),
-            record('b', UsageScope::Unknown, Some(1_500)),
-            record('c', UsageScope::AccountGlobal, Some(1_500)),
-        ], 2_000, false).unwrap();
+        store
+            .apply_scan(
+                None,
+                &checkpoint,
+                &[
+                    record('a', UsageScope::DeviceLocal, Some(1_500)),
+                    record('b', UsageScope::Unknown, Some(1_500)),
+                    record('c', UsageScope::AccountGlobal, Some(1_500)),
+                ],
+                2_000,
+                false,
+            )
+            .unwrap();
 
-        let snapshot = store.dashboard_snapshot(
-            "7d", Some(1_000), Some(3_000), &[("2026-11-02".into(), 1_000, 3_000)],
-            2_000, "Asia/Shanghai".into(), true,
-        ).unwrap();
+        let snapshot = store
+            .dashboard_snapshot(DashboardQuery {
+                range: "7d",
+                from_ms: Some(1_000),
+                to_ms: Some(3_000),
+                daily_ranges: &[("2026-11-02".into(), 1_000, 3_000)],
+                generated_at_ms: 2_000,
+                time_zone: "Asia/Shanghai".into(),
+                time_zone_valid: true,
+                session_offset: 0,
+            })
+            .unwrap();
         assert_eq!(snapshot.local.total_tokens, 165);
         assert_eq!(snapshot.local.reasoning_tokens, 20);
         assert_eq!(snapshot.local.record_count, 1);
@@ -1403,23 +2573,47 @@ mod dashboard_tests {
     #[test]
     fn dashboard_excludes_deleted_and_untimed_rows_from_calendar_buckets() {
         let mut store = LocalStore::open_in_memory().unwrap();
-        store.init_identity(&LocalIdentity {
-            device_id: "device-a".into(), display_name: "Office PC".into(), time_zone: "UTC".into(),
-        }).unwrap();
+        store
+            .init_identity(&LocalIdentity {
+                device_id: "device-a".into(),
+                display_name: "Office PC".into(),
+                time_zone: "UTC".into(),
+            })
+            .unwrap();
         let checkpoint = SourceCheckpoint {
-            tool_id: "codex".into(), source_key: "test-source".into(),
-            source_fingerprint: "fingerprint-v1".into(), read_offset: 100,
-            parser_version: 1, last_scan_ms: 2_000, last_complete_scan_ms: Some(2_000),
+            tool_id: "codex".into(),
+            source_key: "test-source".into(),
+            source_fingerprint: "fingerprint-v1".into(),
+            read_offset: 100,
+            parser_version: 1,
+            last_scan_ms: 2_000,
+            last_complete_scan_ms: Some(2_000),
             last_status: "complete".into(),
         };
-        store.apply_scan(None, &checkpoint, &[
-            record('a', UsageScope::DeviceLocal, Some(1_500)),
-            record('b', UsageScope::DeviceLocal, None),
-        ], 2_000, false).unwrap();
-        let snapshot = store.dashboard_snapshot(
-            "all", None, None, &[("1970-01-01".into(), 1_000, 3_000)],
-            2_000, "UTC".into(), true,
-        ).unwrap();
+        store
+            .apply_scan(
+                None,
+                &checkpoint,
+                &[
+                    record('a', UsageScope::DeviceLocal, Some(1_500)),
+                    record('b', UsageScope::DeviceLocal, None),
+                ],
+                2_000,
+                false,
+            )
+            .unwrap();
+        let snapshot = store
+            .dashboard_snapshot(DashboardQuery {
+                range: "all",
+                from_ms: None,
+                to_ms: None,
+                daily_ranges: &[("1970-01-01".into(), 1_000, 3_000)],
+                generated_at_ms: 2_000,
+                time_zone: "UTC".into(),
+                time_zone_valid: true,
+                session_offset: 0,
+            })
+            .unwrap();
         assert_eq!(snapshot.local.total_tokens, 330);
         assert_eq!(snapshot.daily[0].total_tokens, 165);
     }
@@ -1432,20 +2626,34 @@ mod readonly_tests {
 
     #[test]
     fn readonly_open_does_not_migrate_and_rejects_mutations() {
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let path = std::env::temp_dir().join(format!("tokenscope-readonly-{}-{nonce}.db", std::process::id()));
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "tokenscope-readonly-{}-{nonce}.db",
+            std::process::id()
+        ));
         {
             let mut writer = LocalStore::open(&path).unwrap();
-            writer.init_identity(&LocalIdentity {
-                device_id: "readonly-test".into(), display_name: "Test".into(), time_zone: "UTC".into(),
-            }).unwrap();
+            writer
+                .init_identity(&LocalIdentity {
+                    device_id: "readonly-test".into(),
+                    display_name: "Test".into(),
+                    time_zone: "UTC".into(),
+                })
+                .unwrap();
         }
         {
             let mut reader = LocalStore::open_readonly(&path).unwrap();
             assert_eq!(reader.schema_version().unwrap(), schema::VERSION);
             let quota = AntigravityQuota {
-                source_id: "local".into(), pool_id: "gemini".into(), window_id: "weekly".into(),
-                remaining_basis_points: Some(5000), reset_at_ms: None, observed_at_ms: 100,
+                source_id: "local".into(),
+                pool_id: "gemini".into(),
+                window_id: "weekly".into(),
+                remaining_basis_points: Some(5000),
+                reset_at_ms: None,
+                observed_at_ms: 100,
             };
             assert!(reader.upsert_antigravity_quotas(&[quota], 100).is_err());
         }

@@ -1,9 +1,9 @@
-//! Local Antigravity conversation activity (M0-08).
+//! Local Antigravity conversation activity and generation usage.
 //!
-//! Antigravity's `gen_metadata` SQLite rows expose model response *activity*,
-//! but do NOT reliably persist billed token counts. Default is observation
-//! only (no TokenScope usage rows). Explicit opt-in writes *estimated* tokens,
-//! never Exact, never a fabricated event timestamp or cost.
+//! `gen_metadata` exposes model activity and per-generation token counters in
+//! a reverse-engineered protobuf layout. Counters are ingested as observed
+//! source facts; uncertain fixed-prompt tokens remain unclassified. If a row
+//! has no native counters, only the explicit estimate option may add estimates.
 //!
 //! This adapter does not call Antigravity RPC, read credentials, or send data.
 //! CLI and IDE DBs with the same conversation identity are arbitrated before
@@ -21,7 +21,7 @@ use tokenscope_core_domain::{
 use tokenscope_local_store::{AntigravityActivity, LocalStore, SourceCheckpoint};
 
 pub const MODULE_ID: &str = "source-antigravity";
-pub const PARSER_VERSION: u32 = 2;
+pub const PARSER_VERSION: u32 = 3;
 const MAX_FILES: usize = 20_000;
 const MAX_TURNS_PER_DB: u64 = 50_000;
 const MAX_MODELS_PER_DB: usize = 512;
@@ -47,13 +47,25 @@ impl std::fmt::Display for AntigravityError {
     }
 }
 impl std::error::Error for AntigravityError {}
-impl From<io::Error> for AntigravityError { fn from(e: io::Error) -> Self { Self::Io(e) } }
-impl From<rusqlite::Error> for AntigravityError { fn from(e: rusqlite::Error) -> Self { Self::Sql(e) } }
+impl From<io::Error> for AntigravityError {
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+impl From<rusqlite::Error> for AntigravityError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::Sql(e)
+    }
+}
 impl From<tokenscope_local_store::StoreError> for AntigravityError {
-    fn from(e: tokenscope_local_store::StoreError) -> Self { Self::Store(e) }
+    fn from(e: tokenscope_local_store::StoreError) -> Self {
+        Self::Store(e)
+    }
 }
 impl From<tokenscope_core_domain::DomainError> for AntigravityError {
-    fn from(e: tokenscope_core_domain::DomainError) -> Self { Self::Domain(e) }
+    fn from(e: tokenscope_core_domain::DomainError) -> Self {
+        Self::Domain(e)
+    }
 }
 type Result<T> = std::result::Result<T, AntigravityError>;
 
@@ -65,6 +77,7 @@ pub struct AntigravityReport {
     pub unknown_model_turns: u64,
     pub ambiguous_conversations: usize,
     pub estimated_records: usize,
+    pub measured_records: usize,
     pub inserted: usize,
     pub revised: usize,
     pub tombstoned: usize,
@@ -77,13 +90,27 @@ pub struct AntigravityReport {
 // broad model families, but are not billing-grade.
 fn assumed_per_turn(model: &str) -> (u64, u64) {
     let model = model.to_ascii_lowercase();
-    if model.starts_with("gemini-2.5-flash-lite") { (3_000, 400) }
-    else if model.starts_with("claude-opus") { (10_000, 900) }
-    else if model.starts_with("claude-haiku") { (3_000, 400) }
-    else if model.starts_with("claude-sonnet") { (8_000, 700) }
-    else if model.starts_with("gemini-2.5-flash") || model.starts_with("gemini-3-flash") || model.starts_with("gemini-3.1-flash") { (4_000, 500) }
-    else if model.starts_with("gemini-2.5-pro") || model.starts_with("gemini-3-pro") || model.starts_with("gemini-pro") { (8_000, 800) }
-    else { (5_000, 600) }
+    if model.starts_with("gemini-2.5-flash-lite") {
+        (3_000, 400)
+    } else if model.starts_with("claude-opus") {
+        (10_000, 900)
+    } else if model.starts_with("claude-haiku") {
+        (3_000, 400)
+    } else if model.starts_with("claude-sonnet") {
+        (8_000, 700)
+    } else if model.starts_with("gemini-2.5-flash")
+        || model.starts_with("gemini-3-flash")
+        || model.starts_with("gemini-3.1-flash")
+    {
+        (4_000, 500)
+    } else if model.starts_with("gemini-2.5-pro")
+        || model.starts_with("gemini-3-pro")
+        || model.starts_with("gemini-pro")
+    {
+        (8_000, 800)
+    } else {
+        (5_000, 600)
+    }
 }
 
 // Strictly bounded protobuf field walker. Fields outside the model path are
@@ -91,35 +118,61 @@ fn assumed_per_turn(model: &str) -> (u64, u64) {
 fn varint(b: &[u8], pos: &mut usize) -> Result<u64> {
     let mut value = 0u64;
     for i in 0..10 {
-        let byte = *b.get(*pos).ok_or(AntigravityError::Invalid("truncated protobuf"))?;
+        let byte = *b
+            .get(*pos)
+            .ok_or(AntigravityError::Invalid("truncated protobuf"))?;
         *pos += 1;
-        if i == 9 && byte > 1 { return Err(AntigravityError::Invalid("protobuf integer overflow")); }
+        if i == 9 && byte > 1 {
+            return Err(AntigravityError::Invalid("protobuf integer overflow"));
+        }
         value |= u64::from(byte & 0x7f) << (i * 7);
-        if byte & 0x80 == 0 { return Ok(value); }
+        if byte & 0x80 == 0 {
+            return Ok(value);
+        }
     }
     Err(AntigravityError::Invalid("protobuf varint too long"))
 }
-fn proto_field<'a>(b: &'a [u8], requested: u64) -> Result<Option<&'a [u8]>> {
+fn proto_field(b: &[u8], requested: u64) -> Result<Option<&[u8]>> {
     let mut pos = 0;
     while pos < b.len() {
         let tag = varint(b, &mut pos)?;
         let field = tag >> 3;
-        if field == 0 { return Err(AntigravityError::Invalid("protobuf field zero")); }
+        if field == 0 {
+            return Err(AntigravityError::Invalid("protobuf field zero"));
+        }
         match tag & 7 {
-            0 => { varint(b, &mut pos)?; }
-            1 => { pos = pos.checked_add(8).ok_or(AntigravityError::Invalid("protobuf bounds"))?; }
+            0 => {
+                varint(b, &mut pos)?;
+            }
+            1 => {
+                pos = pos
+                    .checked_add(8)
+                    .ok_or(AntigravityError::Invalid("protobuf bounds"))?;
+            }
             2 => {
                 let n = usize::try_from(varint(b, &mut pos)?)
                     .map_err(|_| AntigravityError::Invalid("protobuf length"))?;
-                let end = pos.checked_add(n).ok_or(AntigravityError::Invalid("protobuf bounds"))?;
-                let slice = b.get(pos..end).ok_or(AntigravityError::Invalid("protobuf truncated field"))?;
-                if field == requested { return Ok(Some(slice)); }
+                let end = pos
+                    .checked_add(n)
+                    .ok_or(AntigravityError::Invalid("protobuf bounds"))?;
+                let slice = b
+                    .get(pos..end)
+                    .ok_or(AntigravityError::Invalid("protobuf truncated field"))?;
+                if field == requested {
+                    return Ok(Some(slice));
+                }
                 pos = end;
             }
-            5 => { pos = pos.checked_add(4).ok_or(AntigravityError::Invalid("protobuf bounds"))?; }
+            5 => {
+                pos = pos
+                    .checked_add(4)
+                    .ok_or(AntigravityError::Invalid("protobuf bounds"))?;
+            }
             _ => return Err(AntigravityError::Invalid("unsupported protobuf wire type")),
         }
-        if pos > b.len() { return Err(AntigravityError::Invalid("protobuf bounds")); }
+        if pos > b.len() {
+            return Err(AntigravityError::Invalid("protobuf bounds"));
+        }
     }
     Ok(None)
 }
@@ -127,15 +180,233 @@ fn proto_field<'a>(b: &'a [u8], requested: u64) -> Result<Option<&'a [u8]>> {
 /// `gen_metadata.field_1.field_19` holds a model identifier in known
 /// Antigravity versions. Unknown layouts are reported, not interpreted as 0.
 pub fn extract_model_name(data: &[u8]) -> Result<Option<String>> {
-    if data.len() > MAX_PROTO_BYTES { return Err(AntigravityError::Invalid("metadata BLOB too large")); }
-    let Some(nested) = proto_field(data, 1)? else { return Ok(None); };
-    let Some(bytes) = proto_field(nested, 19)? else { return Ok(None); };
-    let name = std::str::from_utf8(bytes).map_err(|_| AntigravityError::Invalid("model encoding"))?;
-    if name.is_empty() || name.len() > 128 || !name.bytes().all(|c|
-        c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.' | b':' | b'/')) {
+    if data.len() > MAX_PROTO_BYTES {
+        return Err(AntigravityError::Invalid("metadata BLOB too large"));
+    }
+    let Some(nested) = proto_field(data, 1)? else {
+        return Ok(None);
+    };
+    let Some(bytes) = proto_field(nested, 19)? else {
+        return Ok(None);
+    };
+    let name =
+        std::str::from_utf8(bytes).map_err(|_| AntigravityError::Invalid("model encoding"))?;
+    if name.is_empty()
+        || name.len() > 128
+        || !name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.' | b':' | b'/'))
+    {
         return Err(AntigravityError::Invalid("model name is unsafe"));
     }
     Ok(Some(name.to_string()))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeUsage {
+    fixed_prompt_tokens: u64,
+    input_tokens: u64,
+    cache_read_tokens: u64,
+    output_tokens: u64,
+    reasoning_tokens: u64,
+}
+
+fn proto_varint_field(data: &[u8], requested: u64) -> Result<Option<u64>> {
+    let mut pos = 0;
+    while pos < data.len() {
+        let tag = varint(data, &mut pos)?;
+        let field = tag >> 3;
+        if field == 0 {
+            return Err(AntigravityError::Invalid("protobuf field zero"));
+        }
+        match tag & 7 {
+            0 => {
+                let value = varint(data, &mut pos)?;
+                if field == requested {
+                    return Ok(Some(value));
+                }
+            }
+            1 => {
+                pos = pos
+                    .checked_add(8)
+                    .ok_or(AntigravityError::Invalid("protobuf bounds"))?
+            }
+            2 => {
+                let len = usize::try_from(varint(data, &mut pos)?)
+                    .map_err(|_| AntigravityError::Invalid("protobuf length"))?;
+                pos = pos
+                    .checked_add(len)
+                    .ok_or(AntigravityError::Invalid("protobuf bounds"))?;
+            }
+            5 => {
+                pos = pos
+                    .checked_add(4)
+                    .ok_or(AntigravityError::Invalid("protobuf bounds"))?
+            }
+            _ => return Err(AntigravityError::Invalid("unsupported protobuf wire type")),
+        }
+        if pos > data.len() {
+            return Err(AntigravityError::Invalid("protobuf bounds"));
+        }
+    }
+    Ok(None)
+}
+
+fn extract_usage(data: &[u8]) -> Result<Option<NativeUsage>> {
+    let Some(chat_model) = proto_field(data, 1)? else {
+        return Ok(None);
+    };
+    let Some(usage) = proto_field(chat_model, 4)? else {
+        return Ok(None);
+    };
+    let field = |number| proto_varint_field(usage, number).map(|value| value.unwrap_or(0));
+    let parsed = NativeUsage {
+        fixed_prompt_tokens: field(1)?,
+        input_tokens: field(2)?,
+        cache_read_tokens: field(5)?,
+        output_tokens: field(9)?,
+        reasoning_tokens: field(10)?,
+    };
+    let output_total = parsed
+        .output_tokens
+        .checked_add(parsed.reasoning_tokens)
+        .ok_or(AntigravityError::Invalid("output token count overflow"))?;
+    if proto_varint_field(usage, 3)?.is_some_and(|stored| stored != output_total) {
+        return Err(AntigravityError::Invalid(
+            "inconsistent output token counters",
+        ));
+    }
+    if [
+        parsed.fixed_prompt_tokens,
+        parsed.input_tokens,
+        parsed.cache_read_tokens,
+        parsed.output_tokens,
+        parsed.reasoning_tokens,
+    ]
+    .iter()
+    .all(|count| *count == 0)
+    {
+        return Ok(None);
+    }
+    for count in [
+        parsed.fixed_prompt_tokens,
+        parsed.input_tokens,
+        parsed.cache_read_tokens,
+        output_total,
+    ] {
+        if count > i64::MAX as u64 {
+            return Err(AntigravityError::Invalid(
+                "token count outside storage range",
+            ));
+        }
+    }
+    Ok(Some(parsed))
+}
+
+fn extract_response_id(data: &[u8]) -> Result<Option<String>> {
+    let Some(chat_model) = proto_field(data, 1)? else {
+        return Ok(None);
+    };
+    let Some(usage) = proto_field(chat_model, 4)? else {
+        return Ok(None);
+    };
+    let Some(bytes) = proto_field(usage, 11)? else {
+        return Ok(None);
+    };
+    let value = std::str::from_utf8(bytes)
+        .map_err(|_| AntigravityError::Invalid("response ID encoding"))?;
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    if value.len() > 512 || value.chars().any(char::is_control) {
+        return Err(AntigravityError::Invalid("response ID bounds"));
+    }
+    Ok(Some(value.to_string()))
+}
+
+fn make_record(
+    stem: &str,
+    device: &str,
+    native_id: &str,
+    model: Option<&str>,
+    usage: NativeUsage,
+    event_at_ms: Option<i64>,
+) -> Result<CanonicalRecord> {
+    let source = stem.as_bytes();
+    let session = session_key("antigravity", source)?;
+    let mut record = CanonicalRecord {
+        record_id: stable_record_id("antigravity", source, native_id.as_bytes())?,
+        owner_device_id: device.to_string(),
+        tool_id: "antigravity".into(),
+        scope: UsageScope::DeviceLocal,
+        precision: if usage.fixed_prompt_tokens == 0 {
+            Precision::Exact
+        } else {
+            Precision::Aggregate
+        },
+        account_id: None,
+        model_id: model.map(str::to_string),
+        project_id: None,
+        session_id: Some(session),
+        event_at_ms,
+        usage: TokenBreakdown {
+            input_uncached_tokens: usage.input_tokens,
+            cache_read_tokens: usage.cache_read_tokens,
+            output_tokens: usage
+                .output_tokens
+                .checked_add(usage.reasoning_tokens)
+                .ok_or(AntigravityError::Invalid("output token count overflow"))?,
+            unclassified_tokens: usage.fixed_prompt_tokens,
+            reasoning_tokens: Some(usage.reasoning_tokens),
+            ..TokenBreakdown::default()
+        },
+        estimated_cost_microusd: None,
+        price_version: None,
+        is_deleted: false,
+    };
+    record = record.normalized()?;
+    Ok(record)
+}
+
+fn protobuf_timestamp_ms(data: &[u8]) -> Option<i64> {
+    let seconds = i64::try_from(proto_varint_field(data, 1).ok()??).ok()?;
+    let nanos = proto_varint_field(data, 2).ok()?.unwrap_or(0);
+    if !(0..=253_402_300_799).contains(&seconds) || nanos >= 1_000_000_000 {
+        return None;
+    }
+    seconds
+        .checked_mul(1000)?
+        .checked_add(i64::try_from(nanos / 1_000_000).ok()?)
+}
+
+fn read_step_timestamps(conn: &Connection) -> Result<std::collections::HashMap<i64, i64>> {
+    let has_steps: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='steps')",
+        [],
+        |row| row.get(0),
+    )?;
+    let mut timestamps = std::collections::HashMap::new();
+    if !has_steps {
+        return Ok(timestamps);
+    }
+    let mut stmt =
+        conn.prepare("SELECT idx,metadata FROM steps WHERE step_type=15 AND metadata IS NOT NULL")?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let idx: Option<i64> = row.get(0)?;
+        let metadata: Vec<u8> = row.get(1)?;
+        let Some(idx) = idx else {
+            continue;
+        };
+        let Some(time) = proto_field(&metadata, 1)?.and_then(protobuf_timestamp_ms) else {
+            continue;
+        };
+        timestamps.insert(idx, time);
+        if timestamps.len() > MAX_TURNS_PER_DB as usize {
+            return Err(AntigravityError::Invalid("step timestamp limit exceeded"));
+        }
+    }
+    Ok(timestamps)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -144,71 +415,155 @@ struct Snapshot {
     counts: BTreeMap<String, u64>,
     known_turns: u64,
     unknown_turns: u64,
+    records: Vec<CanonicalRecord>,
+    missing_usage: BTreeMap<String, u64>,
 }
-fn read_db(path: &Path, stem: String) -> Result<Snapshot> {
+fn read_db(path: &Path, stem: String, device: &str) -> Result<Snapshot> {
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     conn.busy_timeout(std::time::Duration::from_secs(2))?;
     // A single SQLite read transaction sees consistent DB+WAL state.
     conn.execute_batch("BEGIN")?;
+    let step_timestamps = read_step_timestamps(&conn)?;
     let exists: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='gen_metadata')",
-        [], |r| r.get(0),
+        [],
+        |r| r.get(0),
     )?;
-    if !exists { return Err(AntigravityError::Invalid("gen_metadata table missing")); }
+    if !exists {
+        return Err(AntigravityError::Invalid("gen_metadata table missing"));
+    }
     let mut stmt = conn.prepare(
-        "SELECT CASE WHEN length(data)<=262144 THEN data ELSE NULL END FROM gen_metadata ORDER BY rowid",
+        "SELECT rowid,CASE WHEN length(data)<=262144 THEN data ELSE NULL END FROM gen_metadata ORDER BY rowid",
     )?;
     let mut rows = stmt.query([])?;
     let mut counts = BTreeMap::new();
     let mut known_turns = 0u64;
     let mut unknown_turns = 0u64;
+    let mut records = Vec::new();
+    let mut missing_usage = BTreeMap::new();
+    let mut seen_responses = std::collections::HashMap::<String, CanonicalRecord>::new();
     while let Some(row) = rows.next()? {
         if known_turns + unknown_turns >= MAX_TURNS_PER_DB {
-            return Err(AntigravityError::Invalid("conversation turn limit exceeded"));
+            return Err(AntigravityError::Invalid(
+                "conversation turn limit exceeded",
+            ));
         }
-        let blob: Option<Vec<u8>> = row.get(0)?;
+        let row_idx: Option<i64> = row.get(0)?;
+        let blob: Option<Vec<u8>> = row.get(1)?;
         let blob = blob.ok_or(AntigravityError::Invalid("missing/oversized metadata"))?;
-        match extract_model_name(&blob)? {
-            Some(model) => {
-                *counts.entry(model).or_insert(0) += 1;
-                if counts.len() > MAX_MODELS_PER_DB { return Err(AntigravityError::Invalid("model cardinality limit")); }
-                known_turns += 1;
+        let model = extract_model_name(&blob)?;
+        let usage = extract_usage(&blob)?;
+        let response_id = extract_response_id(&blob)?;
+        let native_record = if let Some(usage) = usage {
+            let native_id = response_id
+                .clone()
+                .unwrap_or_else(|| format!("row:{}", row_idx.unwrap_or(known_turns as i64)));
+            let step_idx = proto_varint_field(&blob, 2)?.and_then(|idx| i64::try_from(idx).ok());
+            let event_at_ms = step_idx.and_then(|idx| step_timestamps.get(&idx).copied());
+            Some(make_record(
+                &stem,
+                device,
+                &native_id,
+                model.as_deref(),
+                usage,
+                event_at_ms,
+            )?)
+        } else {
+            None
+        };
+
+        // A repeated responseId is the same generation; conflicting snapshots
+        // are ambiguous and must not advance the source checkpoint.
+        if let (Some(response_id), Some(record)) = (response_id.as_ref(), native_record.as_ref()) {
+            if let Some(previous) = seen_responses.get(response_id) {
+                if previous != record {
+                    return Err(AntigravityError::Invalid(
+                        "conflicting duplicate response id",
+                    ));
+                }
+                continue;
             }
-            None => unknown_turns += 1,
+            seen_responses.insert(response_id.clone(), record.clone());
+        }
+        if let Some(record) = native_record {
+            records.push(record);
+            if let Some(model) = model.as_ref() {
+                *counts.entry(model.clone()).or_insert(0) += 1;
+                known_turns += 1;
+            } else {
+                unknown_turns += 1;
+            }
+        } else if let Some(model) = model {
+            *counts.entry(model.clone()).or_insert(0) += 1;
+            *missing_usage.entry(model).or_insert(0) += 1;
+            if counts.len() > MAX_MODELS_PER_DB {
+                return Err(AntigravityError::Invalid("model cardinality limit"));
+            }
+            known_turns += 1;
+        } else {
+            unknown_turns += 1;
+        }
+        if counts.len() > MAX_MODELS_PER_DB {
+            return Err(AntigravityError::Invalid("model cardinality limit"));
         }
     }
-    Ok(Snapshot { stem, counts, known_turns, unknown_turns })
+    Ok(Snapshot {
+        stem,
+        counts,
+        known_turns,
+        unknown_turns,
+        records,
+        missing_usage,
+    })
 }
 
 pub fn discover_databases(gemini_home: &Path) -> Result<Vec<PathBuf>> {
     let mut files = BTreeSet::new();
-    for prefix in ["antigravity", "antigravity-ide", "antigravity-backup", "antigravity-cli"] {
+    for prefix in [
+        "antigravity",
+        "antigravity-ide",
+        "antigravity-backup",
+        "antigravity-cli",
+    ] {
         let dir = gemini_home.join(prefix).join("conversations");
-        if !dir.is_dir() { continue; }
+        if !dir.is_dir() {
+            continue;
+        }
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
             let typ = entry.file_type()?;
             // Do not follow links out of the configured Antigravity roots.
-            if !typ.is_file() || path.extension().and_then(|s| s.to_str()) != Some("db") { continue; }
+            if !typ.is_file() || path.extension().and_then(|s| s.to_str()) != Some("db") {
+                continue;
+            }
             files.insert(path);
-            if files.len() > MAX_FILES { return Err(AntigravityError::Invalid("too many databases")); }
+            if files.len() > MAX_FILES {
+                return Err(AntigravityError::Invalid("too many databases"));
+            }
         }
     }
     Ok(files.into_iter().collect())
 }
 fn now_ms() -> Result<i64> {
-    let ms = SystemTime::now().duration_since(UNIX_EPOCH)
-        .map_err(|_| AntigravityError::Invalid("system time before epoch"))?.as_millis();
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| AntigravityError::Invalid("system time before epoch"))?
+        .as_millis();
     i64::try_from(ms).map_err(|_| AntigravityError::Invalid("time out of range"))
 }
 fn dominates(a: &Snapshot, b: &Snapshot) -> bool {
-    a.unknown_turns >= b.unknown_turns &&
-        b.counts.iter().all(|(model, count)| a.counts.get(model).copied().unwrap_or_default() >= *count)
+    a.unknown_turns >= b.unknown_turns
+        && b.counts
+            .iter()
+            .all(|(model, count)| a.counts.get(model).copied().unwrap_or_default() >= *count)
+        && b.records
+            .iter()
+            .all(|record| a.records.iter().any(|candidate| candidate == record))
 }
 fn source_fingerprint(snapshot: &Snapshot, estimates: bool) -> String {
     let mut h = Sha256::new();
-    h.update(b"tokenscope/antigravity/model-turns/v1\0");
+    h.update(b"tokenscope/antigravity/generation-usage/v2\0");
     h.update([u8::from(estimates)]);
     h.update(snapshot.unknown_turns.to_be_bytes());
     for (model, count) in &snapshot.counts {
@@ -216,40 +571,79 @@ fn source_fingerprint(snapshot: &Snapshot, estimates: bool) -> String {
         h.update(model.as_bytes());
         h.update(count.to_be_bytes());
     }
+    for record in &snapshot.records {
+        h.update(record.record_id.as_bytes());
+        h.update(record.usage.input_uncached_tokens.to_be_bytes());
+        h.update(record.usage.cache_read_tokens.to_be_bytes());
+        h.update(record.usage.output_tokens.to_be_bytes());
+        h.update(record.usage.unclassified_tokens.to_be_bytes());
+        h.update(
+            record
+                .usage
+                .reasoning_tokens
+                .unwrap_or_default()
+                .to_be_bytes(),
+        );
+        h.update(record.event_at_ms.unwrap_or_default().to_be_bytes());
+    }
     format!("sha256:{:x}", h.finalize())
 }
-fn source_records(s: &Snapshot, device: &str) -> Result<Vec<CanonicalRecord>> {
+fn source_records(
+    s: &Snapshot,
+    device: &str,
+    estimate_tokens: bool,
+) -> Result<Vec<CanonicalRecord>> {
     // This is the only code path that creates estimated usage records.
     // `event_at_ms=None`: DB mtime isn't a generation timestamp.
     let source = s.stem.as_bytes();
     let session = session_key("antigravity", source)?;
-    let mut records = Vec::with_capacity(s.counts.len());
-    for (model, turns) in &s.counts {
+    let mut records = s.records.clone();
+    if !estimate_tokens || s.unknown_turns > 0 {
+        return Ok(records);
+    }
+    records.reserve(s.missing_usage.len());
+    for (model, turns) in &s.missing_usage {
         let (input, output) = assumed_per_turn(model);
-        let input = turns.checked_mul(input).ok_or(AntigravityError::Invalid("token estimate overflow"))?;
-        let output = turns.checked_mul(output).ok_or(AntigravityError::Invalid("token estimate overflow"))?;
-        if input > i64::MAX as u64 || output > i64::MAX as u64  {
-            return Err(AntigravityError::Invalid("estimated usage outside storage range"));
+        let input = turns
+            .checked_mul(input)
+            .ok_or(AntigravityError::Invalid("token estimate overflow"))?;
+        let output = turns
+            .checked_mul(output)
+            .ok_or(AntigravityError::Invalid("token estimate overflow"))?;
+        if input > i64::MAX as u64 || output > i64::MAX as u64 {
+            return Err(AntigravityError::Invalid(
+                "estimated usage outside storage range",
+            ));
         }
         records.push(CanonicalRecord {
             record_id: stable_record_id("antigravity", source, model.as_bytes())?,
-            owner_device_id: device.to_string(), tool_id: "antigravity".to_string(),
-            scope: UsageScope::DeviceLocal, precision: Precision::Estimated,
-            account_id: None, model_id: Some(model.clone()), project_id: None,
-            session_id: Some(session.clone()), event_at_ms: None,
+            owner_device_id: device.to_string(),
+            tool_id: "antigravity".to_string(),
+            scope: UsageScope::DeviceLocal,
+            precision: Precision::Estimated,
+            account_id: None,
+            model_id: Some(model.clone()),
+            project_id: None,
+            session_id: Some(session.clone()),
+            event_at_ms: None,
             // We have no reliable cache attribution: keep estimated input
             // in Unclassified rather than falsely reporting cache misses.
-            usage: TokenBreakdown { unclassified_tokens: input, output_tokens: output, ..TokenBreakdown::default() },
-            estimated_cost_microusd: None, price_version: None, is_deleted: false,
+            usage: TokenBreakdown {
+                unclassified_tokens: input,
+                output_tokens: output,
+                ..TokenBreakdown::default()
+            },
+            estimated_cost_microusd: None,
+            price_version: None,
+            is_deleted: false,
         });
     }
     Ok(records)
 }
 
-/// `estimate_tokens=false` observes only session/model activity, without
-/// adding bogus Token counts to the shared device totals. Explicit opt-in
-/// emits `Precision::Estimated` records. Turning it off tombstones prior
-/// estimates for *present* sources, retaining checkpoint history.
+/// Native token counters are always retained. Only source rows lacking token
+/// counters use estimates, and only after the explicit CLI opt-in. Disabling
+/// estimates tombstones previous estimate-only records during full reconcile.
 pub fn collect_antigravity(
     gemini_home: &Path,
     store: &mut LocalStore,
@@ -257,16 +651,22 @@ pub fn collect_antigravity(
     estimate_tokens: bool,
 ) -> Result<AntigravityReport> {
     let paths = discover_databases(gemini_home)?;
-    let mut report = AntigravityReport { source_files: paths.len(), ..AntigravityReport::default() };
+    let mut report = AntigravityReport {
+        source_files: paths.len(),
+        ..AntigravityReport::default()
+    };
     let mut snapshots: BTreeMap<String, Snapshot> = BTreeMap::new();
     let mut ambiguous: BTreeSet<String> = BTreeSet::new();
     for path in paths {
-        let stem = path.file_stem().and_then(|s| s.to_str())
-            .ok_or(AntigravityError::Invalid("database filename"))?.to_string();
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or(AntigravityError::Invalid("database filename"))?
+            .to_string();
         if stem.is_empty() || stem.len() > 200 || stem.chars().any(char::is_control) {
             return Err(AntigravityError::Invalid("invalid conversation filename"));
         }
-        let snap = read_db(&path, stem.clone())?;
+        let snap = read_db(&path, stem.clone(), device_id)?;
         if let Some(previous) = snapshots.get(&stem) {
             if dominates(&snap, previous) {
                 snapshots.insert(stem, snap);
@@ -280,39 +680,90 @@ pub fn collect_antigravity(
     report.conversations = snapshots.len();
     report.ambiguous_conversations = ambiguous.len();
     for (stem, snapshot) in snapshots {
-        if ambiguous.contains(&stem) { continue; }
+        if ambiguous.contains(&stem) {
+            continue;
+        }
         report.model_turns = report.model_turns.saturating_add(snapshot.known_turns);
-        report.unknown_model_turns = report.unknown_model_turns.saturating_add(snapshot.unknown_turns);
-        // Do not persist partial model coverage as fully accounted usage.
-        if estimate_tokens && snapshot.unknown_turns > 0 { continue; }
+        report.unknown_model_turns = report
+            .unknown_model_turns
+            .saturating_add(snapshot.unknown_turns);
+        // Keep the last complete estimate when this explicit-estimate scan
+        // encounters unknown models; partial metadata cannot safely revise it.
+        if estimate_tokens && snapshot.unknown_turns > 0 {
+            continue;
+        }
         // A suddenly empty live DB might be transient. Never tombstone its history.
-        if estimate_tokens && snapshot.known_turns == 0 { continue; }
+        if estimate_tokens && snapshot.known_turns == 0 {
+            continue;
+        }
         let source_key = stable_record_id("antigravity", b"conversation", stem.as_bytes())?;
         let previous = store.checkpoint("antigravity", &source_key)?;
         let fp = source_fingerprint(&snapshot, estimate_tokens);
-        if previous.as_ref().is_some_and(|p|
-            p.source_fingerprint == fp && p.parser_version == PARSER_VERSION && p.last_status == "complete") {
+        if previous.as_ref().is_some_and(|p| {
+            p.source_fingerprint == fp
+                && p.parser_version == PARSER_VERSION
+                && p.last_status == "complete"
+        }) {
             report.unchanged += 1;
             continue;
+        }
+        if previous.is_some() {
+            let prior_records = store.records_for_source("antigravity", &source_key, 2000)?;
+            let active_prior = prior_records
+                .iter()
+                .map(|row| &row.record)
+                .filter(|record| !record.is_deleted)
+                .collect::<Vec<_>>();
+            let missing_prior_native = active_prior.iter().any(|record| {
+                record.precision != Precision::Estimated
+                    && !snapshot
+                        .records
+                        .iter()
+                        .any(|current| current.record_id == record.record_id)
+            });
+            let empty_after_usage = snapshot.records.is_empty() && snapshot.known_turns == 0;
+            if (!active_prior.is_empty() && empty_after_usage)
+                || (!snapshot.missing_usage.is_empty() && missing_prior_native)
+            {
+                // A tokenless/partial snapshot cannot prove that previously
+                // measured generations were deleted. Keep both checkpoint and
+                // activity at their last complete state so reconciliation cannot
+                // create tombstones from missing counters.
+                continue;
+            }
         }
         // Activity-only collection MUST persist a separate model-turn snapshot.
         // A parse failure above never triggers any update.
         let observed_at = now_ms()?.max(previous.as_ref().map_or(0, |p| p.last_scan_ms));
         let next = SourceCheckpoint {
-            tool_id: "antigravity".into(), source_key,
-            source_fingerprint: fp, read_offset: 0,
+            tool_id: "antigravity".into(),
+            source_key,
+            source_fingerprint: fp,
+            read_offset: 0,
             parser_version: PARSER_VERSION,
-            last_scan_ms: observed_at, last_complete_scan_ms: Some(observed_at),
+            last_scan_ms: observed_at,
+            last_complete_scan_ms: Some(observed_at),
             last_status: "complete".into(),
         };
-        let records = if estimate_tokens { source_records(&snapshot, device_id)? } else { Vec::new() };
-        report.estimated_records += records.len();
+        let records = source_records(&snapshot, device_id, estimate_tokens)?;
+        report.measured_records += snapshot.records.len();
+        report.estimated_records += records.len().saturating_sub(snapshot.records.len());
         let activity = AntigravityActivity {
             known_turns: snapshot.known_turns,
             unknown_turns: snapshot.unknown_turns,
-            models: snapshot.counts.iter().map(|(m,n)| (m.clone(), *n)).collect(),
+            models: snapshot
+                .counts
+                .iter()
+                .map(|(m, n)| (m.clone(), *n))
+                .collect(),
         };
-        let result = store.reconcile_source_with_activity(previous.as_ref(), &next, records, observed_at, Some(&activity))?;
+        let result = store.reconcile_source_with_activity(
+            previous.as_ref(),
+            &next,
+            records,
+            observed_at,
+            Some(&activity),
+        )?;
         report.inserted += result.applied.inserted;
         report.revised += result.applied.revised;
         report.tombstoned += result.tombstoned;

@@ -27,19 +27,34 @@ impl fmt::Display for StoreError {
             Self::NotInitialized => write!(f, "device identity not initialized"),
             Self::IdentityMismatch => write!(f, "immutable local device identity mismatch"),
             Self::CheckpointConflict => write!(f, "stale checkpoint; rescan required"),
-            Self::RecordOwnershipConflict => write!(f, "record identity belongs to another device/tool"),
-            Self::SourceArbitrationConflict => write!(f, "conflicting observations from different sources"),
+            Self::RecordOwnershipConflict => {
+                write!(f, "record identity belongs to another device/tool")
+            }
+            Self::SourceArbitrationConflict => {
+                write!(f, "conflicting observations from different sources")
+            }
             Self::DuplicateBatchRecord => write!(f, "duplicate record in scan batch"),
             Self::RevisionOverflow => write!(f, "record revision overflow"),
-            Self::IntegerOutOfRange => write!(f, "unsigned token/revision cannot fit SQLite signed integer"),
+            Self::IntegerOutOfRange => write!(
+                f,
+                "unsigned token/revision cannot fit SQLite signed integer"
+            ),
             Self::UnsupportedSchema(v) => write!(f, "unsupported SQLite schema version {v}"),
             Self::DatabaseInconsistent(s) => write!(f, "database invariant violated: {s}"),
         }
     }
 }
 impl std::error::Error for StoreError {}
-impl From<rusqlite::Error> for StoreError { fn from(e: rusqlite::Error) -> Self { Self::Sql(e) } }
-impl From<DomainError> for StoreError { fn from(e: DomainError) -> Self { Self::Domain(e) } }
+impl From<rusqlite::Error> for StoreError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::Sql(e)
+    }
+}
+impl From<DomainError> for StoreError {
+    fn from(e: DomainError) -> Self {
+        Self::Domain(e)
+    }
+}
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 

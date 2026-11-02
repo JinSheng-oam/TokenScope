@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
 use crate::identity::{hex_sha256, valid_lower_hex};
 use crate::{CanonicalRecord, DomainError};
+use serde::{Deserialize, Serialize};
 
 const PAYLOAD_DOMAIN: &[u8] = b"tokenscope/canonical-record/v1\0";
 
@@ -26,18 +26,27 @@ pub struct RevisionedRecord {
 impl RevisionedRecord {
     /// Caller must use the revision persisted in the same local-store transaction.
     pub fn from_store(record: CanonicalRecord, revision: u64) -> Result<Self, DomainError> {
-        if revision == 0 { return Err(DomainError::RevisionMustBePositive); }
+        if revision == 0 {
+            return Err(DomainError::RevisionMustBePositive);
+        }
         let record = record.normalized()?;
         let hash = payload_hash(&record)?;
-        Ok(Self { record, record_revision: revision, payload_hash: hash })
+        Ok(Self {
+            record,
+            record_revision: revision,
+            payload_hash: hash,
+        })
     }
 
     pub fn validate(&self) -> Result<(), DomainError> {
-        if self.record_revision == 0 { return Err(DomainError::RevisionMustBePositive); }
+        if self.record_revision == 0 {
+            return Err(DomainError::RevisionMustBePositive);
+        }
         if self.record.clone().normalized()? != self.record {
             return Err(DomainError::NonCanonicalRecord);
         }
-        if !valid_lower_hex(&self.payload_hash) || self.payload_hash != payload_hash(&self.record)? {
+        if !valid_lower_hex(&self.payload_hash) || self.payload_hash != payload_hash(&self.record)?
+        {
             return Err(DomainError::PayloadHashMismatch);
         }
         Ok(())

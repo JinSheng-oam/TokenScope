@@ -20,7 +20,9 @@ impl CredentialKey {
         if device_id.len() < 8
             || device_id.len() > 128
             || !device_id.as_bytes()[0].is_ascii_alphanumeric()
-            || !device_id.bytes().all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+            || !device_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
         {
             return Err(HubClientError::InvalidRequest("device_id"));
         }
@@ -29,7 +31,9 @@ impl CredentialKey {
         digest.update(hub.origin().as_bytes());
         digest.update([0]);
         digest.update(device_id.as_bytes());
-        Ok(Self { account: hex::encode(digest.finalize()) })
+        Ok(Self {
+            account: hex::encode(digest.finalize()),
+        })
     }
 
     fn account(&self) -> &str {
@@ -39,7 +43,9 @@ impl CredentialKey {
 
 impl fmt::Debug for CredentialKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CredentialKey").field("account", &"[SCOPED]").finish()
+        f.debug_struct("CredentialKey")
+            .field("account", &"[SCOPED]")
+            .finish()
     }
 }
 
@@ -57,7 +63,8 @@ pub struct KeyringCredentialStore;
 
 impl KeyringCredentialStore {
     fn entry(key: &CredentialKey) -> Result<keyring::Entry, HubClientError> {
-        keyring::Entry::new(SERVICE_NAME, key.account()).map_err(|_| HubClientError::CredentialStoreUnavailable)
+        keyring::Entry::new(SERVICE_NAME, key.account())
+            .map_err(|_| HubClientError::CredentialStoreUnavailable)
     }
 }
 
@@ -67,8 +74,12 @@ impl SecretStore for KeyringCredentialStore {
         let entry = keyring::Entry::new(SERVICE_NAME, &account)
             .map_err(|_| HubClientError::CredentialStoreUnavailable)?;
         let probe = Zeroizing::new(Uuid::new_v4().to_string());
-        entry.set_password(probe.as_str()).map_err(|_| HubClientError::CredentialStoreUnavailable)?;
-        entry.delete_credential().map_err(|_| HubClientError::CredentialStoreUnavailable)?;
+        entry
+            .set_password(probe.as_str())
+            .map_err(|_| HubClientError::CredentialStoreUnavailable)?;
+        entry
+            .delete_credential()
+            .map_err(|_| HubClientError::CredentialStoreUnavailable)?;
         Ok(())
     }
 
@@ -81,7 +92,9 @@ impl SecretStore for KeyringCredentialStore {
 
     fn load(&self, key: &CredentialKey) -> Result<Option<DeviceToken>, HubClientError> {
         match Self::entry(key)?.get_password() {
-            Ok(value) => DeviceToken::new(value).map(Some).map_err(HubClientError::InvalidRequest),
+            Ok(value) => DeviceToken::new(value)
+                .map(Some)
+                .map_err(HubClientError::InvalidRequest),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(_) => Err(HubClientError::CredentialStoreUnavailable),
         }
@@ -105,13 +118,25 @@ mod tests {
     struct MemoryStore(Mutex<HashMap<String, String>>);
 
     impl SecretStore for MemoryStore {
-        fn preflight(&self) -> Result<(), HubClientError> { Ok(()) }
+        fn preflight(&self) -> Result<(), HubClientError> {
+            Ok(())
+        }
         fn save(&self, key: &CredentialKey, token: &DeviceToken) -> Result<(), HubClientError> {
-            self.0.lock().unwrap().insert(key.account.clone(), token.expose_for_authorization().into());
+            self.0
+                .lock()
+                .unwrap()
+                .insert(key.account.clone(), token.expose_for_authorization().into());
             Ok(())
         }
         fn load(&self, key: &CredentialKey) -> Result<Option<DeviceToken>, HubClientError> {
-            self.0.lock().unwrap().get(key.account()).cloned().map(DeviceToken::new).transpose().map_err(HubClientError::InvalidRequest)
+            self.0
+                .lock()
+                .unwrap()
+                .get(key.account())
+                .cloned()
+                .map(DeviceToken::new)
+                .transpose()
+                .map_err(HubClientError::InvalidRequest)
         }
         fn delete(&self, key: &CredentialKey) -> Result<bool, HubClientError> {
             Ok(self.0.lock().unwrap().remove(key.account()).is_some())
@@ -140,7 +165,14 @@ mod tests {
         let store = MemoryStore::default();
         assert_eq!(store.load(&key).unwrap(), None);
         store.save(&key, &token).unwrap();
-        assert_eq!(store.load(&key).unwrap().unwrap().expose_for_authorization(), token.expose_for_authorization());
+        assert_eq!(
+            store
+                .load(&key)
+                .unwrap()
+                .unwrap()
+                .expose_for_authorization(),
+            token.expose_for_authorization()
+        );
         assert!(store.delete(&key).unwrap());
         assert!(!store.delete(&key).unwrap());
         assert_eq!(store.load(&key).unwrap(), None);

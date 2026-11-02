@@ -13,9 +13,9 @@ export async function getAgentStatus(): Promise<AgentStatus> {
   return invoke<AgentStatus>('get_agent_status');
 }
 
-export async function getDashboardSnapshot(range: DashboardRange): Promise<DashboardSnapshot> {
-  const response = await invoke<DashboardResponse>('get_dashboard_snapshot', { range });
-  if (response.protocol_version !== 1) throw new Error('Agent IPC 协议版本不兼容，请更新桌面端和 Agent');
+export async function getDashboardSnapshot(range: DashboardRange, sessionOffset = 0): Promise<DashboardSnapshot> {
+  const response = await invoke<DashboardResponse>('get_dashboard_snapshot', { range, sessionOffset });
+  if (response.protocol_version !== 2) throw new Error('Agent IPC 协议版本不兼容，请更新桌面端和 Agent');
   return response.snapshot;
 }
 

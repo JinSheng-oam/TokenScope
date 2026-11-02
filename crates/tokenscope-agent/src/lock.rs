@@ -17,11 +17,16 @@ impl AgentLock {
         let absolute = if db.exists() {
             db.canonicalize()?
         } else {
-            let parent = db.parent().filter(|p| !p.as_os_str().is_empty())
+            let parent = db
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
                 .unwrap_or_else(|| Path::new("."));
-            let name = db.file_name().ok_or_else(|| io::Error::new(
-                io::ErrorKind::InvalidInput, "database must include a filename"
-            ))?;
+            let name = db.file_name().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "database must include a filename",
+                )
+            })?;
             parent.canonicalize()?.join(name)
         };
         let mut lock_name = absolute.as_os_str().to_os_string();
@@ -39,8 +44,13 @@ impl AgentLock {
             let is_blocked = err.kind() == io::ErrorKind::WouldBlock
                 || (cfg!(windows) && err.raw_os_error() == Some(33));
             if is_blocked {
-                io::Error::new(io::ErrorKind::WouldBlock, "another TokenScope agent owns this database")
-            } else { err }
+                io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "another TokenScope agent owns this database",
+                )
+            } else {
+                err
+            }
         })?;
         Ok(Self { file })
     }
@@ -61,7 +71,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let db = dir.join("lock-test.db");
         let lock = AgentLock::acquire(&db).unwrap();
-        let err = AgentLock::acquire(&db).err().expect("second process/file handle must fail");
+        let err = AgentLock::acquire(&db)
+            .err()
+            .expect("second process/file handle must fail");
         assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
         drop(lock);
         let lock = AgentLock::acquire(&db).unwrap();

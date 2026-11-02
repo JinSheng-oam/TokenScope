@@ -1,6 +1,6 @@
 //! Schema v1 is append-only at the migration layer. No destructive schema reset.
 
-pub const VERSION: i64 = 4;
+pub const VERSION: i64 = 5;
 pub const MIGRATION_001: &str = r#"
 CREATE TABLE schema_migrations (
   version INTEGER PRIMARY KEY,
@@ -90,7 +90,6 @@ CREATE TABLE sync_state (
 INSERT INTO sync_state(singleton) VALUES (1);
 "#;
 
-
 // M0-09: activity and quota are observations, NOT usage events.
 // Neither table is attached to sync_outbox, preventing accidental upload.
 pub const MIGRATION_002: &str = r#"
@@ -121,7 +120,6 @@ CREATE TABLE antigravity_quota_snapshots (
 CREATE INDEX ix_antigravity_quota_age ON antigravity_quota_snapshots(observed_at_ms);
 "#;
 
-
 // M1-04: durable retry scheduling and explicit conflict quarantine.
 // Deferred and blocked rows remain visible; only due, non-blocked rows are uploaded.
 pub const MIGRATION_003: &str = r#"
@@ -133,8 +131,22 @@ ALTER TABLE sync_state ADD COLUMN last_success_ms INTEGER;
 ALTER TABLE sync_state ADD COLUMN last_status TEXT NOT NULL DEFAULT 'never' CHECK(last_status IN ('never','idle','success','deferred','blocked','auth_required','error'));
 "#;
 
-
 pub const MIGRATION_004: &str = r#"
 ALTER TABLE remote_usage_cache ADD COLUMN payload_hash TEXT NOT NULL DEFAULT '';
 CREATE INDEX ix_remote_device_seq ON remote_usage_cache(owner_device_id,server_change_seq);
+"#;
+
+// Codex plan quota is a local observation, never usage or sync data.
+pub const MIGRATION_005: &str = r#"
+CREATE TABLE codex_quota_snapshots (
+  source_id TEXT NOT NULL,
+  pool_id TEXT NOT NULL,
+  window_duration_minutes INTEGER NOT NULL CHECK(window_duration_minutes > 0),
+  remaining_basis_points INTEGER CHECK(remaining_basis_points BETWEEN 0 AND 10000),
+  reset_at_ms INTEGER CHECK(reset_at_ms IS NULL OR reset_at_ms >= 0),
+  observed_at_ms INTEGER NOT NULL CHECK(observed_at_ms >= 0),
+  received_at_ms INTEGER NOT NULL CHECK(received_at_ms >= 0),
+  PRIMARY KEY(source_id,pool_id,window_duration_minutes)
+);
+CREATE INDEX ix_codex_quota_age ON codex_quota_snapshots(observed_at_ms);
 "#;

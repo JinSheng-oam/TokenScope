@@ -19,9 +19,10 @@
   import { applyTheme, getInitialTheme, initThemeListener, type ThemeMode } from './lib/theme';
   import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice } from './lib/types';
 
-  type Tab = 'overview' | 'devices' | 'tools' | 'models' | 'projects' | 'quota' | 'settings';
+  type Tab = 'overview' | 'devices' | 'tools' | 'models' | 'sessions' | 'projects' | 'quota' | 'settings';
   let activeTab: Tab = 'overview';
   let range: DashboardRange = '7d';
+  let sessionOffset = 0;
   let currentTheme: ThemeMode = 'dark';
 
   let snapshot: DashboardSnapshot | null = null;
@@ -58,7 +59,8 @@
     { id: 'tools', label: '工具分析', iconKey: 'tools' },
     { id: 'models', label: '模型排行', iconKey: 'models' },
     { id: 'projects', label: '项目分析', iconKey: 'projects' },
-    { id: 'quota', label: 'Antigravity 额度', iconKey: 'quota' },
+    { id: 'sessions', label: '会话分析', iconKey: 'sessions' },
+    { id: 'quota', label: '额度与活动', iconKey: 'quota' },
     { id: 'settings', label: '系统设置', iconKey: 'settings' },
   ];
 
@@ -75,6 +77,10 @@
 
   $: topToolTotal = Math.max(1, ...(snapshot?.by_tool ?? []).map((item) => item.total_tokens));
   $: topModelTotal = Math.max(1, ...(snapshot?.by_model ?? []).map((item) => item.total_tokens));
+  $: sessionPage = snapshot?.session_usage;
+  $: sessionPageStart = sessionPage && sessionPage.total > 0 ? sessionPage.offset + 1 : 0;
+  $: sessionPageEnd = Math.min((sessionPage?.offset ?? 0) + (sessionPage?.sessions.length ?? 0), sessionPage?.total ?? 0);
+  $: antigravityUsage = (snapshot?.by_tool ?? []).find((item) => item.key === 'antigravity');
 
   $: selectableRemoteDevices = remoteDevices.filter(
     (d) => d.device_id !== snapshot?.identity?.device_id && d.revoked_at_ms === null
@@ -99,12 +105,13 @@
 
   // Calculate Cache Savings Rate
   $: cacheTokens = (local?.cache_read_tokens ?? 0) + (local?.cache_write_tokens ?? 0);
-  $: cacheHitRate = local?.total_tokens ? ((local.cache_read_tokens / local.total_tokens) * 100).toFixed(1) : '0.0';
+  $: cacheInputTokens = (local?.input_tokens ?? 0) + (local?.cache_read_tokens ?? 0) + (local?.cache_write_tokens ?? 0);
+  $: cacheHitRate = cacheInputTokens ? (((local?.cache_read_tokens ?? 0) / cacheInputTokens) * 100).toFixed(1) : '0.0';
 
   // Precision Ratio
   $: exactRatio = local?.record_count
     ? ((local.exact_records / local.record_count) * 100).toFixed(1)
-    : '100.0';
+    : '—';
 
   async function loadDashboard(showSpinner = true) {
     if (!runtimeAvailable) {
@@ -134,7 +141,15 @@
         errorMessage = 'Agent 已启动，正在初始化本地 SQLite WAL 数据库…';
         snapshot = null;
       } else {
-        snapshot = await getDashboardSnapshot(range);
+        let dashboard = await getDashboardSnapshot(range, sessionOffset);
+        const lastValidOffset = dashboard.session_usage.total === 0
+          ? 0
+          : Math.floor((dashboard.session_usage.total - 1) / dashboard.session_usage.limit) * dashboard.session_usage.limit;
+        if (sessionOffset > lastValidOffset) {
+          sessionOffset = lastValidOffset;
+          dashboard = await getDashboardSnapshot(range, sessionOffset);
+        }
+        snapshot = dashboard;
         if (!hubDisplayName && snapshot.identity?.display_name) {
           hubDisplayName = snapshot.identity.display_name;
         }
@@ -150,7 +165,32 @@
   function handleSelectRange(next: DashboardRange) {
     if (range === next) return;
     range = next;
+    sessionOffset = 0;
     void loadDashboard();
+  }
+
+  function handleSessionPage(nextOffset: number) {
+    if (nextOffset < 0 || nextOffset === sessionOffset) return;
+    sessionOffset = nextOffset;
+    void loadDashboard();
+  }
+
+  function quotaWindowLabel(durationMinutes: number): string {
+    if (durationMinutes === 300) return '5 小时周期';
+    if (durationMinutes === 10_080) return '每周周期';
+    if (durationMinutes === 1_440) return '每日周期';
+    return `${formatNumber(durationMinutes)} 分钟周期`;
+  }
+
+  function antigravityWindowLabel(windowId: string): string {
+    if (windowId === 'five_hour') return '5 小时周期';
+    if (windowId === 'weekly') return '每周周期';
+    if (windowId === 'daily') return '每日周期';
+    return '其他周期';
+  }
+
+  function quotaIsStale(observedAtMs: number): boolean {
+    return Date.now() - observedAtMs > 15 * 60_000;
   }
 
   function handleSwitchTheme(mode: ThemeMode) {
@@ -268,7 +308,7 @@
   }
 
   function formatCountdown(resetAtMs: number | null): string {
-    if (!resetAtMs) return '未提供重置时间';
+    if (resetAtMs === null) return '未提供重置时间';
     const diff = resetAtMs - Date.now();
     if (diff <= 0) return '即将重置';
     const hours = Math.floor(diff / 3_600_000);
@@ -326,8 +366,8 @@
         >
           <span class="nav-icon">{@html icons[item.iconKey]}</span>
           <span>{item.label}</span>
-          {#if item.id === 'quota' && (snapshot?.antigravity_quota.length ?? 0) > 0}
-            <span class="nav-badge">{snapshot?.antigravity_quota.length}</span>
+          {#if item.id === 'quota' && ((snapshot?.antigravity_quota.length ?? 0) + (snapshot?.codex_quota.length ?? 0)) > 0}
+            <span class="nav-badge">{(snapshot?.antigravity_quota.length ?? 0) + (snapshot?.codex_quota.length ?? 0)}</span>
           {/if}
         </button>
       {/each}
@@ -486,8 +526,8 @@
 
             <article class="metric-card">
               <div class="metric-head">
-                <span>缓存命中节省</span>
-                <span class="precision-chip exact">命中率 {cacheHitRate}%</span>
+                <span>缓存读写 Token</span>
+                <span class="precision-chip exact">读取占输入 {cacheHitRate}%</span>
               </div>
               <div class="metric-val tabular">
                 {formatNumber(cacheTokens)}
@@ -504,6 +544,7 @@
               <span class="integrity-item">精确记录：<strong>{formatNumber(local?.exact_records)}</strong> 笔</span>
               <span class="integrity-item">聚合粗粒度：<strong>{formatNumber(local?.aggregate_records)}</strong> 笔</span>
               <span class="integrity-item">显式估算：<strong>{formatNumber(local?.estimated_records)}</strong> 笔</span>
+              <span class="integrity-item">精度未知：<strong>{formatNumber(local?.unknown_precision_records)}</strong> 笔</span>
               <span class="integrity-item">已计价：<strong>{formatNumber(local?.priced_records)}</strong> 笔</span>
             </div>
             <div class="integrity-right">
@@ -817,7 +858,7 @@
                     <tr>
                       <th>工具名称</th>
                       <th>Token 总量</th>
-                      <th>有效记录数</th>
+                      <th>用量记录数</th>
                       <th>估算成本</th>
                       <th>全机占比</th>
                     </tr>
@@ -913,13 +954,113 @@
                       <div class="rank-fill" style={`width: ${percentOf(item.total_tokens, topModelTotal)}%`}></div>
                     </div>
                     <div class="metric-foot">
-                      <span>已记录 {formatNumber(item.record_count)} 轮会话调用事实</span>
+                      <span>用量记录 {formatNumber(item.record_count)} 笔 · 精确 {formatNumber(item.exact_records)} · 聚合 {formatNumber(item.aggregate_records)} · 估算 {formatNumber(item.estimated_records)}</span>
                     </div>
                   </div>
                 {/each}
               </div>
             {:else}
               <div class="empty-box">暂无模型记录</div>
+            {/if}
+          </section>
+
+          <section class="panel-card" style="margin-top: 20px;">
+            <div class="panel-head">
+              <div>
+                <h2>模型调用量</h2>
+                <p>按来源展示可验证的响应次数；不同来源的时间范围会分别标注</p>
+              </div>
+              <span class="precision-chip quota">响应活动</span>
+            </div>
+            {#if snapshot.model_activity.length > 0}
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>来源</th><th>模型</th><th>调用量</th><th>统计范围</th></tr>
+                  </thead>
+                  <tbody>
+                    {#each snapshot.model_activity as activity}
+                      <tr>
+                        <td>{activity.tool_id === 'codex' ? 'Codex' : activity.tool_id === 'antigravity' ? 'Antigravity' : activity.tool_id}</td>
+                        <td><strong>{activity.model_id === 'unknown-model' ? '未识别模型' : activity.model_id}</strong></td>
+                        <td class="tabular">{formatNumber(activity.response_count)}</td>
+                        <td>{activity.time_scope === 'selected_range' ? '当前时间范围' : '来源累计'}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {:else}
+              <div class="empty-box">暂无可验证的模型响应次数；历史聚合 Token 记录不会被当作调用次数。</div>
+            {/if}
+          </section>
+
+        {:else if activeTab === 'sessions'}
+          <div class="page-header">
+            <h1>会话分析</h1>
+            <p>按本地脱敏会话标识汇总 Token；时间未知的 Antigravity 用量仅在“全部”范围计入。会话名称与提示内容不会读取或展示。</p>
+          </div>
+
+          <section class="panel-card">
+            <div class="panel-head">
+              <div>
+                <h2>会话 Token 使用</h2>
+                <p>显示 {formatNumber(sessionPageStart)}–{formatNumber(sessionPageEnd)} / {formatNumber(sessionPage?.total)} 个会话 · 当前范围：{range === 'all' ? '全部' : range === 'today' ? '今天' : range === '7d' ? '7 天' : '30 天'}</p>
+              </div>
+              <span class="panel-tag">每页 {sessionPage?.limit ?? 50}</span>
+            </div>
+
+            {#if sessionPage && sessionPage.sessions.length > 0}
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>会话标识</th><th>来源</th><th>Token 使用</th><th>精度与记录</th><th>模型数</th><th>响应次数</th><th>最近事件</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each sessionPage.sessions as session}
+                      <tr>
+                        <td><code title={session.session_id}>…{session.session_id.slice(-12)}</code></td>
+                        <td>{session.tool_id === 'codex' ? 'Codex' : session.tool_id === 'antigravity' ? 'Antigravity' : session.tool_id}</td>
+                        <td class="tabular"><strong>{formatNumber(session.total_tokens)}</strong></td>
+                        <td>
+                          <span>{formatNumber(session.usage_record_count)} 笔记录</span>
+                          <div class="session-precision">
+                            精确 {formatNumber(session.exact_records)} · 聚合 {formatNumber(session.aggregate_records)} · 估算 {formatNumber(session.estimated_records)}
+                            {#if session.unknown_precision_records > 0} · 未知 {formatNumber(session.unknown_precision_records)}{/if}
+                            {#if session.untimed_records > 0} · 无时间 {formatNumber(session.untimed_records)}{/if}
+                          </div>
+                        </td>
+                        <td class="tabular">{formatNumber(session.model_count)}</td>
+                        <td class="tabular">
+                          {#if session.known_response_count !== null}
+                            {formatNumber(session.known_response_count)}
+                            <div class="session-precision">{session.tool_id === 'antigravity' ? '来源累计' : '当前范围'}{#if session.unknown_response_count} · 未识别 {formatNumber(session.unknown_response_count)}{/if}</div>
+                          {:else}
+                            <span class="text-muted">来源未提供</span>
+                          {/if}
+                        </td>
+                        <td>
+                          {session.last_event_at_ms === null ? '事件时间未知' : relativeTime(session.last_event_at_ms)}
+                          {#if session.tool_id === 'antigravity' && session.activity_observed_at_ms !== null}
+                            <div class="session-precision">来源检查 {relativeTime(session.activity_observed_at_ms)}</div>
+                          {/if}
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+              <div class="session-pagination">
+                <span>Antigravity 响应次数为来源累计值；Token 用量按当前日期范围汇总。</span>
+                <div aria-label="会话分页">
+                  <button class="btn-secondary" disabled={sessionOffset === 0 || refreshing} onclick={() => handleSessionPage(Math.max(0, sessionOffset - (sessionPage?.limit ?? 50)))}>上一页</button>
+                  <button class="btn-secondary" disabled={!sessionPage || sessionOffset + sessionPage.limit >= sessionPage.total || refreshing} onclick={() => handleSessionPage(sessionOffset + (sessionPage?.limit ?? 50))}>下一页</button>
+                </div>
+              </div>
+            {:else}
+              <div class="empty-box">这个范围内还没有会话用量。选择“全部”可查看未提供事件时间的 Antigravity Token 记录。</div>
             {/if}
           </section>
 
@@ -938,7 +1079,7 @@
                     <tr>
                       <th>项目脱敏标识 (Hash)</th>
                       <th>Token 消耗量</th>
-                      <th>调用轮次</th>
+                      <th>用量记录数</th>
                       <th>全机份额</th>
                     </tr>
                   </thead>
@@ -963,73 +1104,127 @@
             {/if}
           </section>
 
-        <!-- TAB 6: ANTIGRAVITY QUOTA & ACTIVITY -->
+        <!-- PROVIDER QUOTAS AND ACTIVITY -->
         {:else if activeTab === 'quota'}
           <div class="page-header">
-            <h1>Antigravity 额度与活动</h1>
-            <p>本地 127.0.0.1 RPC 配额探针；额度百分比与响应次数绝非 Token 消耗</p>
+            <h1>额度与活动</h1>
+            <p>Codex 通过本机 Codex app-server 读取；Antigravity 通过仅限回环地址的 RPC 读取。额度、响应次数与 Token 用量分别统计。</p>
           </div>
 
-          <!-- Quota Snapshot Cards -->
-          <div class="panel-head">
-            <h2>实时配额快照</h2>
-            <span class="precision-chip quota">LOOPBACK RPC</span>
-          </div>
-
-          {#if snapshot.antigravity_quota.length > 0}
-            <div class="quota-grid">
-              {#each snapshot.antigravity_quota as q}
-                <article class="quota-item-card">
-                  <div class="quota-item-head">
-                    <span class="quota-pool-name">{q.pool_id.replaceAll('_', ' ')}</span>
-                    <span class="panel-tag">{q.window_id === 'five_hour' ? '5 小时周期' : '每周周期'}</span>
-                  </div>
-                  <div class="quota-gauge-val tabular">
-                    {formatPercent(q.remaining_basis_points)}
-                  </div>
-                  <div class="rank-track">
-                    <div
-                      class="rank-fill"
-                      style={`width: ${q.remaining_basis_points ? q.remaining_basis_points / 100 : 0}%; background-color: var(--color-quota);`}
-                    ></div>
-                  </div>
-                  <div class="quota-reset-countdown">
-                    {@html icons.quota}
-                    <span>{formatCountdown(q.reset_at_ms)}</span>
-                  </div>
-                </article>
-              {/each}
-            </div>
-          {:else}
-            <div class="empty-box" style="margin-bottom: 24px;">
-              暂无 Antigravity 配额快照。请确认 Antigravity IDE/CLI 正在运行。
-            </div>
-          {/if}
-
-          <!-- Model Activity Ledger -->
-          <section class="panel-card">
+          <section class="panel-card quota-section">
             <div class="panel-head">
               <div>
-                <h2>模型响应活动记账 (Turns)</h2>
-                <p>这是与模型交互的轮次次数，并非 Token 消耗，不计入总账单</p>
+                <h2>Codex 可用额度</h2>
+                <p>由 Codex 本地 app-server 返回的计划限额窗口</p>
               </div>
-              <span class="precision-chip exact">ACTIVITY LEDGER</span>
+              <span class="precision-chip quota">CODEX APP-SERVER</span>
             </div>
+            {#if snapshot.codex_quota.length > 0}
+              <div class="quota-grid">
+                {#each snapshot.codex_quota as q}
+                  <article class="quota-item-card">
+                    <div class="quota-item-head">
+                      <span class="quota-pool-name">Codex</span>
+                      <span class="panel-tag">{quotaWindowLabel(q.window_duration_minutes)}</span>
+                    </div>
+                    <div class="quota-gauge-val tabular">{formatPercent(q.remaining_basis_points)}</div>
+                    <div class="rank-track quota-track" aria-label="可用额度百分比">
+                      <div class="rank-fill" style={`width: ${q.remaining_basis_points === null ? 0 : q.remaining_basis_points / 100}%; background-color: var(--color-quota);`}></div>
+                    </div>
+                    <div class="quota-reset-countdown">{@html icons.quota}<span>{formatCountdown(q.reset_at_ms)}</span></div>
+                    <div class="quota-observed" class:stale={quotaIsStale(q.observed_at_ms)}>
+                      {quotaIsStale(q.observed_at_ms) ? '可能已过期' : '最近观测'} · {relativeTime(q.observed_at_ms)}
+                    </div>
+                  </article>
+                {/each}
+              </div>
+            {:else}
+              <div class="empty-box">尚无 Codex 额度快照。请确认本机 Codex CLI 已安装并登录，然后刷新。</div>
+            {/if}
+          </section>
 
-            <div class="device-summary-strip">
-              <div class="summary-pill-card">
-                <span>已识别模型响应</span>
-                <strong class="tabular">{formatNumber(snapshot.antigravity_activity.known_turns)}</strong>
+          <section class="panel-card quota-section">
+            <div class="panel-head">
+              <div>
+                <h2>Antigravity 可用额度</h2>
+                <p>来自本机 127.0.0.1 RPC；未知值保留为“未知”，不按 0 处理</p>
               </div>
-              <div class="summary-pill-card">
-                <span>未识别响应</span>
-                <strong class="tabular">{formatNumber(snapshot.antigravity_activity.unknown_turns)}</strong>
-              </div>
-              <div class="summary-pill-card">
-                <span>完整会话数</span>
-                <strong class="tabular">{formatNumber(snapshot.antigravity_activity.conversations)}</strong>
-              </div>
+              <span class="precision-chip quota">LOOPBACK RPC</span>
             </div>
+            {#if snapshot.antigravity_quota.length > 0}
+              <div class="quota-grid">
+                {#each snapshot.antigravity_quota as q}
+                  <article class="quota-item-card">
+                    <div class="quota-item-head">
+                      <span class="quota-pool-name">{q.pool_id.replaceAll('_', ' ')}</span>
+                      <span class="panel-tag">{antigravityWindowLabel(q.window_id)}</span>
+                    </div>
+                    <div class="quota-gauge-val tabular">{formatPercent(q.remaining_basis_points)}</div>
+                    <div class="rank-track quota-track" aria-label="可用额度百分比">
+                      <div class="rank-fill" style={`width: ${q.remaining_basis_points === null ? 0 : q.remaining_basis_points / 100}%; background-color: var(--color-quota);`}></div>
+                    </div>
+                    <div class="quota-reset-countdown">{@html icons.quota}<span>{formatCountdown(q.reset_at_ms)}</span></div>
+                    <div class="quota-observed" class:stale={quotaIsStale(q.observed_at_ms)}>
+                      {quotaIsStale(q.observed_at_ms) ? '可能已过期' : '最近观测'} · {relativeTime(q.observed_at_ms)}
+                    </div>
+                  </article>
+                {/each}
+              </div>
+            {:else}
+              <div class="empty-box">尚无 Antigravity 额度快照。请确认 Antigravity IDE 或 CLI 正在运行，然后刷新。</div>
+            {/if}
+          </section>
+
+          <section class="panel-card quota-section">
+            <div class="panel-head">
+              <div>
+                <h2>Antigravity Token 用量</h2>
+                <p>仅显示来源提供的生成 Token 计数；系统提示计数若存在则列为聚合，额度不会换算成 Token</p>
+              </div>
+              <span class="precision-chip exact">本地用量事实</span>
+            </div>
+            {#if antigravityUsage}
+              <div class="device-summary-strip quota-summary-strip">
+                <div class="summary-pill-card"><span>Token 总量</span><strong class="tabular">{formatNumber(antigravityUsage.total_tokens)}</strong></div>
+                <div class="summary-pill-card"><span>来源记录</span><strong class="tabular">{formatNumber(antigravityUsage.record_count)}</strong></div>
+                <div class="summary-pill-card"><span>精确 / 聚合</span><strong class="tabular">{formatNumber(antigravityUsage.exact_records)} / {formatNumber(antigravityUsage.aggregate_records)}</strong></div>
+                <div class="summary-pill-card"><span>显式估算</span><strong class="tabular">{formatNumber(antigravityUsage.estimated_records)}</strong></div>
+              </div>
+              {#if antigravityUsage.untimed_records > 0}
+                <p class="usage-note">{formatNumber(antigravityUsage.untimed_records)} 条记录没有可靠事件时间，因此不会进入所选日期范围和日趋势。</p>
+              {/if}
+            {:else}
+              <div class="empty-box">当前范围没有可计量的 Antigravity Token 记录。不会根据响应次数或额度推算用量。</div>
+            {/if}
+          </section>
+
+          <section class="panel-card quota-section">
+            <div class="panel-head">
+              <div>
+                <h2>模型响应次数</h2>
+                <p>Antigravity 来源累计值；它与 Token 计量独立</p>
+              </div>
+              <span class="panel-tag">活动账本</span>
+            </div>
+            <div class="device-summary-strip quota-summary-strip">
+              <div class="summary-pill-card"><span>已识别模型响应</span><strong class="tabular">{formatNumber(snapshot.antigravity_activity.known_turns)}</strong></div>
+              <div class="summary-pill-card"><span>未识别响应</span><strong class="tabular">{formatNumber(snapshot.antigravity_activity.unknown_turns)}</strong></div>
+              <div class="summary-pill-card"><span>来源会话数</span><strong class="tabular">{formatNumber(snapshot.antigravity_activity.conversations)}</strong></div>
+            </div>
+            {#if snapshot.model_activity.some((item) => item.tool_id === 'antigravity')}
+              <div class="table-wrap activity-table">
+                <table>
+                  <thead><tr><th>模型</th><th>响应次数</th><th>统计范围</th></tr></thead>
+                  <tbody>
+                    {#each snapshot.model_activity.filter((item) => item.tool_id === 'antigravity') as item}
+                      <tr><td><strong>{item.model_id}</strong></td><td class="tabular">{formatNumber(item.response_count)}</td><td>来源累计</td></tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {:else}
+              <div class="empty-box">暂无已识别模型的活动记录</div>
+            {/if}
           </section>
 
         <!-- TAB 7: SETTINGS (系统设置) -->

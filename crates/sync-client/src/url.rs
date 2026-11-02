@@ -17,10 +17,14 @@ impl HubUrl {
         if value.is_empty() || value.len() > 2048 {
             return Err(HubClientError::InvalidHubUrl);
         }
-        let mut parsed = Url::parse(value).map_err(|_| HubClientError::InvalidHubUrl)?;
-        let explicit_userinfo = parsed.as_str().split_once("://")
-            .map(|(_, rest)| rest.split('/').next().unwrap_or("").contains('@'))
+        let explicit_userinfo = value
+            .split_once("://")
+            .map(|(_, rest)| {
+                let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+                rest[..authority_end].contains('@')
+            })
             .unwrap_or(true);
+        let mut parsed = Url::parse(value).map_err(|_| HubClientError::InvalidHubUrl)?;
         if explicit_userinfo
             || !parsed.username().is_empty()
             || parsed.password().is_some()
@@ -38,14 +42,19 @@ impl HubUrl {
         }
         parsed.set_path("");
         let origin = parsed.origin().ascii_serialization();
-        Ok(Self { base: parsed, origin })
+        Ok(Self {
+            base: parsed,
+            origin,
+        })
     }
 
     pub fn endpoint(&self, path: &str) -> Result<Url, HubClientError> {
         if !path.starts_with('/') || path.starts_with("//") {
             return Err(HubClientError::InvalidHubUrl);
         }
-        self.base.join(path).map_err(|_| HubClientError::InvalidHubUrl)
+        self.base
+            .join(path)
+            .map_err(|_| HubClientError::InvalidHubUrl)
     }
 
     pub fn origin(&self) -> &str {
@@ -54,9 +63,15 @@ impl HubUrl {
 }
 
 fn is_loopback_host(host: &str) -> bool {
-    let ip_text = host.strip_prefix('[').and_then(|value| value.strip_suffix(']')).unwrap_or(host);
+    let ip_text = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host);
     host.eq_ignore_ascii_case("localhost")
-        || ip_text.parse::<IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false)
+        || ip_text
+            .parse::<IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -90,6 +105,9 @@ mod tests {
     fn canonicalizes_origin_for_credential_scope() {
         let url = HubUrl::parse("https://EXAMPLE.com:443/").unwrap();
         assert_eq!(url.origin(), "https://example.com");
-        assert_eq!(url.endpoint("/api/v1/pair").unwrap().as_str(), "https://example.com/api/v1/pair");
+        assert_eq!(
+            url.endpoint("/api/v1/pair").unwrap().as_str(),
+            "https://example.com/api/v1/pair"
+        );
     }
 }

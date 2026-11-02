@@ -328,6 +328,7 @@ fn start_agent_inner(
         .args([
             "--scan-all",
             "--refresh-antigravity-quota",
+            "--refresh-codex-quota",
             "--daemon",
             "--sync",
             "--interval-seconds",
@@ -445,7 +446,11 @@ fn read_pipe_bounded(reader: impl Read, limit: usize) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn query_agent(app: &AppHandle, range: &str) -> Result<DashboardResponse, String> {
+fn query_agent(
+    app: &AppHandle,
+    range: &str,
+    session_offset: u64,
+) -> Result<DashboardResponse, String> {
     if !["today", "7d", "30d", "all"].contains(&range) {
         return Err("不支持的统计范围".into());
     }
@@ -459,6 +464,8 @@ fn query_agent(app: &AppHandle, range: &str) -> Result<DashboardResponse, String
         .arg("--dashboard-json")
         .arg("--range")
         .arg(range)
+        .arg("--session-offset")
+        .arg(session_offset.to_string())
         .arg("--db")
         .arg(&db)
         .stdin(Stdio::null())
@@ -564,8 +571,9 @@ fn get_agent_status(app: AppHandle) -> Result<AgentStatus, String> {
 async fn get_dashboard_snapshot(
     app: AppHandle,
     range: String,
+    session_offset: u64,
 ) -> Result<DashboardResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || query_agent(&app, &range))
+    tauri::async_runtime::spawn_blocking(move || query_agent(&app, &range, session_offset))
         .await
         .map_err(|e| format!("Dashboard 查询任务失败：{e}"))?
 }
@@ -583,7 +591,7 @@ fn sync_context(
     hub_url: &str,
 ) -> Result<(HubUrl, CredentialKey, String, String), String> {
     let hub = HubUrl::parse(hub_url).map_err(|e| e.to_string())?;
-    let dashboard = query_agent(app, "all")?;
+    let dashboard = query_agent(app, "all", 0)?;
     let identity = dashboard
         .snapshot
         .identity

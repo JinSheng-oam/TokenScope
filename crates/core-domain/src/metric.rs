@@ -1,6 +1,6 @@
-use std::collections::HashSet;
-use serde::{Deserialize, Serialize};
 use crate::{CanonicalRecord, DomainError, UsageScope};
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// Five DISJOINT, non-negative usage buckets. Reasoning belongs to output and
 /// is not added again. If total is known but breakdown is not, use unclassified.
@@ -26,14 +26,20 @@ impl TokenBreakdown {
 
     pub fn validate(&self) -> Result<(), DomainError> {
         self.total()?;
-        if self.reasoning_tokens.is_some_and(|x| x > self.output_tokens) {
+        if self
+            .reasoning_tokens
+            .is_some_and(|x| x > self.output_tokens)
+        {
             return Err(DomainError::ReasoningExceedsOutput);
         }
         Ok(())
     }
 
     pub fn aggregate_only(total: u64) -> Self {
-        Self { unclassified_tokens: total, ..Self::default() }
+        Self {
+            unclassified_tokens: total,
+            ..Self::default()
+        }
     }
 
     pub fn checked_add(self, other: Self) -> Result<Self, DomainError> {
@@ -83,13 +89,24 @@ pub fn aggregate_device_local<'a>(
             return Err(DomainError::DuplicateRecordId);
         }
         result.usage = result.usage.checked_add(rec.usage)?;
-        result.record_count = result.record_count.checked_add(1).ok_or(DomainError::TokenOverflow)?;
+        result.record_count = result
+            .record_count
+            .checked_add(1)
+            .ok_or(DomainError::TokenOverflow)?;
         if let Some(cost) = rec.estimated_cost_microusd {
-            result.known_cost_microusd = result.known_cost_microusd
-                .checked_add(cost).ok_or(DomainError::CostOverflow)?;
-            result.priced_records = result.priced_records.checked_add(1).ok_or(DomainError::TokenOverflow)?;
+            result.known_cost_microusd = result
+                .known_cost_microusd
+                .checked_add(cost)
+                .ok_or(DomainError::CostOverflow)?;
+            result.priced_records = result
+                .priced_records
+                .checked_add(1)
+                .ok_or(DomainError::TokenOverflow)?;
         } else {
-            result.unpriced_records = result.unpriced_records.checked_add(1).ok_or(DomainError::TokenOverflow)?;
+            result.unpriced_records = result
+                .unpriced_records
+                .checked_add(1)
+                .ok_or(DomainError::TokenOverflow)?;
         }
     }
     Ok(result)

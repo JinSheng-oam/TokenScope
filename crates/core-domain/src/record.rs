@@ -1,15 +1,24 @@
+use crate::identity::{valid_lower_hex, valid_tool_id};
+use crate::{DomainError, TokenBreakdown};
 use serde::{Deserialize, Serialize};
 use unicode_normalization::UnicodeNormalization;
-use crate::{DomainError, TokenBreakdown};
-use crate::identity::{valid_lower_hex, valid_tool_id};
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum UsageScope { DeviceLocal, AccountGlobal, Unknown }
+pub enum UsageScope {
+    DeviceLocal,
+    AccountGlobal,
+    Unknown,
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum Precision { Exact, Aggregate, Estimated, Unknown }
+pub enum Precision {
+    Exact,
+    Aggregate,
+    Estimated,
+    Unknown,
+}
 
 /// Versioned wire payload. `record_revision` and `payload_hash` are *not*
 /// adapter fields: they belong to the local store transaction/envelope.
@@ -32,13 +41,21 @@ pub struct CanonicalRecord {
 }
 
 fn check_text(s: &str, name: &'static str, max: usize) -> Result<(), DomainError> {
-    if s.trim().is_empty() { return Err(DomainError::MissingField(name)); }
-    if s.len() > max { return Err(DomainError::TooLong(name)); }
-    if s.chars().any(|c| c.is_control()) { return Err(DomainError::InvalidField(name)); }
+    if s.trim().is_empty() {
+        return Err(DomainError::MissingField(name));
+    }
+    if s.len() > max {
+        return Err(DomainError::TooLong(name));
+    }
+    if s.chars().any(|c| c.is_control()) {
+        return Err(DomainError::InvalidField(name));
+    }
     Ok(())
 }
 fn check_opt(s: &Option<String>, name: &'static str, max: usize) -> Result<(), DomainError> {
-    if let Some(s) = s { check_text(s, name, max)?; }
+    if let Some(s) = s {
+        check_text(s, name, max)?;
+    }
     Ok(())
 }
 fn check_opaque(s: &Option<String>, name: &'static str, prefix: &str) -> Result<(), DomainError> {
@@ -49,19 +66,28 @@ fn check_opaque(s: &Option<String>, name: &'static str, prefix: &str) -> Result<
     }
     Ok(())
 }
-fn nfc(input: &str) -> String { input.nfc().collect() }
-fn nfc_opt(input: Option<String>) -> Option<String> { input.map(|s| nfc(&s)) }
+fn nfc(input: &str) -> String {
+    input.nfc().collect()
+}
+fn nfc_opt(input: Option<String>) -> Option<String> {
+    input.map(|s| nfc(&s))
+}
 
 impl CanonicalRecord {
     /// Validate **before** hashing or storage. Project/account/session IDs must
     /// be opaque hashes, not raw project paths, account names or conversation text.
     pub fn validate(&self) -> Result<(), DomainError> {
-        if !valid_lower_hex(&self.record_id) { return Err(DomainError::InvalidField("record_id")); }
+        if !valid_lower_hex(&self.record_id) {
+            return Err(DomainError::InvalidField("record_id"));
+        }
         check_text(&self.owner_device_id, "owner_device_id", 128)?;
-        if !self.owner_device_id.is_ascii() || self.owner_device_id.chars().any(char::is_whitespace) {
+        if !self.owner_device_id.is_ascii() || self.owner_device_id.chars().any(char::is_whitespace)
+        {
             return Err(DomainError::InvalidField("owner_device_id"));
         }
-        if !valid_tool_id(&self.tool_id) { return Err(DomainError::InvalidField("tool_id")); }
+        if !valid_tool_id(&self.tool_id) {
+            return Err(DomainError::InvalidField("tool_id"));
+        }
         check_opaque(&self.account_id, "account_id", "acct_")?;
         check_opt(&self.model_id, "model_id", 256)?;
         check_opaque(&self.project_id, "project_id", "prj_")?;
@@ -77,7 +103,9 @@ impl CanonicalRecord {
         if self.estimated_cost_microusd.is_some_and(|v| v < 0) {
             return Err(DomainError::NegativeCost);
         }
-        if self.is_deleted && (self.usage != TokenBreakdown::default() || self.estimated_cost_microusd.is_some()) {
+        if self.is_deleted
+            && (self.usage != TokenBreakdown::default() || self.estimated_cost_microusd.is_some())
+        {
             return Err(DomainError::DeletedRecordContainsUsage);
         }
         Ok(())

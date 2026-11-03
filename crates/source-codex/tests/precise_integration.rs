@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokenscope_core_domain::{aggregate_device_local, CanonicalRecord};
 use tokenscope_local_store::{LocalIdentity, LocalStore};
-use tokenscope_source_codex::{collect_codex, collect_codex_precise, collect_codex_precise_tolerant};
+use tokenscope_source_codex::{
+    collect_codex, collect_codex_precise, collect_codex_precise_tolerant,
+};
 const SESSION: &str = "019a9b8c-b777-4d55-9222-121212121212";
 
 struct Fx {

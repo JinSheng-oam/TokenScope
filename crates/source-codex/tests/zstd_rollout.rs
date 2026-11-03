@@ -47,7 +47,10 @@ fn zstd_rollout_is_collected_and_stays_idempotent() {
     let rows = db.pending_outbox(10).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].envelope.record.usage.total().unwrap(), 120);
-    assert_eq!(rows[0].envelope.record.model_id.as_deref(), Some("gpt-6-sol"));
+    assert_eq!(
+        rows[0].envelope.record.model_id.as_deref(),
+        Some("gpt-6-sol")
+    );
 
     let second = collect_codex_precise(&root, &mut db, "dev1").unwrap();
     assert_eq!((second.files, second.inserted), (1, 0));

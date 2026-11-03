@@ -80,6 +80,56 @@ fn activity_changes_replace_counts_not_add() {
         (1, 1, 0, 1)
     );
 }
+
+#[test]
+fn missing_antigravity_source_keeps_activity_checkpoint_and_usage() {
+    use std::collections::HashSet;
+    use tokenscope_core_domain::{
+        stable_record_id, CanonicalRecord, Precision, TokenBreakdown, UsageScope,
+    };
+
+    let mut s = db();
+    let initial = cp("fp1", 100);
+    let record = CanonicalRecord {
+        record_id: stable_record_id("antigravity", b"opaque-source", b"response-1").unwrap(),
+        owner_device_id: "pc1".into(),
+        tool_id: "antigravity".into(),
+        scope: UsageScope::DeviceLocal,
+        precision: Precision::Estimated,
+        account_id: None,
+        model_id: Some("gemini-pro".into()),
+        project_id: None,
+        session_id: None,
+        event_at_ms: None,
+        usage: TokenBreakdown {
+            unclassified_tokens: 8_000,
+            ..Default::default()
+        },
+        estimated_cost_microusd: None,
+        price_version: None,
+        is_deleted: false,
+    };
+    s.reconcile_source_with_activity(None, &initial, [record], 100, Some(&activity()))
+        .unwrap();
+
+    for observed_at_ms in [40_100, 70_100] {
+        assert_eq!(
+            s.reconcile_missing_sources("antigravity", &HashSet::new(), observed_at_ms)
+                .unwrap(),
+            0
+        );
+    }
+
+    assert_eq!(
+        s.checkpoint("antigravity", "opaque-source").unwrap(),
+        Some(initial)
+    );
+    let pending = s.pending_outbox(10).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert!(!pending[0].envelope.record.is_deleted);
+    assert_eq!(pending[0].envelope.record.usage.unclassified_tokens, 8_000);
+    assert_eq!(s.antigravity_activity_summary().unwrap().known_turns, 3);
+}
 #[test]
 fn invalid_activity_does_not_commit_checkpoint() {
     let mut s = db();

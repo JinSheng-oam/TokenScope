@@ -1,0 +1,224 @@
+/* ==========================================================================
+   App Shell Layout
+   ========================================================================== */
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+  background-color: var(--bg-canvas);
+}
+
+/* Sidebar */
+.sidebar {
+  width: 204px;
+  flex: 0 0 204px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  min-height: 420px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 10px 12px;
+  background-color: var(--bg-sidebar);
+  border-right: 1px solid var(--border-subtle);
+  transition: background-color var(--transition-base), border-color var(--transition-base);
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 8px 18px;
+}
+
+.brand-prism {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, var(--brand-strong), #3F4BC2);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 2px 6px rgba(79, 91, 213, 0.25);
+  flex-shrink: 0;
+}
+
+.brand-prism svg {
+  width: 14px;
+  height: 14px;
+  color: #FFFFFF;
+}
+
+.brand-title {
+  font-weight: 700;
+  font-size: 14.5px;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  color: var(--text-primary);
+}
+
+.brand-title small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.nav-caption {
+  padding: 0 10px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: all var(--transition-fast);
+}
+
+.nav-button:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-secondary);
+}
+
+.nav-button.active {
+  color: var(--text-primary);
+  background-color: var(--bg-card);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--border-subtle);
+  font-weight: 600;
+}
+
+.nav-button.active .nav-icon {
+  color: var(--brand-primary);
+}
+
+.nav-icon {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  transition: color var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.nav-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.nav-badge {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background-color: var(--brand-strong);
+  color: #FFFFFF;
+}
+
+.sidebar-spacer {
+  flex: 1;
+}
+
+/* Sidebar Footer & Heart Status */
+.sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.agent-heart-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.ping-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--text-muted);
+  transition: background-color var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.ping-dot.online {
+  background-color: var(--color-exact);
+  box-shadow: 0 0 0 2px var(--color-exact-bg);
+}
+
+.milestone-tag {
+  margin-left: auto;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+}
+
+/* Theme Switcher in Sidebar */
+.theme-switch-row {
+  display: flex;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+
+.theme-button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 25px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  transition: all var(--transition-fast);
+}
+
+.theme-button svg {
+  width: 13.5px;
+  height: 13.5px;
+}
+
+.theme-button:hover {
+  color: var(--text-primary);
+}
+
+.theme-button:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+
+.theme-button.active {
+  background-color: var(--bg-card);
+  color: var(--brand-primary);
+  box-shadow: var(--shadow-card);
+}

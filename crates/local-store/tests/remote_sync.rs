@@ -1,0 +1,142 @@
+mod common;
+use common::{rec, setup};
+#[test]
+fn remote_pull_applies_revision_and_advances_cursor_atomically() {
+    use tokenscope_core_domain::RevisionedRecord;
+    use tokenscope_local_store::RemoteUsageChange;
+    let mut db = setup();
+    let mut remote = rec("remote-event", 40);
+    remote.owner_device_id = "remote-pc-001".into();
+    let first = RevisionedRecord::from_store(remote.clone(), 1).unwrap();
+    let n = db
+        .apply_remote_changes(
+            &[RemoteUsageChange {
+                change_seq: 1,
+                owner_device_id: "remote-pc-001".into(),
+                envelope: first,
+            }],
+            1,
+        )
+        .unwrap();
+    assert_eq!(n, 1);
+    assert_eq!(db.pull_cursor().unwrap(), 1);
+    let totals = db
+        .remote_usage_totals(Some("remote-pc-001"), None, None)
+        .unwrap();
+    assert_eq!(totals.total_tokens, 42);
+    assert_eq!(totals.record_count, 1);
+    let by_device = db.remote_usage_by_device(None, None).unwrap();
+    assert_eq!(by_device.len(), 1);
+    assert_eq!(by_device[0].owner_device_id, "remote-pc-001");
+    remote.usage.input_uncached_tokens = 80;
+    let second = RevisionedRecord::from_store(remote.clone(), 2).unwrap();
+    assert_eq!(
+        db.apply_remote_changes(
+            &[RemoteUsageChange {
+                change_seq: 2,
+                owner_device_id: "remote-pc-001".into(),
+                envelope: second
+            }],
+            2
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.remote_usage_totals(None, None, None)
+            .unwrap()
+            .total_tokens,
+        82
+    );
+    remote.is_deleted = true;
+    remote.usage = Default::default();
+    remote.estimated_cost_microusd = None;
+    let tombstone = RevisionedRecord::from_store(remote, 3).unwrap();
+    db.apply_remote_changes(
+        &[RemoteUsageChange {
+            change_seq: 3,
+            owner_device_id: "remote-pc-001".into(),
+            envelope: tombstone,
+        }],
+        3,
+    )
+    .unwrap();
+    assert_eq!(
+        db.remote_usage_totals(None, None, None)
+            .unwrap()
+            .total_tokens,
+        0
+    );
+}
+
+#[test]
+fn remote_breakdowns_keep_device_tool_model_and_project_dimensions() {
+    use tokenscope_core_domain::RevisionedRecord;
+    use tokenscope_local_store::RemoteUsageChange;
+    let mut db = setup();
+    let mut a = rec("remote-a", 10);
+    a.owner_device_id = "remote-pc-001".into();
+    let prj = tokenscope_core_domain::project_key("codex", b"alpha").unwrap();
+    a.tool_id = "codex".into();
+    a.model_id = Some("gpt-6".into());
+    a.project_id = Some(prj);
+    let env = RevisionedRecord::from_store(a, 1).unwrap();
+    db.apply_remote_changes(
+        &[RemoteUsageChange {
+            change_seq: 1,
+            owner_device_id: "remote-pc-001".into(),
+            envelope: env,
+        }],
+        1,
+    )
+    .unwrap();
+    let tools = db.remote_usage_breakdown("tool_id", None, None).unwrap();
+    let models = db.remote_usage_breakdown("model_id", None, None).unwrap();
+    let projects = db.remote_usage_breakdown("project_id", None, None).unwrap();
+    assert_eq!(
+        (
+            tools.len(),
+            tools[0].owner_device_id.as_str(),
+            tools[0].key.as_str(),
+            tools[0].total_tokens
+        ),
+        (1, "remote-pc-001", "codex", 12)
+    );
+    assert_eq!(models[0].key, "gpt-6");
+    assert_eq!(projects[0].owner_device_id, "remote-pc-001");
+    assert!(db
+        .remote_usage_breakdown("payload_json", None, None)
+        .is_err());
+}
+
+#[test]
+fn invalid_remote_page_rolls_back_cache_and_cursor() {
+    use tokenscope_core_domain::RevisionedRecord;
+    use tokenscope_local_store::RemoteUsageChange;
+    let mut db = setup();
+    let mut remote = rec("remote-event", 5);
+    remote.owner_device_id = "remote-pc-001".into();
+    let valid = RevisionedRecord::from_store(remote.clone(), 1).unwrap();
+    let mut invalid = RevisionedRecord::from_store(remote, 2).unwrap();
+    invalid.payload_hash = "a".repeat(64);
+    let page = [
+        RemoteUsageChange {
+            change_seq: 1,
+            owner_device_id: "remote-pc-001".into(),
+            envelope: valid,
+        },
+        RemoteUsageChange {
+            change_seq: 2,
+            owner_device_id: "remote-pc-001".into(),
+            envelope: invalid,
+        },
+    ];
+    assert!(db.apply_remote_changes(&page, 2).is_err());
+    assert_eq!(db.pull_cursor().unwrap(), 0);
+    assert_eq!(
+        db.remote_usage_totals(None, None, None)
+            .unwrap()
+            .record_count,
+        0
+    );
+}

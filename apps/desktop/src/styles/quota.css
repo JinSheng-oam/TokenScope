@@ -1,0 +1,64 @@
+/* ==========================================================================
+   Antigravity Quota Cards & Gauges
+   ========================================================================== */
+.quota-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+  margin-bottom: 4px;
+}
+
+.quota-item-card {
+  padding: 16px;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.quota-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.quota-pool-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: capitalize;
+}
+
+.quota-gauge-val {
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: var(--color-quota);
+  margin-bottom: 8px;
+}
+
+.quota-reset-countdown {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.quota-track.unknown {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--border-subtle) 0 5px,
+    transparent 5px 10px
+  );
+}
+
+.quota-reset-countdown svg {
+  width: 13px;
+  height: 13px;
+}

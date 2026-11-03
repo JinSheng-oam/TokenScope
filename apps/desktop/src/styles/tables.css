@@ -1,0 +1,230 @@
+/* ==========================================================================
+   Table Wrap
+   ========================================================================== */
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+}
+
+table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  text-align: left;
+}
+
+th {
+  padding: 9px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-muted);
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+td.tabular {
+  text-align: right;
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr:hover {
+  background-color: var(--bg-card-hover);
+}
+
+.session-table {
+  min-width: 840px;
+}
+
+.session-filter-panel {
+  display: grid;
+  gap: 9px;
+  margin-bottom: 14px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.session-filter-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.7fr) repeat(3, minmax(115px, 1fr)) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.session-filter-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.session-filter-field > span {
+  line-height: 1.2;
+}
+
+.session-filter-field input,
+.session-filter-field select {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.session-filter-field input::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+.session-filter-field input:focus,
+.session-filter-field select:focus {
+  border-color: var(--brand-primary);
+  background-color: var(--bg-card);
+}
+
+.session-clear-btn {
+  min-height: 34px;
+  padding: 0 11px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.session-filter-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.session-filter-count {
+  flex: 0 0 auto;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.session-row-actions {
+  margin-top: 6px;
+}
+
+.session-facet-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.session-facet-chip {
+  max-width: 22ch;
+  overflow: hidden;
+  padding: 1px 6px;
+  border: 1px solid var(--brand-border);
+  border-radius: 4px;
+  background: var(--brand-subtle);
+  color: var(--text-primary);
+  font-size: 11px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-facet-chip.muted {
+  border-color: var(--border-subtle);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.session-empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  min-height: 140px;
+  padding: 24px 18px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.session-empty-state strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.session-empty-state p {
+  max-width: 58ch;
+  margin: 0;
+  font-size: 11.5px;
+}
+
+.session-empty-state .btn-secondary {
+  min-height: 32px;
+  margin-top: 3px;
+  font-size: 11.5px;
+}
+
+.session-action-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.session-action-confirm > span {
+  flex: 0 0 100%;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.session-action-btn,
+.session-delete-btn {
+  min-height: 26px;
+  padding: 2px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.session-action-notice {
+  margin-bottom: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.session-action-notice.error {
+  color: var(--color-danger);
+  background-color: var(--color-danger-bg);
+  border-color: var(--color-danger-border);
+}
+
+.session-action-notice.success {
+  color: var(--color-exact);
+  background-color: var(--color-exact-bg);
+  border-color: var(--color-exact-border);
+}

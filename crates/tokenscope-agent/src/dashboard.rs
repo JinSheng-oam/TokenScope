@@ -9,6 +9,24 @@ use std::{
 };
 use tokenscope_local_store::{DashboardQuery, DashboardSnapshot, LocalStore};
 
+struct ResolvedRange {
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+    chart_start: NaiveDate,
+    chart_end: NaiveDate,
+}
+
+pub struct SessionAnalysisOptions<'a> {
+    pub range: &'a str,
+    pub session_offset: u64,
+    pub search: Option<&'a str>,
+    pub tool_id: Option<&'a str>,
+    pub model_id: Option<&'a str>,
+    pub project_id: Option<&'a str>,
+    pub start_date: Option<&'a str>,
+    pub end_date: Option<&'a str>,
+}
+
 fn now_ms() -> Result<i64, Box<dyn std::error::Error>> {
     Ok(i64::try_from(
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
@@ -42,7 +60,7 @@ fn resolve_range(
     end_date: Option<&str>,
     zone: Tz,
     now: i64,
-) -> Result<(Option<i64>, Option<i64>, NaiveDate, NaiveDate), Box<dyn std::error::Error>> {
+) -> Result<ResolvedRange, Box<dyn std::error::Error>> {
     let now_utc = DateTime::<Utc>::from_timestamp_millis(now).ok_or("invalid system clock")?;
     let today = now_utc.with_timezone(&zone).date_naive();
     if range == "custom" {
@@ -62,7 +80,12 @@ fn resolve_range(
         if to <= from {
             return Err("custom range is empty".into());
         }
-        Ok((Some(from), Some(to), start, end.min(today)))
+        Ok(ResolvedRange {
+            from_ms: Some(from),
+            to_ms: Some(to),
+            chart_start: start,
+            chart_end: end.min(today),
+        })
     } else {
         let days_back = match range {
             "today" => 0,
@@ -81,7 +104,12 @@ fn resolve_range(
         } else {
             Some(now.saturating_add(1))
         };
-        Ok((from, to, start, today))
+        Ok(ResolvedRange {
+            from_ms: from,
+            to_ms: to,
+            chart_start: start,
+            chart_end: today,
+        })
     }
 }
 
@@ -105,15 +133,14 @@ pub fn read_snapshot(
     let zone_valid = parsed_zone.is_ok();
     let zone = parsed_zone.unwrap_or(chrono_tz::UTC);
     let now = now_ms()?;
-    let (from_ms, to_ms, chart_start, chart_end) =
-        resolve_range(range, start_date, end_date, zone, now)?;
+    let resolved = resolve_range(range, start_date, end_date, zone, now)?;
 
     // The trend follows the selected range, except `all` which remains bounded
     // to 30 days. Each boundary is resolved independently so DST transitions
     // do not shift a day.
     let mut daily_ranges = Vec::with_capacity(31);
-    let mut date = chart_start;
-    while date <= chart_end {
+    let mut date = resolved.chart_start;
+    while date <= resolved.chart_end {
         let start = local_midnight(date, zone)?;
         let next = local_midnight(date + Duration::days(1), zone)?;
         let end = next.min(now.saturating_add(1));
@@ -133,8 +160,8 @@ pub fn read_snapshot(
     };
     Ok(store.dashboard_snapshot(DashboardQuery {
         range,
-        from_ms,
-        to_ms,
+        from_ms: resolved.from_ms,
+        to_ms: resolved.to_ms,
         daily_ranges: &daily_ranges,
         generated_at_ms: now,
         time_zone: zone_name,
@@ -145,34 +172,35 @@ pub fn read_snapshot(
 
 pub fn read_session_analysis(
     path: &Path,
-    range: &str,
-    session_offset: u64,
-    search: Option<&str>,
-    tool_id: Option<&str>,
-    model_id: Option<&str>,
-    project_id: Option<&str>,
-    start_date: Option<&str>,
-    end_date: Option<&str>,
+    options: SessionAnalysisOptions<'_>,
 ) -> Result<tokenscope_local_store::SessionAnalysisPage, Box<dyn std::error::Error>> {
-    if !["today", "7d", "30d", "all", "custom"].contains(&range) {
+    if !["today", "7d", "30d", "all", "custom"].contains(&options.range) {
         return Err("range must be today, 7d, 30d, all or custom".into());
     }
     let store = LocalStore::open_readonly(path)?;
-    let identity = store.identity()?.ok_or("local identity is not initialized")?;
+    let identity = store
+        .identity()?
+        .ok_or("local identity is not initialized")?;
     let parsed_zone = Tz::from_str(&identity.time_zone);
     let zone = parsed_zone.unwrap_or(chrono_tz::UTC);
     let now = now_ms()?;
-    let (from_ms, to_ms, _, _) = resolve_range(range, start_date, end_date, zone, now)?;
+    let resolved = resolve_range(
+        options.range,
+        options.start_date,
+        options.end_date,
+        zone,
+        now,
+    )?;
     Ok(store.session_analysis_page(
         &identity.device_id,
-        from_ms,
-        to_ms,
-        session_offset,
+        resolved.from_ms,
+        resolved.to_ms,
+        options.session_offset,
         50,
-        search,
-        tool_id,
-        model_id,
-        project_id,
+        options.search,
+        options.tool_id,
+        options.model_id,
+        options.project_id,
     )?)
 }
 

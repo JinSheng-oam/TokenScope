@@ -1,0 +1,296 @@
+/* ==========================================================================
+   Page Content & Header
+   ========================================================================== */
+.page-content {
+  flex: 1;
+  max-width: 1440px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 18px 24px 32px;
+}
+
+.page-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-bottom: 14px;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+  color: var(--text-primary);
+}
+
+.page-header p {
+  margin: 0;
+  max-width: 78ch;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* Notice / Alert Banners */
+.notice-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  margin-bottom: 16px;
+  border-radius: var(--radius-md);
+  background-color: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+  color: var(--color-danger);
+}
+
+.notice-box svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.notice-box p {
+  margin: 0;
+  flex: 1;
+  font-size: 12.5px;
+}
+
+.notice-btn {
+  min-height: 30px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.notice-btn:hover:not(:disabled) {
+  background-color: var(--bg-card-hover);
+  border-color: var(--border-strong);
+}
+
+/* ==========================================================================
+   Linear Craft Metric Cards (4-Column Strip on Desktop 1200x800)
+   ========================================================================== */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 960px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .loading-skeleton-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.metric-card {
+  min-width: 0;
+  min-height: 108px;
+  padding: 14px 16px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.metric-card:hover {
+  border-color: var(--border-strong);
+}
+
+.metric-card.hero-card {
+  border-color: var(--brand-border);
+  background: linear-gradient(180deg, var(--brand-subtle) 0%, var(--bg-card) 58%);
+}
+
+.metric-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.metric-head > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metric-val {
+  margin: 10px 0 8px;
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+  font-size: clamp(20px, 1.9vw, 24px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metric-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric-foot strong {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.metric-split-bar {
+  display: flex;
+  height: 3px;
+  width: 100%;
+  margin-top: 8px;
+  border-radius: var(--radius-pill);
+  background-color: var(--bg-secondary);
+  overflow: hidden;
+  gap: 1px;
+}
+
+.metric-split-seg {
+  height: 100%;
+  transition: width var(--transition-base);
+}
+
+.metric-split-seg.input {
+  background-color: var(--brand-primary);
+}
+
+.metric-split-seg.output {
+  background-color: var(--color-aggregate);
+}
+
+.metric-split-seg.cache {
+  background-color: var(--color-exact);
+}
+
+/* Precision Chips (Domain Core) */
+.precision-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.precision-chip svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+}
+
+.precision-chip.exact {
+  background-color: var(--color-exact-bg);
+  border: 1px solid var(--color-exact-border);
+  color: var(--color-exact);
+}
+
+.precision-chip.estimated {
+  background-color: var(--color-estimated-bg);
+  border: 1px solid var(--color-estimated-border);
+  color: var(--color-estimated);
+}
+
+.precision-chip.aggregate {
+  background-color: var(--color-aggregate-bg);
+  border: 1px solid var(--color-aggregate-border);
+  color: var(--color-aggregate);
+}
+
+.precision-chip.quota {
+  background-color: var(--color-quota-bg);
+  border: 1px solid var(--color-quota-border);
+  color: var(--color-quota);
+}
+
+/* Data Precision Integrity Guardrail (Compact Single-Line Telemetry Bar) */
+.integrity-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 9px 14px;
+  margin-bottom: 14px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.integrity-left {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.integrity-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.integrity-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.integrity-dot.exact { background-color: var(--color-exact); }
+.integrity-dot.aggregate { background-color: var(--color-aggregate); }
+.integrity-dot.estimated { background-color: var(--color-estimated); }
+.integrity-dot.muted { background-color: var(--text-muted); }
+
+.integrity-item strong {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.integrity-right {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}

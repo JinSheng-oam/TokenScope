@@ -22,7 +22,7 @@ impl LocalStore {
             || to_ms.is_some_and(|v| v < 0)
             || from_ms.is_some_and(|v| v < 0)
             || from_ms.zip(to_ms).is_some_and(|(a, b)| a >= b)
-            || daily_ranges.len() > 93
+            || daily_ranges.len() > 3_660
         {
             return Err(StoreError::InvalidInput("dashboard query"));
         }

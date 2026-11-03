@@ -2,6 +2,17 @@ export function formatNumber(value: number | null | undefined): string {
   return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 }).format(value ?? 0);
 }
 
+const toolLabels: Record<string, string> = {
+  codex: 'Codex',
+  claude: 'Claude',
+  antigravity: 'Antigravity',
+  'deepseek-harness': 'DeepSeek Harness',
+};
+
+export function formatToolLabel(toolId: string): string {
+  return toolLabels[toolId] ?? toolId;
+}
+
 export function formatCost(microUsd: number | null | undefined): string {
   if (microUsd === null || microUsd === undefined) return '暂无价格数据';
   return new Intl.NumberFormat('en-US', {

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { formatCost, formatNumber, formatPercent, percentOf, relativeTime } from './format';
+import {
+  formatCost,
+  formatNumber,
+  formatPercent,
+  formatToolLabel,
+  percentOf,
+  relativeTime,
+} from './format';
 
 describe('dashboard formatters', () => {
   it('formats integer token counts without decimal noise', () => {
@@ -22,5 +29,10 @@ describe('dashboard formatters', () => {
     expect(relativeTime(null)).toBe('从未采集');
     expect(relativeTime(9_940, 10_000)).toBe('刚刚');
     expect(relativeTime(0, 3_600_000)).toBe('1 小时前');
+  });
+  it('uses one product label for each supported tool', () => {
+    expect(formatToolLabel('codex')).toBe('Codex');
+    expect(formatToolLabel('deepseek-harness')).toBe('DeepSeek Harness');
+    expect(formatToolLabel('future-tool')).toBe('future-tool');
   });
 });

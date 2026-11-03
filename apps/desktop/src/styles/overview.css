@@ -1,0 +1,111 @@
+/* Overview support panels keep the first viewport useful at desktop sizes. */
+.overview-support-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.recent-session-list,
+.source-health-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.recent-session-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.recent-session-row:first-child,
+.source-health-row:first-child {
+  border-top: 0;
+}
+
+.recent-session-rank {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.recent-session-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recent-session-main strong,
+.recent-session-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-session-main strong {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.recent-session-main small {
+  color: var(--text-muted);
+  font-size: 10.5px;
+}
+
+.recent-session-value {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.source-health-row {
+  display: grid;
+  grid-template-columns: 7px minmax(84px, 1fr) auto;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 42px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.source-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--text-muted);
+}
+
+.source-status-dot.complete { background-color: var(--color-exact); }
+.source-status-dot.partial { background-color: var(--color-estimated); }
+.source-status-dot.degraded { background-color: var(--color-danger); }
+
+.source-health-name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-health-status {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+}
+
+.source-health-meta {
+  grid-column: 2 / -1;
+  color: var(--text-muted);
+  font-size: 10.5px;
+}
+
+@media (max-width: 960px) {
+  .overview-support-grid {
+    grid-template-columns: 1fr;
+  }
+}

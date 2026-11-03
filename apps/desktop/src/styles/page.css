@@ -135,6 +135,25 @@
   white-space: nowrap;
 }
 
+.metric-head .metric-label-stack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.metric-label-stack small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .metric-val {
   margin: 10px 0 8px;
   font-family: var(--font-sans);
@@ -165,6 +184,16 @@
 .metric-foot strong {
   color: var(--text-secondary);
   font-weight: 600;
+}
+
+.hero-card .metric-foot {
+  flex-wrap: wrap;
+  row-gap: 2px;
+  white-space: normal;
+}
+
+.hero-card .metric-foot > span {
+  white-space: nowrap;
 }
 
 .metric-split-bar {
@@ -290,7 +319,18 @@
 }
 
 .integrity-right {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.integrity-right span {
   white-space: nowrap;
+}
+
+.integrity-right .warning {
+  color: var(--text-warning);
 }

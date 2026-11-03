@@ -5,6 +5,18 @@ use super::super::{LocalStore, PROJECT_LABEL_TOOL_ID};
 use crate::error::{pos_u64, Result, StoreError};
 use rusqlite::{params, OptionalExtension};
 impl LocalStore {
+    pub fn earliest_device_local_event_ms(&self, owner_device_id: &str) -> Result<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT MIN(event_at_ms) FROM usage_records \
+                 WHERE owner_device_id=?1 AND scope='device_local' AND is_deleted=0 \
+                 AND event_at_ms IS NOT NULL",
+                [owner_device_id],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
     pub(super) fn usage_totals(
         &self,
         owner_device_id: &str,

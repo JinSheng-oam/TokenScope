@@ -1,7 +1,7 @@
 <script lang="ts">
 import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
   import { nextChartIndex } from '../lib/chartInteraction';
-  import { formatCost, formatNumber, percentOf, relativeTime } from '../lib/format';
+  import { formatCost, formatNumber, formatToolLabel, percentOf, relativeTime } from '../lib/format';
   import type { ChartPoint } from '../lib/dashboardView';
   import type { HeatmapCalendar, HeatmapCell } from '../lib/heatmap';
   import { icons } from '../lib/icons';
@@ -28,6 +28,27 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
   export let topToolTotal: number;
   export let onSwitchTrendView: (mode: TrendViewMode) => void;
   export let onNavigateTools: () => void;
+  export let onNavigateSessions: () => void;
+
+  $: recentSessions = snapshot.session_usage.sessions.slice(0, 5);
+  $: untimedRecordCount = snapshot.by_tool.reduce((sum, tool) => sum + tool.untimed_records, 0);
+  $: heatmapRangeLabel = `${heatmapCalendar.rangeStartDate} 至 ${heatmapCalendar.rangeEndDate}`;
+  const heatmapWeekdayLabels = ['一', '', '三', '', '五', '', '日'];
+
+  function handleTrendPointerMove(event: PointerEvent) {
+    if (chartPoints.length === 0) return;
+    const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const chartX = ((event.clientX - bounds.left) / bounds.width) * 800;
+    if (chartX < 56 || chartX > 784) {
+      hoveredCurveIndex = null;
+      return;
+    }
+    const ratio = (chartX - 64) / 708;
+    hoveredCurveIndex = Math.max(
+      0,
+      Math.min(chartPoints.length - 1, Math.round(ratio * (chartPoints.length - 1))),
+    );
+  }
 </script>
 
 <div class="page-header">
@@ -41,15 +62,19 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
           <div class="metric-grid">
             <article class="metric-card hero-card">
               <div class="metric-head">
-                <span>总 Token 消耗</span>
-                <span class="precision-chip exact">
-                  {@html icons.shield} {exactRatio}% 精确
+                <span class="metric-label-stack">
+                  <span>总 Token</span>
+                  <small>累计用量 · 含缓存读写</small>
+                </span>
+                <span class="precision-chip exact" title={`${exactRatio}% 的用量记录为精确精度`}>
+                  {@html icons.shield} {exactRatio}%
                 </span>
               </div>
               <div class="metric-val">
                 {formatNumber(local?.total_tokens)}
               </div>
               <div class="metric-foot">
+                <span>非缓存消耗：<strong>{formatNumber((local?.total_tokens ?? 0) - cacheTokens)}</strong></span>
                 <span>估算成本：<strong>{formatCost(local?.estimated_cost_microusd)}</strong></span>
               </div>
               <div class="metric-split-bar" aria-label="Token 构成比例">
@@ -75,7 +100,7 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
             <article class="metric-card">
               <div class="metric-head">
                 <span>输出 Token</span>
-                <span class="panel-tag tabular">推理占 {reasoningShareRate}%</span>
+                <span class="panel-tag tabular">推理 {reasoningShareRate}%</span>
               </div>
               <div class="metric-val">
                 {formatNumber(local?.output_tokens)}
@@ -87,8 +112,8 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
 
             <article class="metric-card">
               <div class="metric-head">
-                <span>缓存读写 Token</span>
-                <span class="precision-chip exact">读取占输入 {cacheHitRate}%</span>
+                <span>缓存 Token</span>
+                <span class="precision-chip exact">输入缓存率 {cacheHitRate}%</span>
               </div>
               <div class="metric-val">
                 {formatNumber(cacheTokens)}
@@ -109,7 +134,10 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
               <span class="integrity-item">已计价：<strong>{formatNumber(local?.priced_records)}</strong> 笔</span>
             </div>
             <div class="integrity-right">
-              隔离保护：未归属用量 {formatNumber(snapshot.unassigned.total_tokens)} Token，避免跨设备重复累加
+              <span class:warning={untimedRecordCount > 0}>
+                时间未知：{formatNumber(untimedRecordCount)} 条，已计入累计但不进入日趋势
+              </span>
+              <span>隔离保护：未归属 {formatNumber(snapshot.unassigned.total_tokens)} Token</span>
             </div>
           </div>
 
@@ -121,7 +149,7 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
                   <h2>Token 使用趋势</h2>
                   <p>
                     {trendViewMode === 'heatmap'
-                      ? '近 20 周每日 Token 活跃度热力图（鼠标悬浮方格可查看当日明细）'
+                      ? `完整历史 · ${heatmapCalendar.weeks.length} 周 · ${heatmapRangeLabel}`
                       : '按本机时区自然日汇集（悬浮或用方向键查看当日明细）'}
                   </p>
                 </div>
@@ -160,6 +188,7 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
                       role="region"
                       aria-label="Token 趋势交互区；按方向键、Home 或 End 浏览每日数据"
                       onmouseleave={() => (hoveredCurveIndex = null)}
+                      onpointermove={handleTrendPointerMove}
                     >
                       <svg class="trend-svg" viewBox="0 0 800 176" role="img" aria-label="每日 Token 使用曲线">
                         <defs>
@@ -355,42 +384,35 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
                         >
                           {#each heatmapCalendar.weeks as _, colIdx}
                             {@const header = heatmapCalendar.monthHeaders.find((m) => m.colIndex === colIdx)}
-                            <span class="heatmap-month-label">{header ? header.label : ''}</span>
+                            <span
+                              class="heatmap-month-label"
+                              class:edge-end={header?.align === 'end'}
+                            >{header ? header.label : ''}</span>
                           {/each}
                         </div>
 
-                        <div class="heatmap-body">
-                          <div class="heatmap-weekdays" aria-hidden="true">
-                            <span>一</span>
-                            <span></span>
-                            <span>三</span>
-                            <span></span>
-                            <span>五</span>
-                            <span></span>
-                            <span>日</span>
-                          </div>
-
-                          <div
-                            class="heatmap-grid"
-                            style={`grid-template-columns: repeat(${heatmapCalendar.weeks.length}, minmax(0, 1fr));`}
-                          >
+                        <div
+                          class="heatmap-grid"
+                          style={`grid-template-columns: 22px repeat(${heatmapCalendar.weeks.length}, minmax(4px, 1fr));`}
+                        >
+                          {#each heatmapWeekdayLabels as weekdayLabel, rowIndex}
+                            <span class="heatmap-weekday" aria-hidden="true">{weekdayLabel}</span>
                             {#each heatmapCalendar.weeks as weekCol}
-                              <div class="heatmap-week-col">
-                                {#each weekCol as cell}
-                                  <div
-                                    class={`heatmap-cell level-${cell.level}`}
-                                    class:is-today={cell.isToday}
-                                    class:is-future={cell.isFuture}
-                                    role="img"
-                                    aria-label={`${cell.date} ${cell.weekdayLabel}：${formatNumber(cell.total_tokens)} Token`}
-                                    onmouseenter={() => {
-                                      if (!cell.isFuture) hoveredHeatmapCell = cell;
-                                    }}
-                                  ></div>
-                                {/each}
-                              </div>
+                              {@const cell = weekCol[rowIndex]}
+                              {#if cell}
+                                <div
+                                  class={`heatmap-cell level-${cell.level}`}
+                                  class:is-today={cell.isToday}
+                                  class:is-future={cell.isFuture}
+                                  role="img"
+                                  aria-label={`${cell.date} ${cell.weekdayLabel}：${formatNumber(cell.total_tokens)} Token`}
+                                  onmouseenter={() => {
+                                    if (!cell.isFuture) hoveredHeatmapCell = cell;
+                                  }}
+                                ></div>
+                              {/if}
                             {/each}
-                          </div>
+                          {/each}
                         </div>
                       </div>
                     </div>
@@ -398,7 +420,7 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
                     {#if hoveredHeatmapCell}
                       <div
                         class="chart-hover-tooltip"
-                        style={`left: ${((hoveredHeatmapCell.colIndex + 0.5) / heatmapCalendar.weeks.length) * 100}%; top: ${((hoveredHeatmapCell.rowIndex + 1) / 7) * 100}%; transform: translate(${hoveredHeatmapCell.colIndex > heatmapCalendar.weeks.length - 6 ? '-105%' : hoveredHeatmapCell.colIndex < 4 ? '6%' : '-50%'}, -115%);`}
+                        style={`left: ${((hoveredHeatmapCell.colIndex + 0.5) / heatmapCalendar.weeks.length) * 100}%; top: ${((hoveredHeatmapCell.rowIndex + 1) / 7) * 100}%; transform: translate(${hoveredHeatmapCell.colIndex > heatmapCalendar.weeks.length - 6 ? '-105%' : hoveredHeatmapCell.colIndex < 4 ? '6%' : '-50%'}, ${hoveredHeatmapCell.rowIndex <= 2 ? '14px' : '-115%'});`}
                       >
                         <div class="tooltip-head">
                           <span>{hoveredHeatmapCell.date}{hoveredHeatmapCell.isToday ? ' (今天)' : ''}</span>
@@ -435,7 +457,7 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
                       {#if heatmapCalendar.peakDate}
                         单日峰值：{heatmapCalendar.peakDate} ({formatCompactTokens(heatmapCalendar.peakTokens)})
                       {:else}
-                        近 20 周暂无消耗峰值
+                        当前范围暂无消耗峰值
                       {/if}
                     </span>
                     <span class="heatmap-legend-scale" aria-label="热力图颜色强度图例">
@@ -483,6 +505,75 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
                 </div>
               {:else}
                 <div class="empty-box">暂无工具消耗记录</div>
+              {/if}
+            </section>
+          </div>
+
+          <div class="overview-support-grid">
+            <section class="panel-card">
+              <div class="panel-head">
+                <div>
+                  <h2>最近会话</h2>
+                  <p>按最近事件排序；显示整段会话的累计 Token 用量</p>
+                </div>
+                <button class="panel-tag" onclick={onNavigateSessions}>查看全部 →</button>
+              </div>
+
+              {#if recentSessions.length > 0}
+                <div class="recent-session-list">
+                  {#each recentSessions as session, index}
+                    <div class="recent-session-row">
+                      <span class="recent-session-rank tabular">{String(index + 1).padStart(2, '0')}</span>
+                      <span class="recent-session-main">
+                        <strong title={session.display_name ?? session.session_id}>
+                          {session.display_name ?? '未命名会话'}
+                        </strong>
+                        <small>
+                          {formatToolLabel(session.tool_id)}
+                          {#if session.models[0]?.model_id} · {session.models[0].model_id}{/if}
+                          · {relativeTime(session.last_event_at_ms ?? session.activity_observed_at_ms)}
+                        </small>
+                      </span>
+                      <span class="recent-session-value tabular">{formatNumber(session.total_tokens)}</span>
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <div class="empty-box">当前范围暂无会话记录</div>
+              {/if}
+            </section>
+
+            <section class="panel-card">
+              <div class="panel-head">
+                <div>
+                  <h2>采集源状态</h2>
+                  <p>最近一次检查点与来源覆盖情况</p>
+                </div>
+                <button class="panel-tag" onclick={onNavigateTools}>运行明细 →</button>
+              </div>
+
+              {#if snapshot.source_health.length > 0}
+                <div class="source-health-list">
+                  {#each snapshot.source_health as source}
+                    <div class="source-health-row">
+                      <span
+                        class="source-status-dot"
+                        class:complete={source.status === 'complete'}
+                        class:partial={source.status === 'partial'}
+                        class:degraded={source.status === 'degraded'}
+                      ></span>
+                      <span class="source-health-name">{formatToolLabel(source.tool_id)}</span>
+                      <span class="source-health-status">
+                        {source.status === 'complete' ? '正常' : source.status === 'partial' ? '部分' : source.status === 'degraded' ? '异常' : '未知'}
+                      </span>
+                      <span class="source-health-meta">
+                        {relativeTime(source.last_scan_ms)} · {source.source_count} 个来源
+                      </span>
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <div class="empty-box">暂无采集来源检查点</div>
               {/if}
             </section>
           </div>

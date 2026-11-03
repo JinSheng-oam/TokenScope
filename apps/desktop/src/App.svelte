@@ -30,7 +30,7 @@
 
   type Tab = 'overview' | 'devices' | 'tools' | 'models' | 'sessions' | 'projects' | 'quota' | 'settings';
   let activeTab: Tab = 'overview';
-  let range: DashboardRange = '7d';
+  let range: DashboardRange = 'all';
   let customStart = '';
   let customEnd = '';
   let customOpen = false;
@@ -441,6 +441,7 @@
             topToolTotal={dashboardView.topToolTotal}
             onSwitchTrendView={handleSwitchTrendView}
             onNavigateTools={() => handleSelectTab('tools')}
+            onNavigateSessions={() => handleSelectTab('sessions')}
           />
         <!-- TAB 2: MULTI-DEVICE (多设备网络) -->
         {:else if activeTab === 'devices'}

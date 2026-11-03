@@ -16,10 +16,12 @@ export type HeatmapCell = {
 
 export type HeatmapCalendar = {
   weeks: HeatmapCell[][];
-  monthHeaders: { colIndex: number; label: string }[];
+  monthHeaders: { colIndex: number; label: string; align: 'start' | 'end' }[];
   activeDays: number;
   peakDate: string;
   peakTokens: number;
+  rangeStartDate: string;
+  rangeEndDate: string;
 };
 
 const weekdayNames = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -45,8 +47,7 @@ export function formatWeekday(iso: string): string {
 
 export function buildHeatmapCalendar(
   dailyList: DashboardSnapshot['daily'],
-  anchorIso: string,
-  numWeeks = 20
+  anchorIso: string
 ): HeatmapCalendar {
   const map = new Map<string, DashboardSnapshot['daily'][number]>();
   for (const item of dailyList) {
@@ -61,10 +62,34 @@ export function buildHeatmapCalendar(
     todayDate.getMonth(),
     todayDate.getDate() - todayMonIdx
   );
+
+  // The overview is an all-history surface. Derive the calendar width from
+  // the retained data instead of silently hiding older months behind a fixed
+  // 20-week window.
+  let earliest: Date | null = null;
+  for (const item of dailyList) {
+    if (item.date > todayStr) continue;
+    const parsed = parseIsoLocal(item.date);
+    if (Number.isNaN(parsed.getTime())) continue;
+    if (!earliest || parsed < earliest) earliest = parsed;
+  }
+  const earliestMonIdx = earliest ? (earliest.getDay() + 6) % 7 : 0;
+  const earliestMonday = earliest
+    ? new Date(earliest.getFullYear(), earliest.getMonth(), earliest.getDate() - earliestMonIdx)
+    : new Date(
+        currentWeekMonday.getFullYear(),
+        currentWeekMonday.getMonth(),
+        currentWeekMonday.getDate() - 11 * 7
+      );
+  const daySpan = Math.max(
+    0,
+    Math.round((currentWeekMonday.getTime() - earliestMonday.getTime()) / 86_400_000)
+  );
+  const numWeeks = Math.max(1, Math.floor(daySpan / 7) + 1);
   const startMonday = new Date(
-    currentWeekMonday.getFullYear(),
-    currentWeekMonday.getMonth(),
-    currentWeekMonday.getDate() - (numWeeks - 1) * 7
+    earliestMonday.getFullYear(),
+    earliestMonday.getMonth(),
+    earliestMonday.getDate()
   );
 
   let maxTokens = 0;
@@ -92,7 +117,7 @@ export function buildHeatmapCalendar(
   }
 
   const weeks: HeatmapCell[][] = [];
-  const monthHeaders: { colIndex: number; label: string }[] = [];
+  const monthHeaderCandidates: { colIndex: number; label: string }[] = [];
   let lastMonth = -1;
 
   for (let w = 0; w < numWeeks; w++) {
@@ -123,7 +148,7 @@ export function buildHeatmapCalendar(
       if (d === 0) {
         const month = cellDate.getMonth() + 1;
         if (month !== lastMonth) {
-          monthHeaders.push({ colIndex: w, label: `${month}月` });
+          monthHeaderCandidates.push({ colIndex: w, label: `${month}月` });
           lastMonth = month;
         }
       }
@@ -145,11 +170,26 @@ export function buildHeatmapCalendar(
     weeks.push(col);
   }
 
+  // Suppress a partial first month when its successor starts one or two
+  // columns later; the exact retained range is already printed above the
+  // calendar. The final label aligns to the left edge so it cannot be clipped.
+  const monthHeaders = monthHeaderCandidates
+    .filter((header, index) => {
+      const next = monthHeaderCandidates[index + 1];
+      return !(index === 0 && next && next.colIndex - header.colIndex < 3);
+    })
+    .map((header) => ({
+      ...header,
+      align: header.colIndex > numWeeks - 4 ? 'end' as const : 'start' as const,
+    }));
+
   return {
     weeks,
     monthHeaders,
     activeDays,
     peakDate,
     peakTokens: maxTokens,
+    rangeStartDate: earliest ? toIsoDate(earliest) : toIsoDate(startMonday),
+    rangeEndDate: todayStr,
   };
 }

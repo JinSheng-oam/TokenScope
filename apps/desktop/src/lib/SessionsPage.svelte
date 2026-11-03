@@ -1,5 +1,5 @@
 <script lang="ts">
-import { formatNumber, relativeTime } from '../lib/format';
+import { formatNumber, formatToolLabel, relativeTime } from '../lib/format';
   import type {
     DashboardRange,
     SessionAnalysisPage,
@@ -162,7 +162,7 @@ import { formatNumber, relativeTime } from '../lib/format';
                             {/if}
                           </div>
                         </td>
-                        <td>{session.tool_id === 'codex' ? 'Codex' : session.tool_id === 'claude' ? 'Claude' : session.tool_id === 'antigravity' ? 'Antigravity' : session.tool_id === 'deepseek-harness' ? 'DeepSeek Harness' : session.tool_id}</td>
+                        <td>{formatToolLabel(session.tool_id)}</td>
                         <td class="session-models">
                           {#if session.models.length > 0}
                             {#each session.models.slice(0, 4) as model}

@@ -60,6 +60,7 @@ fn resolve_range(
     end_date: Option<&str>,
     zone: Tz,
     now: i64,
+    earliest_event_ms: Option<i64>,
 ) -> Result<ResolvedRange, Box<dyn std::error::Error>> {
     let now_utc = DateTime::<Utc>::from_timestamp_millis(now).ok_or("invalid system clock")?;
     let today = now_utc.with_timezone(&zone).date_naive();
@@ -93,7 +94,14 @@ fn resolve_range(
             "30d" | "all" => 29,
             _ => return Err("range must be today, 7d, 30d, all or custom".into()),
         };
-        let start = today - Duration::days(days_back);
+        let start = if range == "all" {
+            earliest_event_ms
+                .and_then(DateTime::<Utc>::from_timestamp_millis)
+                .map(|event| event.with_timezone(&zone).date_naive())
+                .unwrap_or(today - Duration::days(days_back))
+        } else {
+            today - Duration::days(days_back)
+        };
         let from = if range == "all" {
             None
         } else {
@@ -133,12 +141,16 @@ pub fn read_snapshot(
     let zone_valid = parsed_zone.is_ok();
     let zone = parsed_zone.unwrap_or(chrono_tz::UTC);
     let now = now_ms()?;
-    let resolved = resolve_range(range, start_date, end_date, zone, now)?;
+    let earliest_event_ms = match (range, identity.as_ref()) {
+        ("all", Some(identity)) => store.earliest_device_local_event_ms(&identity.device_id)?,
+        _ => None,
+    };
+    let resolved = resolve_range(range, start_date, end_date, zone, now, earliest_event_ms)?;
 
-    // The trend follows the selected range, except `all` which remains bounded
-    // to 30 days. Each boundary is resolved independently so DST transitions
-    // do not shift a day.
-    let mut daily_ranges = Vec::with_capacity(31);
+    // Each boundary is resolved independently so DST transitions do not shift
+    // a day. `all` starts at the earliest timestamp still retained locally.
+    let day_count = (resolved.chart_end - resolved.chart_start).num_days() + 1;
+    let mut daily_ranges = Vec::with_capacity(usize::try_from(day_count.max(1))?);
     let mut date = resolved.chart_start;
     while date <= resolved.chart_end {
         let start = local_midnight(date, zone)?;
@@ -147,7 +159,7 @@ pub fn read_snapshot(
         if end > start {
             daily_ranges.push((date.format("%Y-%m-%d").to_string(), start, end));
         }
-        if daily_ranges.len() > 93 {
+        if daily_ranges.len() > 3_660 {
             return Err("chart range too long".into());
         }
         date += Duration::days(1);
@@ -190,6 +202,7 @@ pub fn read_session_analysis(
         options.end_date,
         zone,
         now,
+        None,
     )?;
     Ok(store.session_analysis_page(
         &identity.device_id,
@@ -231,5 +244,33 @@ mod tests {
         let c = local_midnight(autumn, zone).unwrap();
         let d = local_midnight(autumn + Duration::days(1), zone).unwrap();
         assert_eq!(d - c, 25 * 60 * 60 * 1000);
+    }
+
+    #[test]
+    fn all_range_starts_at_earliest_retained_event() {
+        let zone = chrono_tz::Asia::Shanghai;
+        let now = Utc
+            .with_ymd_and_hms(2026, 11, 4, 4, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+        let earliest = Utc
+            .with_ymd_and_hms(2026, 3, 30, 12, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+
+        let resolved = resolve_range("all", None, None, zone, now, Some(earliest)).unwrap();
+
+        assert_eq!(
+            resolved.chart_start,
+            NaiveDate::from_ymd_opt(2026, 3, 30).unwrap()
+        );
+        assert_eq!(
+            resolved.chart_end,
+            NaiveDate::from_ymd_opt(2026, 11, 4).unwrap()
+        );
+        assert_eq!(resolved.from_ms, None);
+        assert_eq!(resolved.to_ms, None);
     }
 }

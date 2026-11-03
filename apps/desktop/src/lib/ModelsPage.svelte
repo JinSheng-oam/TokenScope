@@ -1,5 +1,5 @@
 <script lang="ts">
-import { formatCost, formatNumber, percentOf } from '../lib/format';
+import { formatCost, formatNumber, formatToolLabel, percentOf } from '../lib/format';
   import type { ModelSortBy } from '../lib/dashboardView';
   import type { DashboardSnapshot, UsageBreakdown } from '../lib/types';
 
@@ -72,7 +72,7 @@ import { formatCost, formatNumber, percentOf } from '../lib/format';
                   <tbody>
                     {#each snapshot.model_activity as activity}
                       <tr>
-                        <td>{activity.tool_id === 'codex' ? 'Codex' : activity.tool_id === 'antigravity' ? 'Antigravity' : activity.tool_id}</td>
+                        <td>{formatToolLabel(activity.tool_id)}</td>
                         <td><strong>{activity.model_id === 'unknown-model' ? '未识别模型' : activity.model_id}</strong></td>
                         <td class="tabular">{formatNumber(activity.response_count)}</td>
                         <td>{activity.time_scope === 'selected_range' ? '当前时间范围' : '来源累计'}</td>

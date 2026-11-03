@@ -20,7 +20,7 @@
   import { icons } from './lib/icons';
   import { BOOTSTRAP_STAGE } from './lib/status';
   import { applyTheme, getInitialTheme, initThemeListener, type ThemeMode } from './lib/theme';
-import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, SessionAnalysisPage, SessionUsage } from './lib/types';
+  import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, SessionAnalysisPage, SessionUsage } from './lib/types';
 
   type Tab = 'overview' | 'devices' | 'tools' | 'models' | 'sessions' | 'projects' | 'quota' | 'settings';
   let activeTab: Tab = 'overview';
@@ -91,10 +91,17 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
   $: chartMax = Math.max(1, ...chartValues.map((item) => item.total_tokens));
   $: chartPoints = chartValues.map((item, index) => ({
     ...item,
-    x: chartValues.length <= 1 ? 400 : 25 + (index / (chartValues.length - 1)) * 750,
-    y: 160 - (item.total_tokens / chartMax) * 130,
+    x: chartValues.length <= 1 ? 420 : 64 + (index / (chartValues.length - 1)) * 708,
+    y: 156 - (item.total_tokens / chartMax) * 124,
   }));
   $: chartPath = chartPoints.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
+
+  function formatCompactTokens(value: number): string {
+    if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
+    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+    if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+    return String(Math.round(value));
+  }
 
   $: topToolTotal = Math.max(1, ...(snapshot?.by_tool ?? []).map((item) => item.total_tokens));
   $: topModelTotal = Math.max(1, ...(snapshot?.by_model ?? []).map((item) => item.total_tokens));
@@ -126,10 +133,14 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
     return b.total_tokens - a.total_tokens;
   });
 
-  // Calculate Cache Savings Rate
+  // Calculate Cache Savings Rate & Token Composition Shares
   $: cacheTokens = (local?.cache_read_tokens ?? 0) + (local?.cache_write_tokens ?? 0);
   $: cacheInputTokens = (local?.input_tokens ?? 0) + (local?.cache_read_tokens ?? 0) + (local?.cache_write_tokens ?? 0);
   $: cacheHitRate = cacheInputTokens ? (((local?.cache_read_tokens ?? 0) / cacheInputTokens) * 100).toFixed(1) : '0.0';
+  $: inputShareRate = percentOf(local?.input_tokens ?? 0, local?.total_tokens ?? 0).toFixed(1);
+  $: outputShareRate = percentOf(local?.output_tokens ?? 0, local?.total_tokens ?? 0).toFixed(1);
+  $: cacheShareRate = percentOf(cacheTokens, local?.total_tokens ?? 0).toFixed(1);
+  $: reasoningShareRate = percentOf(local?.reasoning_tokens ?? 0, local?.output_tokens ?? 0).toFixed(1);
 
   // Precision Ratio
   $: exactRatio = local?.record_count
@@ -536,7 +547,7 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
 <div class="app-shell">
   <!-- Sidebar -->
   <aside class="sidebar">
-      <div class="brand-row" title="TokenScope · Local Analytics">
+    <div class="brand-row" title="TokenScope · Local Analytics">
       <div class="brand-prism">
         {@html icons.sparkle}
       </div>
@@ -680,7 +691,7 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
         <div class="loading-state" role="status" aria-live="polite">
           <div class="loading-message">
             <span class="loading-indicator" aria-hidden="true"></span>
-          <p>正在连接本地守护进程并读取 SQLite 快照…</p>
+            <p>正在连接本地守护进程并读取 SQLite 快照…</p>
           </div>
           <div class="loading-skeleton-grid" aria-hidden="true">
             <span class="loading-skeleton"></span>
@@ -709,20 +720,25 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
                   {@html icons.shield} {exactRatio}% 精确
                 </span>
               </div>
-              <div class="metric-val tabular">
+              <div class="metric-val">
                 {formatNumber(local?.total_tokens)}
               </div>
               <div class="metric-foot">
                 <span>估算成本：<strong>{formatCost(local?.estimated_cost_microusd)}</strong></span>
+              </div>
+              <div class="metric-split-bar" aria-label="Token 构成比例">
+                <div class="metric-split-seg input" style={`width: ${inputShareRate}%`} title={`输入 ${inputShareRate}%`}></div>
+                <div class="metric-split-seg output" style={`width: ${outputShareRate}%`} title={`输出 ${outputShareRate}%`}></div>
+                <div class="metric-split-seg cache" style={`width: ${cacheShareRate}%`} title={`缓存 ${cacheShareRate}%`}></div>
               </div>
             </article>
 
             <article class="metric-card">
               <div class="metric-head">
                 <span>输入 Token</span>
-                <span class="metric-icon-wrap">{@html icons.arrowDown}</span>
+                <span class="panel-tag tabular">占总量 {inputShareRate}%</span>
               </div>
-              <div class="metric-val tabular">
+              <div class="metric-val">
                 {formatNumber(local?.input_tokens)}
               </div>
               <div class="metric-foot">
@@ -733,13 +749,13 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
             <article class="metric-card">
               <div class="metric-head">
                 <span>输出 Token</span>
-                <span class="metric-icon-wrap">{@html icons.arrowUp}</span>
+                <span class="panel-tag tabular">推理占 {reasoningShareRate}%</span>
               </div>
-              <div class="metric-val tabular">
+              <div class="metric-val">
                 {formatNumber(local?.output_tokens)}
               </div>
               <div class="metric-foot">
-                <span>含推理 {formatNumber(local?.reasoning_tokens)} (作为输出子集)</span>
+                <span>含推理 <strong>{formatNumber(local?.reasoning_tokens)}</strong> (输出子集)</span>
               </div>
             </article>
 
@@ -748,11 +764,11 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
                 <span>缓存读写 Token</span>
                 <span class="precision-chip exact">读取占输入 {cacheHitRate}%</span>
               </div>
-              <div class="metric-val tabular">
+              <div class="metric-val">
                 {formatNumber(cacheTokens)}
               </div>
               <div class="metric-foot">
-                <span>读 {formatNumber(local?.cache_read_tokens)} · 写 {formatNumber(local?.cache_write_tokens)}</span>
+                <span>读 <strong>{formatNumber(local?.cache_read_tokens)}</strong> · 写 <strong>{formatNumber(local?.cache_write_tokens)}</strong></span>
               </div>
             </article>
           </div>
@@ -760,10 +776,10 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
           <!-- Data Precision Integrity Guardrail -->
           <div class="integrity-banner">
             <div class="integrity-left">
-              <span class="integrity-item">精确记录：<strong>{formatNumber(local?.exact_records)}</strong> 笔</span>
-              <span class="integrity-item">聚合粗粒度：<strong>{formatNumber(local?.aggregate_records)}</strong> 笔</span>
-              <span class="integrity-item">显式估算：<strong>{formatNumber(local?.estimated_records)}</strong> 笔</span>
-              <span class="integrity-item">精度未知：<strong>{formatNumber(local?.unknown_precision_records)}</strong> 笔</span>
+              <span class="integrity-item"><span class="integrity-dot exact"></span>精确记录：<strong>{formatNumber(local?.exact_records)}</strong> 笔</span>
+              <span class="integrity-item"><span class="integrity-dot aggregate"></span>聚合粗粒度：<strong>{formatNumber(local?.aggregate_records)}</strong> 笔</span>
+              <span class="integrity-item"><span class="integrity-dot estimated"></span>显式估算：<strong>{formatNumber(local?.estimated_records)}</strong> 笔</span>
+              <span class="integrity-item"><span class="integrity-dot muted"></span>精度未知：<strong>{formatNumber(local?.unknown_precision_records)}</strong> 笔</span>
               <span class="integrity-item">已计价：<strong>{formatNumber(local?.priced_records)}</strong> 笔</span>
             </div>
             <div class="integrity-right">
@@ -784,36 +800,99 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
 
               {#if chartValues.length > 0}
                 <div class="chart-wrap">
-                  <svg class="trend-svg" viewBox="0 0 800 180" role="img" aria-label="每日 Token 使用曲线">
+                  <svg class="trend-svg" viewBox="0 0 800 176" role="img" aria-label="每日 Token 使用曲线">
                     <defs>
                       <linearGradient id="trendGradient" x1="0" x2="0" y1="0" y2="1">
                         <stop offset="0%" stop-color="var(--brand-primary)" stop-opacity="0.32" />
-                        <stop offset="100%" stop-color="var(--brand-primary)" stop-opacity="0" />
+                        <stop offset="100%" stop-color="var(--brand-primary)" stop-opacity="0.02" />
                       </linearGradient>
                     </defs>
-                    {#each [30, 75, 120, 160] as y}
-                      <line x1="20" x2="780" y1={y} y2={y} stroke="var(--chart-grid)" stroke-dasharray="4 6" />
+
+                    <!-- Y-Axis Labels & Horizontal Grid Lines -->
+                    <text x="6" y="36" class="chart-grid-label">{formatCompactTokens(chartMax)}</text>
+                    <text x="6" y="98" class="chart-grid-label">{formatCompactTokens(Math.round(chartMax / 2))}</text>
+                    <text x="6" y="159" class="chart-grid-label">0</text>
+
+                    {#each [32, 73, 114, 156] as y}
+                      <line x1="56" x2="784" y1={y} y2={y} stroke="var(--chart-grid)" stroke-dasharray="4 6" />
                     {/each}
+
                     {#if chartPoints.length > 1}
                       <path
-                        d={`${chartPath} L ${chartPoints[chartPoints.length - 1].x} 165 L ${chartPoints[0].x} 165 Z`}
+                        d={`${chartPath} L ${chartPoints[chartPoints.length - 1].x} 156 L ${chartPoints[0].x} 156 Z`}
                         fill="url(#trendGradient)"
                       />
                       <path
                         d={chartPath}
                         fill="none"
                         stroke="var(--brand-primary)"
-                        stroke-width="2.5"
+                        stroke-width="2.25"
                         stroke-linecap="round"
                         stroke-linejoin="round"
                       />
                       {#each chartPoints as point}
-                        <circle cx={point.x} cy={point.y} r="3.5" fill="var(--brand-primary)" />
+                        <circle
+                          cx={point.x}
+                          cy={point.y}
+                          r="3.5"
+                          fill="var(--bg-card)"
+                          stroke="var(--brand-primary)"
+                          stroke-width="2"
+                        >
+                          <title>{point.date}：{formatNumber(point.total_tokens)} Token</title>
+                        </circle>
                       {/each}
+                    {:else if chartPoints.length === 1}
+                      <!-- Single-Day Visual Pulse ("今天" / 1-Day Sample) -->
+                      <line
+                        x1="56"
+                        x2="784"
+                        y1={chartPoints[0].y}
+                        y2={chartPoints[0].y}
+                        stroke="var(--brand-border)"
+                        stroke-dasharray="3 4"
+                      />
+                      <rect
+                        x={chartPoints[0].x - 32}
+                        y={chartPoints[0].y}
+                        width="64"
+                        height={Math.max(6, 156 - chartPoints[0].y)}
+                        rx="6"
+                        fill="url(#trendGradient)"
+                        stroke="var(--brand-border)"
+                      />
+                      <circle
+                        cx={chartPoints[0].x}
+                        cy={chartPoints[0].y}
+                        r="11"
+                        fill="var(--brand-subtle)"
+                      />
+                      <circle
+                        cx={chartPoints[0].x}
+                        cy={chartPoints[0].y}
+                        r="4.5"
+                        fill="var(--bg-card)"
+                        stroke="var(--brand-primary)"
+                        stroke-width="2.5"
+                      />
+                      <g transform={`translate(${chartPoints[0].x + 20}, ${Math.max(18, chartPoints[0].y - 12)})`}>
+                        <rect x="0" y="0" width="210" height="44" rx="6" class="chart-callout-box" />
+                        <text x="12" y="18" class="chart-callout-title">
+                          {chartPoints[0].date} · {formatNumber(chartPoints[0].total_tokens)}
+                        </text>
+                        <text x="12" y="34" class="chart-callout-sub">
+                          当日单点峰值（切换“7 天”查看连续曲线）
+                        </text>
+                      </g>
                     {/if}
                   </svg>
                   <div class="chart-axis-labels">
                     <span>{chartValues[0]?.date ?? ''}</span>
+                    <span class="chart-legend-inline">
+                      <span class="chart-legend-item"><span class="integrity-dot" style="background: var(--brand-primary);"></span>输入 {inputShareRate}%</span>
+                      <span class="chart-legend-item"><span class="integrity-dot aggregate"></span>输出 {outputShareRate}%</span>
+                      <span class="chart-legend-item"><span class="integrity-dot exact"></span>缓存 {cacheShareRate}%</span>
+                    </span>
                     <span>{chartValues[chartValues.length - 1]?.date ?? ''}</span>
                   </div>
                 </div>
@@ -840,7 +919,10 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
                           <span class="rank-num">0{idx + 1}</span>
                           {tool.label}
                         </span>
-                        <span class="rank-value tabular">{formatNumber(tool.total_tokens)}</span>
+                        <span class="rank-meta">
+                          <span class="rank-value tabular">{formatNumber(tool.total_tokens)}</span>
+                          <span class="rank-share tabular">{percentOf(tool.total_tokens, local?.total_tokens ?? topToolTotal).toFixed(1)}%</span>
+                        </span>
                       </div>
                       <div class="rank-track">
                         <div class="rank-fill" style={`width: ${percentOf(tool.total_tokens, topToolTotal)}%`}></div>
@@ -945,7 +1027,7 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
           </div>
 
           <!-- Single Device Drilldown -->
-          <section class="panel-card" style="margin-bottom: 24px;">
+          <section class="panel-card" style="margin-bottom: 20px;">
             <div class="panel-head">
               <div>
                 <h2>远端设备维度透视</h2>
@@ -1065,7 +1147,7 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
             <p>已接入 AI 工具的原生解析器监控、扫描健康状态与用量汇总</p>
           </div>
 
-          <section class="panel-card" style="margin-bottom: 20px;">
+          <section class="panel-card" style="margin-bottom: 16px;">
             <div class="panel-head">
               <h2>工具用量详细矩阵</h2>
               <span class="panel-tag">{snapshot.by_tool.length} 个本地来源</span>
@@ -1107,8 +1189,10 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
           <!-- Collector Health -->
           <section class="panel-card">
             <div class="panel-head">
-              <h2>采集器健康度与检查点</h2>
-              <p>各工具最近扫描与完整事务写入时间戳</p>
+              <div>
+                <h2>采集器健康度与检查点</h2>
+                <p>各工具最近扫描与完整事务写入时间戳</p>
+              </div>
             </div>
             {#if snapshot.source_health.length > 0}
               <div class="form-grid">
@@ -1136,19 +1220,17 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
         <!-- TAB 4: MODELS ANALYSIS (模型分析) -->
         {:else if activeTab === 'models'}
           <div class="page-header">
-            <div style="display: flex; justify-content: space-between; align-items: flex-end;">
-              <div>
-                <h1>模型排行与用量分析</h1>
-                <p>严格遵循 Unicode NFC 规范化；真实来源未提供之模型不进行主观猜测</p>
-              </div>
-              <div class="range-capsule">
-                <button class="range-btn" class:selected={modelSortBy === 'tokens'} onclick={() => (modelSortBy = 'tokens')}>
-                  按 Token 排序
-                </button>
-                <button class="range-btn" class:selected={modelSortBy === 'cost'} onclick={() => (modelSortBy = 'cost')}>
-                  按 估算成本 排序
-                </button>
-              </div>
+            <div>
+              <h1>模型排行与用量分析</h1>
+              <p>严格遵循 Unicode NFC 规范化；真实来源未提供之模型不进行主观猜测</p>
+            </div>
+            <div class="range-capsule">
+              <button class="range-btn" class:selected={modelSortBy === 'tokens'} onclick={() => (modelSortBy = 'tokens')}>
+                按 Token 排序
+              </button>
+              <button class="range-btn" class:selected={modelSortBy === 'cost'} onclick={() => (modelSortBy = 'cost')}>
+                按 估算成本 排序
+              </button>
             </div>
           </div>
 
@@ -1183,7 +1265,7 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
             {/if}
           </section>
 
-          <section class="panel-card" style="margin-top: 20px;">
+          <section class="panel-card" style="margin-top: 16px;">
             <div class="panel-head">
               <div>
                 <h2>模型调用量</h2>
@@ -1476,7 +1558,7 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
                       <span class="quota-pool-name">Codex</span>
                       <span class="panel-tag">{quotaWindowLabel(q.window_duration_minutes)}</span>
                     </div>
-                    <div class="quota-gauge-val tabular">{formatPercent(q.remaining_basis_points)}</div>
+                    <div class="quota-gauge-val">{formatPercent(q.remaining_basis_points)}</div>
                     <div class="rank-track quota-track" aria-label="可用额度百分比">
                       <div class="rank-fill" style={`width: ${q.remaining_basis_points === null ? 0 : q.remaining_basis_points / 100}%; background-color: var(--color-quota);`}></div>
                     </div>
@@ -1508,7 +1590,7 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
                       <span class="quota-pool-name">{q.pool_id.replaceAll('_', ' ')}</span>
                       <span class="panel-tag">{antigravityWindowLabel(q.window_id)}</span>
                     </div>
-                    <div class="quota-gauge-val tabular">{formatPercent(q.remaining_basis_points)}</div>
+                    <div class="quota-gauge-val">{formatPercent(q.remaining_basis_points)}</div>
                     <div class="rank-track quota-track" aria-label="可用额度百分比">
                       <div class="rank-fill" style={`width: ${q.remaining_basis_points === null ? 0 : q.remaining_basis_points / 100}%; background-color: var(--color-quota);`}></div>
                     </div>
@@ -1584,12 +1666,12 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
           </div>
 
           <!-- Theme Settings -->
-          <section class="panel-card" style="margin-bottom: 20px;">
+          <section class="panel-card" style="margin-bottom: 16px;">
             <div class="panel-head">
               <h2>界面主题外观</h2>
               <span class="panel-tag">Linear Craft</span>
             </div>
-            <div style="display: flex; gap: 12px;">
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
               <button
                 class="btn-secondary"
                 class:selected={currentTheme === 'dark'}
@@ -1615,7 +1697,7 @@ import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, Sess
           </section>
 
           <!-- Autostart & Lifecycle -->
-          <section class="panel-card" style="margin-bottom: 20px;">
+          <section class="panel-card" style="margin-bottom: 16px;">
             <div class="panel-head">
               <div>
                 <h2>系统登录时自启动 (--background)</h2>

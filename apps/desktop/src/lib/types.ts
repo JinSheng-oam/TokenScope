@@ -61,6 +61,14 @@ export type SessionUsage = {
   unknown_response_count: number | null;
   last_event_at_ms: number | null;
   activity_observed_at_ms: number | null;
+  display_name: string | null;
+  models: SessionModelUsage[];
+};
+
+export type SessionModelUsage = {
+  model_id: string | null;
+  total_tokens: number;
+  record_count: number;
 };
 
 export type RemoteUsageBreakdown = {
@@ -75,7 +83,7 @@ export type RemoteUsageBreakdown = {
 export type DashboardSnapshot = {
   schema_version: number;
   generated_at_ms: number;
-  range: 'today' | '7d' | '30d' | 'all';
+  range: 'today' | '7d' | '30d' | 'all' | 'custom';
   range_start_ms: number | null;
   range_end_ms: number | null;
   time_zone: string;
@@ -148,7 +156,7 @@ export type AgentStatus = {
   message: string;
 };
 
-export type DashboardRange = 'today' | '7d' | '30d' | 'all';
+export type DashboardRange = 'today' | '7d' | '30d' | 'all' | 'custom';
 
 export type DashboardResponse = {
   protocol_version: number;

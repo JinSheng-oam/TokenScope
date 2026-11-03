@@ -201,7 +201,8 @@ fn antigravity_session_keeps_untimed_tokens_and_separates_source_activity() {
             session_offset: 0,
         })
         .unwrap();
-    let session = &selected.session_usage.sessions[0];
-    assert_eq!(session.total_tokens, 0);
-    assert_eq!(session.known_response_count, Some(2));
+    // A conversation whose only records fall outside the range is not listed;
+    // otherwise every historical conversation shows up with a zero total and
+    // an empty model split.
+    assert!(selected.session_usage.sessions.is_empty());
 }

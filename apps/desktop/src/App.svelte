@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { listen } from '@tauri-apps/api/event';
   import {
     disconnectHubDevice,
     getAgentStatus,
@@ -23,6 +24,10 @@
   let activeTab: Tab = 'overview';
   let range: DashboardRange = '7d';
   let sessionOffset = 0;
+  let customStart = '';
+  let customEnd = '';
+  let customOpen = false;
+  let todayIso = '';
   let currentTheme: ThemeMode = 'dark';
 
   let snapshot: DashboardSnapshot | null = null;
@@ -32,6 +37,7 @@
   let errorMessage = '';
   let runtimeAvailable = isTauriRuntime();
   let agentStarted = false;
+  let unlistenDashboard: (() => void) | undefined;
 
   // Autostart State
   let autostartEnabled = false;
@@ -112,6 +118,36 @@
   $: exactRatio = local?.record_count
     ? ((local.exact_records / local.record_count) * 100).toFixed(1)
     : '—';
+  $: rangeLabel =
+    range === 'all'
+      ? '全部'
+      : range === 'today'
+        ? '今天'
+        : range === '7d'
+          ? '7 天'
+          : range === '30d'
+            ? '30 天'
+            : `${customStart} 至 ${customEnd}`;
+
+  function toIsoDate(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  function snapshotStartIso(ms: number): string {
+    return toIsoDate(new Date(ms));
+  }
+
+  function fetchSnapshot(offset: number) {
+    return getDashboardSnapshot(
+      range,
+      offset,
+      range === 'custom' ? customStart : undefined,
+      range === 'custom' ? customEnd : undefined
+    );
+  }
 
   async function loadDashboard(showSpinner = true) {
     if (!runtimeAvailable) {
@@ -141,13 +177,13 @@
         errorMessage = 'Agent 已启动，正在初始化本地 SQLite WAL 数据库…';
         snapshot = null;
       } else {
-        let dashboard = await getDashboardSnapshot(range, sessionOffset);
+        let dashboard = await fetchSnapshot(sessionOffset);
         const lastValidOffset = dashboard.session_usage.total === 0
           ? 0
           : Math.floor((dashboard.session_usage.total - 1) / dashboard.session_usage.limit) * dashboard.session_usage.limit;
         if (sessionOffset > lastValidOffset) {
           sessionOffset = lastValidOffset;
-          dashboard = await getDashboardSnapshot(range, sessionOffset);
+          dashboard = await fetchSnapshot(sessionOffset);
         }
         snapshot = dashboard;
         if (!hubDisplayName && snapshot.identity?.display_name) {
@@ -163,8 +199,27 @@
   }
 
   function handleSelectRange(next: DashboardRange) {
+    if (next === 'custom') {
+      customOpen = true;
+      return;
+    }
     if (range === next) return;
     range = next;
+    sessionOffset = 0;
+    void loadDashboard();
+  }
+
+  function applyCustomRange() {
+    if (!customStart || !customEnd || customStart > customEnd) {
+      errorMessage = '请选择有效的起止日期';
+      return;
+    }
+    if (customEnd > todayIso) {
+      errorMessage = '结束日期不能晚于今天';
+      return;
+    }
+    customOpen = false;
+    range = 'custom';
     sessionOffset = 0;
     void loadDashboard();
   }
@@ -322,18 +377,34 @@
     applyTheme(currentTheme);
     const cleanThemeListener = initThemeListener(() => {});
 
+    todayIso = toIsoDate(new Date());
+    if (!customEnd) customEnd = todayIso;
+    if (!customStart) customStart = toIsoDate(new Date(Date.now() - 6 * 86_400_000));
+
     if (runtimeAvailable) {
       void getAutostartEnabled().then((v) => (autostartEnabled = v)).catch(() => {});
       hubUrl = window.localStorage.getItem('tokenscope.hubUrl') ?? '';
+      void listen<{ protocol_version: number; snapshot: DashboardSnapshot }>('dashboard-updated', (event) => {
+        const next = event.payload?.snapshot;
+        if (!next || next.range !== range || sessionOffset !== 0) return;
+        if (range === 'custom' && next.range_start_ms !== null && snapshotStartIso(next.range_start_ms) !== customStart) return;
+        snapshot = next;
+        errorMessage = '';
+      }).then((unlisten) => {
+        unlistenDashboard = unlisten;
+      });
     }
 
     void loadDashboard().then(() => {
       if (hubUrl) void handleRefreshHubDevices();
     });
 
-    const timer = window.setInterval(() => void loadDashboard(false), 30_000);
+    // The Agent pushes a fresh projection whenever the WAL changes; this slow
+    // timer is only a safety net for a restarted Agent or a missed event.
+    const timer = window.setInterval(() => void loadDashboard(false), 300_000);
     return () => {
       window.clearInterval(timer);
+      unlistenDashboard?.();
       cleanThemeListener();
     };
   });
@@ -346,7 +417,7 @@
 <div class="app-shell">
   <!-- Sidebar -->
   <aside class="sidebar">
-    <div class="brand-row">
+      <div class="brand-row" title="TokenScope · Local Analytics">
       <div class="brand-prism">
         {@html icons.sparkle}
       </div>
@@ -362,10 +433,13 @@
         <button
           class="nav-button"
           class:active={activeTab === item.id}
+          aria-current={activeTab === item.id ? 'page' : undefined}
+          aria-label={item.label}
+          title={item.label}
           onclick={() => (activeTab = item.id)}
         >
           <span class="nav-icon">{@html icons[item.iconKey]}</span>
-          <span>{item.label}</span>
+          <span class="nav-label">{item.label}</span>
           {#if item.id === 'quota' && ((snapshot?.antigravity_quota.length ?? 0) + (snapshot?.codex_quota.length ?? 0)) > 0}
             <span class="nav-badge">{(snapshot?.antigravity_quota.length ?? 0) + (snapshot?.codex_quota.length ?? 0)}</span>
           {/if}
@@ -378,7 +452,7 @@
     <div class="sidebar-footer">
       <div class="agent-heart-row">
         <span class="ping-dot" class:online={agent?.running}></span>
-        <span>{agent?.running ? 'Agent 正在运行' : 'Agent 未连接'}</span>
+        <span class="agent-label">{agent?.running ? 'Agent 正在运行' : 'Agent 未连接'}</span>
         <span class="milestone-tag">{BOOTSTRAP_STAGE}</span>
       </div>
 
@@ -387,6 +461,7 @@
         <button
           class="theme-button"
           class:active={currentTheme === 'dark'}
+          aria-pressed={currentTheme === 'dark'}
           onclick={() => handleSwitchTheme('dark')}
           title="深色模式"
         >
@@ -395,6 +470,7 @@
         <button
           class="theme-button"
           class:active={currentTheme === 'light'}
+          aria-pressed={currentTheme === 'light'}
           onclick={() => handleSwitchTheme('light')}
           title="浅色模式"
         >
@@ -403,6 +479,7 @@
         <button
           class="theme-button"
           class:active={currentTheme === 'system'}
+          aria-pressed={currentTheme === 'system'}
           onclick={() => handleSwitchTheme('system')}
           title="跟随系统"
         >
@@ -428,16 +505,18 @@
           <span>{snapshot?.identity?.display_name ?? '本机工作站'}</span>
         </div>
 
-        <div class="range-capsule" aria-label="时间跨度">
+        <div class="range-capsule" role="group" aria-label="时间跨度">
           {#each [
             { value: 'today', label: '今天' },
             { value: '7d', label: '7 天' },
             { value: '30d', label: '30 天' },
             { value: 'all', label: '全部' },
+            { value: 'custom', label: '自定义' },
           ] as opt}
             <button
               class="range-btn"
               class:selected={range === opt.value}
+              aria-pressed={range === opt.value}
               onclick={() => handleSelectRange(opt.value as DashboardRange)}
             >
               {opt.label}
@@ -457,6 +536,17 @@
       </div>
     </header>
 
+    {#if customOpen}
+      <div class="custom-range-bar" aria-label="自定义日期范围">
+        <span class="custom-range-label">自定义范围</span>
+        <input type="date" bind:value={customStart} max={customEnd || todayIso} aria-label="开始日期" />
+        <span class="custom-range-sep">至</span>
+        <input type="date" bind:value={customEnd} min={customStart} max={todayIso} aria-label="结束日期" />
+        <button class="custom-range-apply" onclick={applyCustomRange}>应用</button>
+        <button class="custom-range-close" onclick={() => (customOpen = false)}>收起</button>
+      </div>
+    {/if}
+
     <!-- Page Content Area -->
     <section class="page-content">
       {#if errorMessage}
@@ -468,8 +558,18 @@
       {/if}
 
       {#if loading}
-        <div class="empty-box">
+        <div class="loading-state" role="status" aria-live="polite">
+          <div class="loading-message">
+            <span class="loading-indicator" aria-hidden="true"></span>
           <p>正在连接本地守护进程并读取 SQLite 快照…</p>
+          </div>
+          <div class="loading-skeleton-grid" aria-hidden="true">
+            <span class="loading-skeleton"></span>
+            <span class="loading-skeleton"></span>
+            <span class="loading-skeleton"></span>
+            <span class="loading-skeleton"></span>
+          </div>
+          <div class="loading-skeleton loading-skeleton-panel" aria-hidden="true"></div>
         </div>
       {:else if snapshot}
         <!-- TAB 1: OVERVIEW (DASHBOARD) -->
@@ -1005,24 +1105,42 @@
             <div class="panel-head">
               <div>
                 <h2>会话 Token 使用</h2>
-                <p>显示 {formatNumber(sessionPageStart)}–{formatNumber(sessionPageEnd)} / {formatNumber(sessionPage?.total)} 个会话 · 当前范围：{range === 'all' ? '全部' : range === 'today' ? '今天' : range === '7d' ? '7 天' : '30 天'}</p>
+<p>显示 {formatNumber(sessionPageStart)}–{formatNumber(sessionPageEnd)} / {formatNumber(sessionPage?.total)} 个会话 · 当前范围：{rangeLabel}</p>
               </div>
               <span class="panel-tag">每页 {sessionPage?.limit ?? 50}</span>
             </div>
 
             {#if sessionPage && sessionPage.sessions.length > 0}
               <div class="table-wrap">
-                <table>
+                <table class="session-table">
                   <thead>
                     <tr>
-                      <th>会话标识</th><th>来源</th><th>Token 使用</th><th>精度与记录</th><th>模型数</th><th>响应次数</th><th>最近事件</th>
+                      <th>会话</th><th>来源</th><th>模型使用</th><th>Token 使用</th><th>精度与记录</th><th>响应次数</th><th>最近事件</th>
                     </tr>
                   </thead>
                   <tbody>
                     {#each sessionPage.sessions as session}
                       <tr>
-                        <td><code title={session.session_id}>…{session.session_id.slice(-12)}</code></td>
+                        <td>
+                          <div class="session-name" title={session.display_name ?? undefined}>{session.display_name ?? '未命名会话'}</div>
+                          <code title={session.session_id}>…{session.session_id.slice(-12)}</code>
+                        </td>
                         <td>{session.tool_id === 'codex' ? 'Codex' : session.tool_id === 'antigravity' ? 'Antigravity' : session.tool_id}</td>
+                        <td class="session-models">
+                          {#if session.models.length > 0}
+                            {#each session.models.slice(0, 4) as model}
+                              <div class="session-model-row">
+                                <span class="session-model-name" title={model.model_id ?? '未识别模型'}>{model.model_id ?? '未识别模型'}</span>
+                                <span class="tabular">{formatNumber(model.total_tokens)}</span>
+                              </div>
+                            {/each}
+                            {#if session.models.length > 4}
+                              <div class="session-precision">另有 {session.models.length - 4} 个模型</div>
+                            {/if}
+                          {:else}
+                            <span class="text-muted">来源未提供</span>
+                          {/if}
+                        </td>
                         <td class="tabular"><strong>{formatNumber(session.total_tokens)}</strong></td>
                         <td>
                           <span>{formatNumber(session.usage_record_count)} 笔记录</span>
@@ -1032,7 +1150,6 @@
                             {#if session.untimed_records > 0} · 无时间 {formatNumber(session.untimed_records)}{/if}
                           </div>
                         </td>
-                        <td class="tabular">{formatNumber(session.model_count)}</td>
                         <td class="tabular">
                           {#if session.known_response_count !== null}
                             {formatNumber(session.known_response_count)}

@@ -6,7 +6,9 @@ use tokenscope_local_store::DashboardSnapshot;
 
 pub const MODULE_ID: &str = "local-ipc";
 pub const PROTOCOL_VERSION: u32 = 2;
-pub const SUPPORTED_DB_SCHEMA_VERSION: i64 = 5;
+/// Tracks the store schema so the desktop can never render a snapshot produced
+/// by an incompatible Agent/database pair.
+pub const SUPPORTED_DB_SCHEMA_VERSION: i64 = tokenscope_local_store::schema::VERSION;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,7 +32,7 @@ impl DashboardResponse {
         if self.snapshot.schema_version != SUPPORTED_DB_SCHEMA_VERSION {
             return Err("unsupported dashboard database schema version");
         }
-        if !["today", "7d", "30d", "all"].contains(&self.snapshot.range.as_str()) {
+        if !["today", "7d", "30d", "all", "custom"].contains(&self.snapshot.range.as_str()) {
             return Err("invalid dashboard range");
         }
         Ok(())
@@ -39,7 +41,7 @@ impl DashboardResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{DashboardResponse, MODULE_ID, PROTOCOL_VERSION};
+    use super::{DashboardResponse, MODULE_ID, PROTOCOL_VERSION, SUPPORTED_DB_SCHEMA_VERSION};
     use tokenscope_local_store::{
         AntigravityActivitySummary, DashboardSnapshot, ModelActivityBreakdown, SessionUsagePage,
         UsageTotals,
@@ -47,7 +49,7 @@ mod tests {
 
     fn snapshot() -> DashboardSnapshot {
         DashboardSnapshot {
-            schema_version: 5,
+            schema_version: SUPPORTED_DB_SCHEMA_VERSION,
             generated_at_ms: 1,
             range: "7d".into(),
             range_start_ms: Some(1),
@@ -100,6 +102,9 @@ mod tests {
         let encoded = serde_json::to_vec(&response).unwrap();
         let decoded: DashboardResponse = serde_json::from_slice(&encoded).unwrap();
         decoded.validate().unwrap();
+        let mut custom = DashboardResponse::new(snapshot());
+        custom.snapshot.range = "custom".into();
+        custom.validate().unwrap();
         let mut incompatible = decoded;
         incompatible.protocol_version = 99;
         assert!(incompatible.validate().is_err());

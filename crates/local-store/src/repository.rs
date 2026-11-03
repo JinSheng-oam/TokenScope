@@ -4,6 +4,7 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBeha
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
+use std::time::Instant;
 use tokenscope_core_domain::{
     payload_hash, CanonicalRecord, Precision, RevisionedRecord, TokenBreakdown, UsageScope,
 };
@@ -338,6 +339,17 @@ pub struct SessionUsage {
     pub unknown_response_count: Option<u64>,
     pub last_event_at_ms: Option<i64>,
     pub activity_observed_at_ms: Option<i64>,
+    /// Display-only label captured from the source (never synced).
+    pub display_name: Option<String>,
+    /// Per-model token split inside this session.
+    pub models: Vec<SessionModelUsage>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionModelUsage {
+    pub model_id: Option<String>,
+    pub total_tokens: u64,
+    pub record_count: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -455,7 +467,7 @@ impl LocalStore {
             return Err(StoreError::UnsupportedSchema(version));
         }
         let migration_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4,5)",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6)",
             [],
             |r| r.get(0),
         )?;
@@ -464,7 +476,7 @@ impl LocalStore {
             [],
             |r| r.get(0),
         )?;
-        if migration_count != 5 || highest != schema::VERSION {
+        if migration_count != 6 || highest != schema::VERSION {
             return Err(StoreError::DatabaseInconsistent(
                 "schema_migrations disagrees with user_version",
             ));
@@ -590,8 +602,30 @@ impl LocalStore {
             tx.execute_batch("PRAGMA user_version=5;")?;
             tx.commit()?;
         }
+        if version <= 5 {
+            let prior: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4,5)",
+                [],
+                |r| r.get(0),
+            )?;
+            let highest: i64 = conn.query_row(
+                "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
+                [],
+                |r| r.get(0),
+            )?;
+            if prior != 5 || highest != 5 {
+                return Err(StoreError::DatabaseInconsistent(
+                    "legacy migration metadata invalid before v6",
+                ));
+            }
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(schema::MIGRATION_006)?;
+            tx.execute("INSERT INTO schema_migrations(version,applied_at_ms) VALUES (6,CAST(strftime('%s','now') AS INTEGER)*1000)", [])?;
+            tx.execute_batch("PRAGMA user_version=6;")?;
+            tx.commit()?;
+        }
         let count: i64 = conn.query_row(
-            "SELECT count(*) FROM schema_migrations WHERE version IN (1,2,3,4,5)",
+            "SELECT count(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6)",
             [],
             |r| r.get(0),
         )?;
@@ -600,7 +634,7 @@ impl LocalStore {
             [],
             |r| r.get(0),
         )?;
-        if count != 5 || future != schema::VERSION {
+        if count != 6 || future != schema::VERSION {
             return Err(StoreError::DatabaseInconsistent(
                 "schema_migrations disagrees with user_version",
             ));
@@ -1248,7 +1282,12 @@ impl LocalStore {
             return Err(StoreError::InvalidInput("session page bounds"));
         }
         let cte = r#"
-            WITH usage_sessions AS (
+            WITH modern_codex AS (
+                SELECT source_key FROM source_checkpoints
+                WHERE tool_id='codex'
+                    AND source_fingerprint LIKE '%"mode":"modern"%'
+            ),
+            usage_sessions AS (
                 SELECT u.session_id,u.tool_id,
                     COALESCE(SUM(u.input_uncached_tokens+u.cache_read_tokens+u.cache_write_tokens+u.output_tokens+u.unclassified_tokens),0) AS total_tokens,
                     COUNT(*) AS usage_record_count,
@@ -1258,16 +1297,10 @@ impl LocalStore {
                     SUM(CASE WHEN u.precision='unknown' THEN 1 ELSE 0 END) AS unknown_precision_records,
                     SUM(CASE WHEN u.event_at_ms IS NULL THEN 1 ELSE 0 END) AS untimed_records,
                     COUNT(DISTINCT u.model_id) AS model_count,
-                    CASE WHEN u.tool_id='codex' AND EXISTS (
-                        SELECT 1 FROM source_checkpoints cp
-                        WHERE cp.tool_id='codex' AND cp.source_key=u.session_id
-                            AND cp.source_fingerprint LIKE '%"mode":"modern"%'
-                    ) THEN SUM(CASE WHEN u.model_id IS NOT NULL THEN 1 ELSE 0 END) ELSE NULL END AS known_response_count,
-                    CASE WHEN u.tool_id='codex' AND EXISTS (
-                        SELECT 1 FROM source_checkpoints cp
-                        WHERE cp.tool_id='codex' AND cp.source_key=u.session_id
-                            AND cp.source_fingerprint LIKE '%"mode":"modern"%'
-                    ) THEN SUM(CASE WHEN u.model_id IS NULL THEN 1 ELSE 0 END) ELSE NULL END AS unknown_response_count,
+                    CASE WHEN u.tool_id='codex' AND u.session_id IN (SELECT source_key FROM modern_codex)
+                        THEN SUM(CASE WHEN u.model_id IS NOT NULL THEN 1 ELSE 0 END) ELSE NULL END AS known_response_count,
+                    CASE WHEN u.tool_id='codex' AND u.session_id IN (SELECT source_key FROM modern_codex)
+                        THEN SUM(CASE WHEN u.model_id IS NULL THEN 1 ELSE 0 END) ELSE NULL END AS unknown_response_count,
                     MAX(u.event_at_ms) AS last_event_at_ms,NULL AS activity_observed_at_ms
                 FROM usage_records u
                 WHERE u.owner_device_id=?1 AND u.scope='device_local' AND u.is_deleted=0
@@ -1308,22 +1341,23 @@ impl LocalStore {
                 FROM antigravity_activity_sources a
                 LEFT JOIN ag_usage u ON u.source_key=a.source_key
                 LEFT JOIN ag_models m ON m.source_key=a.source_key
+                -- Only surface conversations that have usage inside the
+                -- selected range; otherwise every old conversation appears
+                -- with a zero total and an empty model split.
+                WHERE u.source_key IS NOT NULL
             )
         "#;
-        let count_sql = format!("{cte} SELECT COUNT(*) FROM all_sessions");
-        let total: i64 =
-            self.conn
-                .query_row(&count_sql, params![owner_device_id, from_ms, to_ms], |r| {
-                    r.get(0)
-                })?;
+        let page_started = Instant::now();
         let page_sql = format!(
             r#"{cte}
-            SELECT session_id,tool_id,total_tokens,usage_record_count,exact_records,aggregate_records,
-                estimated_records,unknown_precision_records,untimed_records,model_count,
-                known_response_count,unknown_response_count,last_event_at_ms,activity_observed_at_ms
-            FROM all_sessions
-            ORDER BY CASE WHEN last_event_at_ms IS NULL THEN 1 ELSE 0 END,
-                last_event_at_ms DESC,tool_id,session_id
+            SELECT s.session_id,s.tool_id,s.total_tokens,s.usage_record_count,s.exact_records,s.aggregate_records,
+                s.estimated_records,s.unknown_precision_records,s.untimed_records,s.model_count,
+                s.known_response_count,s.unknown_response_count,s.last_event_at_ms,s.activity_observed_at_ms,n.name,
+                COUNT(*) OVER () AS total_rows
+            FROM all_sessions s
+            LEFT JOIN session_names n ON n.session_id=s.session_id
+            ORDER BY COALESCE(s.last_event_at_ms,s.activity_observed_at_ms,0) DESC,
+                s.tool_id,s.session_id
             LIMIT ?4 OFFSET ?5"#
         );
         let mut stmt = self.conn.prepare(&page_sql)?;
@@ -1351,10 +1385,13 @@ impl LocalStore {
                     r.get::<_, Option<i64>>(11)?,
                     r.get::<_, Option<i64>>(12)?,
                     r.get::<_, Option<i64>>(13)?,
+                    r.get::<_, Option<String>>(14)?,
+                    r.get::<_, i64>(15)?,
                 ))
             },
         )?;
-        let sessions = rows
+        let mut total_rows: Option<i64> = None;
+        let mut sessions = rows
             .map(|row| {
                 let (
                     session_id,
@@ -1371,7 +1408,12 @@ impl LocalStore {
                     unknown_response_count,
                     last_event_at_ms,
                     activity_observed_at_ms,
+                    display_name,
+                    page_total,
                 ) = row?;
+                if total_rows.is_none() {
+                    total_rows = Some(page_total);
+                }
                 Ok(SessionUsage {
                     session_id,
                     tool_id,
@@ -1387,15 +1429,121 @@ impl LocalStore {
                     unknown_response_count: unknown_response_count.map(pos_u64).transpose()?,
                     last_event_at_ms,
                     activity_observed_at_ms,
+                    display_name,
+                    models: Vec::new(),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        let total = match total_rows {
+            Some(value) => value,
+            None if offset == 0 => 0,
+            None => {
+                let count_sql = format!("{cte} SELECT COUNT(*) FROM all_sessions");
+                self.conn
+                    .query_row(&count_sql, params![owner_device_id, from_ms, to_ms], |r| {
+                        r.get(0)
+                    })?
+            }
+        };
+        if std::env::var_os("TOKENSCOPE_DASHBOARD_PROFILE").is_some() {
+            eprintln!("session page: {:?}", page_started.elapsed());
+        }
+        if !sessions.is_empty() {
+            let mut models = self.conn.prepare(
+                "SELECT session_id,model_id,
+                        SUM(input_uncached_tokens+cache_read_tokens+cache_write_tokens+output_tokens+unclassified_tokens),
+                        COUNT(*)
+                 FROM usage_records
+                 WHERE owner_device_id=?1 AND scope='device_local' AND is_deleted=0
+                   AND session_id IS NOT NULL
+                   AND (?2 IS NULL OR event_at_ms >= ?2) AND (?3 IS NULL OR event_at_ms < ?3)
+                 GROUP BY session_id,model_id
+                 ORDER BY 3 DESC",
+            )?;
+            let mut by_session: std::collections::HashMap<String, Vec<SessionModelUsage>> =
+                std::collections::HashMap::new();
+            let mut rows = models.query(params![owner_device_id, from_ms, to_ms])?;
+            while let Some(row) = rows.next()? {
+                let session_id: String = row.get(0)?;
+                let model_id: Option<String> = row.get(1)?;
+                let tokens: i64 = row.get(2)?;
+                let count: i64 = row.get(3)?;
+                by_session.entry(session_id).or_default().push(SessionModelUsage {
+                    model_id,
+                    total_tokens: pos_u64(tokens)?,
+                    record_count: pos_u64(count)?,
+                });
+            }
+            // Antigravity rows carry their conversation identity in
+            // record_sources instead of usage_records.session_id.
+            let mut ag_models = self.conn.prepare(
+                "SELECT rs.source_key,u.model_id,
+                        SUM(u.input_uncached_tokens+u.cache_read_tokens+u.cache_write_tokens+u.output_tokens+u.unclassified_tokens),
+                        COUNT(*)
+                 FROM record_sources rs JOIN usage_records u ON u.record_id=rs.record_id
+                 WHERE rs.tool_id='antigravity' AND u.owner_device_id=?1
+                   AND u.scope='device_local' AND u.is_deleted=0
+                   AND (?2 IS NULL OR u.event_at_ms >= ?2) AND (?3 IS NULL OR u.event_at_ms < ?3)
+                 GROUP BY rs.source_key,u.model_id
+                 ORDER BY 3 DESC",
+            )?;
+            let mut ag_rows = ag_models.query(params![owner_device_id, from_ms, to_ms])?;
+            while let Some(row) = ag_rows.next()? {
+                let session_id: String = row.get(0)?;
+                let model_id: Option<String> = row.get(1)?;
+                let tokens: i64 = row.get(2)?;
+                let count: i64 = row.get(3)?;
+                by_session.entry(session_id).or_default().push(SessionModelUsage {
+                    model_id,
+                    total_tokens: pos_u64(tokens)?,
+                    record_count: pos_u64(count)?,
+                });
+            }
+            for session in &mut sessions {
+                if let Some(list) = by_session.remove(&session.session_id) {
+                    session.models = list;
+                }
+            }
+        }
         Ok(SessionUsagePage {
             sessions,
             total: pos_u64(total)?,
             offset,
             limit,
         })
+    }
+
+    /// Stores a display-only session label captured from the source transcript.
+    /// The label never leaves this device: it is not part of usage records or
+    /// the sync outbox.
+    pub fn upsert_session_name(
+        &mut self,
+        session_id: &str,
+        tool_id: &str,
+        name: &str,
+        updated_at_ms: i64,
+    ) -> Result<()> {
+        let name = name.trim();
+        if session_id.is_empty()
+            || session_id.len() > 256
+            || tool_id.is_empty()
+            || tool_id.len() > 64
+            || name.is_empty()
+            || name.chars().count() > 200
+            || name.chars().any(char::is_control)
+            || updated_at_ms < 0
+        {
+            return Err(StoreError::InvalidInput("session name"));
+        }
+        self.conn.execute(
+            "INSERT INTO session_names(session_id,tool_id,name,updated_at_ms)
+             VALUES(?1,?2,?3,?4)
+             ON CONFLICT(session_id) DO UPDATE SET
+                tool_id=excluded.tool_id,name=excluded.name,updated_at_ms=excluded.updated_at_ms
+             WHERE excluded.updated_at_ms >= session_names.updated_at_ms",
+            params![session_id, tool_id, name, updated_at_ms],
+        )?;
+        Ok(())
     }
 
     /// Read-only dashboard aggregate. Daily ranges are calculated by the Agent
@@ -1411,12 +1559,12 @@ impl LocalStore {
             time_zone_valid,
             session_offset,
         } = query;
-        if !["today", "7d", "30d", "all"].contains(&range)
+        if !["today", "7d", "30d", "all", "custom"].contains(&range)
             || generated_at_ms < 0
             || to_ms.is_some_and(|v| v < 0)
             || from_ms.is_some_and(|v| v < 0)
             || from_ms.zip(to_ms).is_some_and(|(a, b)| a >= b)
-            || daily_ranges.len() > 31
+            || daily_ranges.len() > 93
         {
             return Err(StoreError::InvalidInput("dashboard query"));
         }
@@ -1425,6 +1573,7 @@ impl LocalStore {
             .as_ref()
             .map(|v| v.device_id.as_str())
             .unwrap_or("");
+        let daily_started = Instant::now();
         let mut daily = Vec::with_capacity(daily_ranges.len());
         for (date, start, end) in daily_ranges {
             if date.len() != 10 || *start < 0 || *end <= *start {
@@ -1438,6 +1587,9 @@ impl LocalStore {
                 input_tokens: totals.input_tokens,
                 output_tokens: totals.output_tokens,
             });
+        }
+        if std::env::var_os("TOKENSCOPE_DASHBOARD_PROFILE").is_some() {
+            eprintln!("daily: {:?}", daily_started.elapsed());
         }
         let mut health = std::collections::BTreeMap::<String, SourceHealth>::new();
         let mut stmt = self.conn.prepare(
@@ -1471,6 +1623,17 @@ impl LocalStore {
                 }
             }
         }
+        let profile = std::env::var_os("TOKENSCOPE_DASHBOARD_PROFILE").is_some();
+        macro_rules! timed {
+            ($label:literal, $expr:expr) => {{
+                let started = Instant::now();
+                let value = $expr;
+                if profile {
+                    eprintln!("dashboard {}: {:?}", $label, started.elapsed());
+                }
+                value
+            }};
+        }
         Ok(DashboardSnapshot {
             schema_version: schema::VERSION,
             generated_at_ms,
@@ -1480,49 +1643,73 @@ impl LocalStore {
             time_zone,
             time_zone_valid,
             identity: identity.clone(),
-            local: self.usage_totals(owner_device_id, "device_local", from_ms, to_ms)?,
-            remote: self.remote_usage_totals(None, from_ms, to_ms)?,
-            remote_by_device: self.remote_usage_by_device(from_ms, to_ms)?,
-            remote_by_tool: self.remote_usage_breakdown("tool_id", from_ms, to_ms)?,
-            remote_by_model: self.remote_usage_breakdown("model_id", from_ms, to_ms)?,
-            remote_by_project: self.remote_usage_breakdown("project_id", from_ms, to_ms)?,
-            unassigned: self.usage_totals(owner_device_id, "unknown", from_ms, to_ms)?,
-            account_global: self.usage_totals(owner_device_id, "account_global", from_ms, to_ms)?,
-            by_tool: self.usage_breakdown(
-                "tool_id",
-                owner_device_id,
-                "device_local",
-                from_ms,
-                to_ms,
-            )?,
-            by_model: self.usage_breakdown(
-                "model_id",
-                owner_device_id,
-                "device_local",
-                from_ms,
-                to_ms,
-            )?,
-            model_activity: self.model_activity_breakdown(from_ms, to_ms)?,
-            by_project: self.usage_breakdown(
-                "project_id",
-                owner_device_id,
-                "device_local",
-                from_ms,
-                to_ms,
-            )?,
-            session_usage: self.session_usage_page(
-                owner_device_id,
-                from_ms,
-                to_ms,
-                session_offset,
-                50,
-            )?,
+            local: timed!(
+                "local",
+                self.usage_totals(owner_device_id, "device_local", from_ms, to_ms)?
+            ),
+            remote: timed!("remote", self.remote_usage_totals(None, from_ms, to_ms)?),
+            remote_by_device: timed!(
+                "remote_by_device",
+                self.remote_usage_by_device(from_ms, to_ms)?
+            ),
+            remote_by_tool: timed!(
+                "remote_by_tool",
+                self.remote_usage_breakdown("tool_id", from_ms, to_ms)?
+            ),
+            remote_by_model: timed!(
+                "remote_by_model",
+                self.remote_usage_breakdown("model_id", from_ms, to_ms)?
+            ),
+            remote_by_project: timed!(
+                "remote_by_project",
+                self.remote_usage_breakdown("project_id", from_ms, to_ms)?
+            ),
+            unassigned: timed!(
+                "unassigned",
+                self.usage_totals(owner_device_id, "unknown", from_ms, to_ms)?
+            ),
+            account_global: timed!(
+                "account_global",
+                self.usage_totals(owner_device_id, "account_global", from_ms, to_ms)?
+            ),
+            by_tool: timed!(
+                "by_tool",
+                self.usage_breakdown("tool_id", owner_device_id, "device_local", from_ms, to_ms)?
+            ),
+            by_model: timed!(
+                "by_model",
+                self.usage_breakdown("model_id", owner_device_id, "device_local", from_ms, to_ms)?
+            ),
+            model_activity: timed!(
+                "model_activity",
+                self.model_activity_breakdown(from_ms, to_ms)?
+            ),
+            by_project: timed!(
+                "by_project",
+                self.usage_breakdown(
+                    "project_id",
+                    owner_device_id,
+                    "device_local",
+                    from_ms,
+                    to_ms
+                )?
+            ),
+            session_usage: timed!(
+                "session_usage",
+                self.session_usage_page(owner_device_id, from_ms, to_ms, session_offset, 50)?
+            ),
             daily,
             source_health: health.into_values().collect(),
-            antigravity_quota: self.antigravity_quota_snapshots(200)?,
-            codex_quota: self.codex_quota_snapshots(32)?,
-            antigravity_activity: self.antigravity_activity_summary()?,
-            sync_status: self.sync_outbox_status(generated_at_ms)?,
+            antigravity_quota: timed!(
+                "antigravity_quota",
+                self.antigravity_quota_snapshots(200)?
+            ),
+            codex_quota: timed!("codex_quota", self.codex_quota_snapshots(32)?),
+            antigravity_activity: timed!(
+                "antigravity_activity",
+                self.antigravity_activity_summary()?
+            ),
+            sync_status: timed!("sync_status", self.sync_outbox_status(generated_at_ms)?),
         })
     }
 
@@ -1948,7 +2135,9 @@ impl LocalStore {
         source_key: &str,
         limit: usize,
     ) -> Result<Vec<RevisionedRecord>> {
-        if limit == 0 || limit > 2000 {
+        // One long Antigravity conversation can hold several thousand
+        // generations; the bound only guards memory, not correctness.
+        if limit == 0 || limit > 20_000 {
             return Err(StoreError::InvalidInput("source read limit"));
         }
         let mut stmt = self.conn.prepare(

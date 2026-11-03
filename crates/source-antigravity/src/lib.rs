@@ -21,7 +21,7 @@ use tokenscope_core_domain::{
 use tokenscope_local_store::{AntigravityActivity, LocalStore, SourceCheckpoint};
 
 pub const MODULE_ID: &str = "source-antigravity";
-pub const PARSER_VERSION: u32 = 3;
+pub const PARSER_VERSION: u32 = 4;
 const MAX_FILES: usize = 20_000;
 const MAX_TURNS_PER_DB: u64 = 50_000;
 const MAX_MODELS_PER_DB: usize = 512;
@@ -82,6 +82,8 @@ pub struct AntigravityReport {
     pub revised: usize,
     pub tombstoned: usize,
     pub unchanged: usize,
+    pub skipped_sources: usize,
+    pub skipped_rows: u64,
 }
 
 // The assumptions below are deliberately *heuristic* per response, not
@@ -379,34 +381,39 @@ fn protobuf_timestamp_ms(data: &[u8]) -> Option<i64> {
         .checked_add(i64::try_from(nanos / 1_000_000).ok()?)
 }
 
-fn read_step_timestamps(conn: &Connection) -> Result<std::collections::HashMap<i64, i64>> {
+fn read_step_timestamps(
+    conn: &Connection,
+) -> Result<(std::collections::HashMap<i64, i64>, Vec<Option<i64>>)> {
     let has_steps: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='steps')",
         [],
         |row| row.get(0),
     )?;
     let mut timestamps = std::collections::HashMap::new();
+    let mut timeline = Vec::new();
     if !has_steps {
-        return Ok(timestamps);
+        return Ok((timestamps, timeline));
     }
-    let mut stmt =
-        conn.prepare("SELECT idx,metadata FROM steps WHERE step_type=15 AND metadata IS NOT NULL")?;
+    // `gen_metadata` rows are ordered like the model steps themselves; keep the
+    // step order as well so rows without an explicit index still get a time.
+    let mut stmt = conn.prepare("SELECT idx,metadata FROM steps WHERE step_type=15 ORDER BY idx")?;
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
         let idx: Option<i64> = row.get(0)?;
-        let metadata: Vec<u8> = row.get(1)?;
-        let Some(idx) = idx else {
-            continue;
-        };
-        let Some(time) = proto_field(&metadata, 1)?.and_then(protobuf_timestamp_ms) else {
-            continue;
-        };
-        timestamps.insert(idx, time);
+        let metadata: Option<Vec<u8>> = row.get(1)?;
+        let time = metadata
+            .as_deref()
+            .and_then(|m| proto_field(m, 1).ok().flatten())
+            .and_then(protobuf_timestamp_ms);
+        if let (Some(idx), Some(time)) = (idx, time) {
+            timestamps.insert(idx, time);
+        }
+        timeline.push(time);
         if timestamps.len() > MAX_TURNS_PER_DB as usize {
             return Err(AntigravityError::Invalid("step timestamp limit exceeded"));
         }
     }
-    Ok(timestamps)
+    Ok((timestamps, timeline))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -415,6 +422,7 @@ struct Snapshot {
     counts: BTreeMap<String, u64>,
     known_turns: u64,
     unknown_turns: u64,
+    skipped_rows: u64,
     records: Vec<CanonicalRecord>,
     missing_usage: BTreeMap<String, u64>,
 }
@@ -423,7 +431,7 @@ fn read_db(path: &Path, stem: String, device: &str) -> Result<Snapshot> {
     conn.busy_timeout(std::time::Duration::from_secs(2))?;
     // A single SQLite read transaction sees consistent DB+WAL state.
     conn.execute_batch("BEGIN")?;
-    let step_timestamps = read_step_timestamps(&conn)?;
+    let (step_timestamps, step_timeline) = read_step_timestamps(&conn)?;
     let exists: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='gen_metadata')",
         [],
@@ -439,10 +447,14 @@ fn read_db(path: &Path, stem: String, device: &str) -> Result<Snapshot> {
     let mut counts = BTreeMap::new();
     let mut known_turns = 0u64;
     let mut unknown_turns = 0u64;
+    let mut skipped_rows = 0u64;
     let mut records = Vec::new();
     let mut missing_usage = BTreeMap::new();
     let mut seen_responses = std::collections::HashMap::<String, CanonicalRecord>::new();
+    let mut timeline_pos = 0usize;
     while let Some(row) = rows.next()? {
+        let position = timeline_pos;
+        timeline_pos += 1;
         if known_turns + unknown_turns >= MAX_TURNS_PER_DB {
             return Err(AntigravityError::Invalid(
                 "conversation turn limit exceeded",
@@ -450,7 +462,12 @@ fn read_db(path: &Path, stem: String, device: &str) -> Result<Snapshot> {
         }
         let row_idx: Option<i64> = row.get(0)?;
         let blob: Option<Vec<u8>> = row.get(1)?;
-        let blob = blob.ok_or(AntigravityError::Invalid("missing/oversized metadata"))?;
+        // Oversized artifacts (long notebooks, images) are stored as metadata
+        // blobs as well; skipping one row must not discard the conversation.
+        let Some(blob) = blob else {
+            skipped_rows += 1;
+            continue;
+        };
         let model = extract_model_name(&blob)?;
         let usage = extract_usage(&blob)?;
         let response_id = extract_response_id(&blob)?;
@@ -459,7 +476,9 @@ fn read_db(path: &Path, stem: String, device: &str) -> Result<Snapshot> {
                 .clone()
                 .unwrap_or_else(|| format!("row:{}", row_idx.unwrap_or(known_turns as i64)));
             let step_idx = proto_varint_field(&blob, 2)?.and_then(|idx| i64::try_from(idx).ok());
-            let event_at_ms = step_idx.and_then(|idx| step_timestamps.get(&idx).copied());
+            let event_at_ms = step_idx
+                .and_then(|idx| step_timestamps.get(&idx).copied())
+                .or_else(|| step_timeline.get(position).copied().flatten());
             Some(make_record(
                 &stem,
                 device,
@@ -512,9 +531,71 @@ fn read_db(path: &Path, stem: String, device: &str) -> Result<Snapshot> {
         counts,
         known_turns,
         unknown_turns,
+        skipped_rows,
         records,
         missing_usage,
     })
+}
+
+/// Antigravity keeps conversation titles in a separate summaries database.
+/// They are imported as display-only labels keyed by the same conversation
+/// identity the usage rows use.
+pub fn import_titles(gemini_home: &Path, store: &mut LocalStore) -> Result<usize> {
+    let mut imported = 0usize;
+    for prefix in [
+        "antigravity",
+        "antigravity-ide",
+        "antigravity-backup",
+        "antigravity-cli",
+    ] {
+        let path = gemini_home
+            .join(prefix)
+            .join("conversation_summaries.db");
+        if !path.is_file() {
+            continue;
+        }
+        let conn = match Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            Ok(conn) => conn,
+            Err(_) => continue,
+        };
+        conn.busy_timeout(std::time::Duration::from_secs(2))?;
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_summaries')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !exists {
+            continue;
+        }
+        let mut stmt = conn.prepare(
+            "SELECT conversation_id,title,preview FROM conversation_summaries LIMIT 5000",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let title: String = row.get(1)?;
+            let preview: String = row.get(2)?;
+            if id.is_empty() || id.len() > 200 {
+                continue;
+            }
+            // Antigravity leaves `title` empty for many older conversations;
+            // its own preview is the next best human-readable label.
+            let source = if title.trim().is_empty() { preview } else { title };
+            let name = source.split_whitespace().collect::<Vec<_>>().join(" ");
+            if name.is_empty() || name.chars().count() > 200 {
+                continue;
+            }
+            let name: String = name.chars().take(80).collect();
+            let key = stable_record_id("antigravity", b"conversation", id.as_bytes())?;
+            if store
+                .upsert_session_name(&key, "antigravity", &name, now_ms()?)
+                .is_ok()
+            {
+                imported += 1;
+            }
+        }
+    }
+    Ok(imported)
 }
 
 pub fn discover_databases(gemini_home: &Path) -> Result<Vec<PathBuf>> {
@@ -650,6 +731,28 @@ pub fn collect_antigravity(
     device_id: &str,
     estimate_tokens: bool,
 ) -> Result<AntigravityReport> {
+    collect_antigravity_with_policy(gemini_home, store, device_id, estimate_tokens, false)
+}
+
+/// Desktop collection policy: one conversation database with unreadable or
+/// oversized metadata is counted in `skipped_sources` and skipped instead of
+/// discarding every other conversation.
+pub fn collect_antigravity_tolerant(
+    gemini_home: &Path,
+    store: &mut LocalStore,
+    device_id: &str,
+    estimate_tokens: bool,
+) -> Result<AntigravityReport> {
+    collect_antigravity_with_policy(gemini_home, store, device_id, estimate_tokens, true)
+}
+
+fn collect_antigravity_with_policy(
+    gemini_home: &Path,
+    store: &mut LocalStore,
+    device_id: &str,
+    estimate_tokens: bool,
+    skip_broken: bool,
+) -> Result<AntigravityReport> {
     let paths = discover_databases(gemini_home)?;
     let mut report = AntigravityReport {
         source_files: paths.len(),
@@ -666,7 +769,14 @@ pub fn collect_antigravity(
         if stem.is_empty() || stem.len() > 200 || stem.chars().any(char::is_control) {
             return Err(AntigravityError::Invalid("invalid conversation filename"));
         }
-        let snap = read_db(&path, stem.clone(), device_id)?;
+        let snap = match read_db(&path, stem.clone(), device_id) {
+            Ok(snap) => snap,
+            Err(_) if skip_broken => {
+                report.skipped_sources += 1;
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         if let Some(previous) = snapshots.get(&stem) {
             if dominates(&snap, previous) {
                 snapshots.insert(stem, snap);
@@ -687,6 +797,7 @@ pub fn collect_antigravity(
         report.unknown_model_turns = report
             .unknown_model_turns
             .saturating_add(snapshot.unknown_turns);
+        report.skipped_rows = report.skipped_rows.saturating_add(snapshot.skipped_rows);
         // Keep the last complete estimate when this explicit-estimate scan
         // encounters unknown models; partial metadata cannot safely revise it.
         if estimate_tokens && snapshot.unknown_turns > 0 {
@@ -708,7 +819,7 @@ pub fn collect_antigravity(
             continue;
         }
         if previous.is_some() {
-            let prior_records = store.records_for_source("antigravity", &source_key, 2000)?;
+            let prior_records = store.records_for_source("antigravity", &source_key, 20_000)?;
             let active_prior = prior_records
                 .iter()
                 .map(|row| &row.record)
@@ -768,5 +879,8 @@ pub fn collect_antigravity(
         report.revised += result.applied.revised;
         report.tombstoned += result.tombstoned;
     }
+    // Titles live in a separate summaries DB; failing to read them must not
+    // fail usage collection.
+    let _ = import_titles(gemini_home, store);
     Ok(report)
 }

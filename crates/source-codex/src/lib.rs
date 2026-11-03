@@ -26,6 +26,7 @@ pub const PARSER_VERSION: u32 = 1;
 const MAX_LINE: usize = 4 * 1024 * 1024;
 const MAX_FILES: usize = 20_000;
 const TAIL_WINDOW: usize = 256;
+const MAX_DECOMPRESSED: usize = 512 * 1024 * 1024;
 
 #[derive(Debug)]
 pub enum CodexError {
@@ -208,37 +209,106 @@ fn event_ms(v: &Value) -> Result<Option<i64>> {
     ))
 }
 
-// Reads at most MAX_LINE bytes even if JSONL contains a multi-gigabyte prompt line.
-// Returns (bytes including newline, ended_with_newline).
-fn bounded_line<R: BufRead>(reader: &mut R) -> Result<(Vec<u8>, bool)> {
+// Reads at most MAX_LINE bytes even if JSONL contains a multi-gigabyte prompt
+// line. An oversized line is drained and reported as `oversized` so the caller
+// can keep scanning the rest of the file instead of discarding it entirely.
+struct LineRead {
+    bytes: Vec<u8>,
+    complete: bool,
+    oversized: bool,
+}
+
+fn bounded_line<R: BufRead>(reader: &mut R) -> Result<LineRead> {
     let mut result = Vec::new();
+    let mut oversized = false;
     loop {
         let buf = reader.fill_buf()?;
         if buf.is_empty() {
-            return Ok((result, false));
+            return Ok(LineRead {
+                bytes: result,
+                complete: false,
+                oversized,
+            });
         }
         let size = buf
             .iter()
             .position(|&x| x == b'\n')
             .map_or(buf.len(), |i| i + 1);
-        if result.len().checked_add(size).is_none_or(|n| n > MAX_LINE) {
-            return Err(CodexError::Limit("JSONL line exceeds 4 MiB"));
-        }
         let ended = buf[..size].last() == Some(&b'\n');
+        if oversized || result.len().saturating_add(size) > MAX_LINE {
+            oversized = true;
+            result.clear();
+            reader.consume(size);
+            if ended {
+                return Ok(LineRead {
+                    bytes: Vec::new(),
+                    complete: true,
+                    oversized: true,
+                });
+            }
+            continue;
+        }
         result.extend_from_slice(&buf[..size]);
         reader.consume(size);
         if ended {
-            return Ok((result, true));
+            return Ok(LineRead {
+                bytes: result,
+                complete: true,
+                oversized,
+            });
         }
     }
 }
+/// Codex rolls completed rollouts into `*.jsonl.zst`. Their payload is the same
+/// JSONL stream; only the container differs.
+pub fn is_zstd_rollout(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".jsonl.zst"))
+}
+
+/// Streams a zstd rollout into memory with a hard cap, so a corrupt or
+/// adversarial frame cannot exhaust the process. The largest observed rollout
+/// is ~100 MiB uncompressed.
+pub fn decompress_rollout(path: &Path) -> Result<Vec<u8>> {
+    let mut decoder = zstd::stream::read::Decoder::new(BufReader::new(File::open(path)?))?;
+    let mut out = Vec::new();
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        let read = decoder.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        if out.len().saturating_add(read) > MAX_DECOMPRESSED {
+            return Err(CodexError::Limit("decompressed rollout > 512 MiB"));
+        }
+        out.extend_from_slice(&chunk[..read]);
+    }
+    Ok(out)
+}
+
+pub fn header_from_bytes(bytes: &[u8]) -> Result<String> {
+    header_from_reader(&mut BufReader::new(bytes))
+}
+
 fn read_session_header(path: &Path) -> Result<String> {
-    let mut rdr = BufReader::new(File::open(path)?);
-    let (line, complete) = bounded_line(&mut rdr)?;
-    if !complete {
+    if is_zstd_rollout(path) {
+        let mut decoder =
+            zstd::stream::read::Decoder::new(BufReader::new(File::open(path)?))?;
+        return header_from_reader(&mut BufReader::new(&mut decoder));
+    }
+    header_from_reader(&mut BufReader::new(File::open(path)?))
+}
+
+fn header_from_reader<R: BufRead>(rdr: &mut R) -> Result<String> {
+    let line = bounded_line(rdr)?;
+    if line.oversized {
+        return Err(CodexError::Invalid("oversized session header"));
+    }
+    if !line.complete {
         return Err(CodexError::PendingHeader);
     }
-    let v: Value = serde_json::from_slice(&line)?;
+    let v: Value = serde_json::from_slice(&line.bytes)?;
     if v.get("type").and_then(Value::as_str) != Some("session_meta") {
         return Err(CodexError::Invalid("not Codex rollout session_meta"));
     }
@@ -274,6 +344,10 @@ fn sha_tail(path: &Path, offset: u64) -> Result<String> {
     let mut buf = vec![0u8; count];
     f.read_exact(&mut buf)?;
     Ok(hex_digest(&buf))
+}
+pub fn sha_tail_bytes(bytes: &[u8]) -> String {
+    let begin = bytes.len().saturating_sub(TAIL_WINDOW);
+    hex_digest(&bytes[begin..])
 }
 fn hash_path(path: &Path) -> Result<String> {
     // Path stays local; store only a digest for change detection.
@@ -330,17 +404,21 @@ pub fn scan_file(
     let mut incomplete = false;
     loop {
         let start = reader.stream_position()?;
-        let (line, complete) = bounded_line(&mut reader)?;
-        if line.is_empty() {
+        let line = bounded_line(&mut reader)?;
+        if line.bytes.is_empty() && !line.oversized {
             break;
         }
-        if !complete {
+        if !line.complete {
             incomplete = true;
             offset = start;
             break;
         }
         parsed += 1;
-        let v: Value = serde_json::from_slice(&line)?;
+        if line.oversized {
+            offset = reader.stream_position()?;
+            continue;
+        }
+        let v: Value = serde_json::from_slice(&line.bytes)?;
         let payload = v.get("payload");
         if v.get("type").and_then(Value::as_str) == Some("event_msg")
             && payload.and_then(|p| p.get("type")).and_then(Value::as_str) == Some("token_count")
@@ -460,7 +538,9 @@ pub fn discover_codex_files(home: &Path) -> Result<Vec<PathBuf>> {
                 if !file_type.is_file() {
                     continue;
                 }
-                if ent.path().extension().and_then(|x| x.to_str()) != Some("jsonl") {
+                let name = ent.file_name();
+                let name = name.to_string_lossy();
+                if !(name.ends_with(".jsonl") || name.ends_with(".jsonl.zst")) {
                     continue;
                 }
                 result.push(ent.path());
@@ -523,4 +603,6 @@ pub fn collect_codex(
 }
 
 pub mod precise;
-pub use precise::{collect_codex_precise, scan_precise, PreciseReport, PreciseScan};
+pub use precise::{
+    collect_codex_precise, collect_codex_precise_tolerant, scan_precise, PreciseReport, PreciseScan,
+};

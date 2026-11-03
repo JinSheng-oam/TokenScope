@@ -451,7 +451,8 @@ fn too_large_blob_does_not_replace_last_good_record() {
             params![vec![0u8; 300_000]],
         )
         .unwrap();
-    assert!(collect_antigravity(&f.root, &mut s, "test-device", true).is_err());
+    let report = collect_antigravity(&f.root, &mut s, "test-device", true).unwrap();
+    assert_eq!(report.skipped_rows, 1);
     assert_eq!(active(&s).len(), 1);
 }
 #[test]

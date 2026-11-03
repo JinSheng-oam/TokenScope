@@ -2,21 +2,22 @@
 //! Legacy sessions use monotonic cumulative deltas. A schema switch triggers
 //! a full, source-scoped reconciliation with explicit tombstones.
 use super::{
-    bounded_line, discover_codex_files, event_ms, hash_path, mtime_ns, now_ms, read_session_header,
-    sha_tail, CodexError, Counters, Result, MAX_FILES,
+    bounded_line, decompress_rollout, discover_codex_files, event_ms, hash_path, header_from_bytes,
+    is_zstd_rollout, mtime_ns, now_ms, read_session_header, sha_tail, sha_tail_bytes, CodexError,
+    Counters, Result, MAX_FILES,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{BufReader, Seek, SeekFrom};
+use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
 use tokenscope_core_domain::{
     session_key, stable_record_id, CanonicalRecord, Precision, TokenBreakdown, UsageScope,
 };
 use tokenscope_local_store::{LocalStore, SourceCheckpoint};
 
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const MAX_BATCH: usize = 50_000; // explicit upper bound pending true streaming decoder
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -29,6 +30,36 @@ struct V2Cursor {
     cumulative: Option<Counters>,
     legacy_seq: u64,
     response_seq: u64,
+    /// The rollout arrived as a zstd frame; its offsets are not seekable.
+    #[serde(default)]
+    compressed: bool,
+    #[serde(default)]
+    physical_size: u64,
+    #[serde(default)]
+    scan_size: u64,
+}
+
+enum BodyReader<'a> {
+    File(File),
+    Memory(Cursor<&'a [u8]>),
+}
+
+impl Read for BodyReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::File(file) => file.read(buf),
+            Self::Memory(cursor) => cursor.read(buf),
+        }
+    }
+}
+
+impl Seek for BodyReader<'_> {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        match self {
+            Self::File(file) => file.seek(pos),
+            Self::Memory(cursor) => cursor.seek(pos),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -39,6 +70,43 @@ pub struct PreciseScan {
     pub parsed_lines: usize,
     pub pending_line: bool,
     pub mode: String,
+    /// First human prompt, used only as a local display label.
+    pub title: Option<String>,
+}
+
+/// Turns the first user prompt into a short display label by dropping injected
+/// XML-ish blocks (for example `<external_codex_apps_open_page>…`).
+fn clean_title(raw: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut depth = 0usize;
+    for ch in raw.chars() {
+        match ch {
+            '<' => depth += 1,
+            '>' if depth > 0 => depth -= 1,
+            _ if depth == 0 => out.push(ch),
+            _ => {}
+        }
+    }
+    let collapsed = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = collapsed.trim();
+    // Injected context (page state, agent instructions, environment blobs)
+    // must never become a session label.
+    if trimmed.is_empty()
+        || trimmed.starts_with('{')
+        || trimmed.starts_with('#')
+        || trimmed.starts_with('[')
+        || trimmed.contains("AGENTS.md instructions")
+        || trimmed.starts_with("The following is the Codex agent history")
+        // Legacy environment blobs: "D:\\path powershell 2026-04-02 Asia/Shanghai".
+        || (trimmed.chars().nth(1) == Some(':') && trimmed.contains("Asia/"))
+    {
+        return None;
+    }
+    let text: String = trimmed.chars().take(80).collect();
+    if text.chars().any(char::is_control) {
+        return None;
+    }
+    Some(text)
 }
 
 fn usage(v: &Value) -> Result<TokenBreakdown> {
@@ -161,7 +229,99 @@ pub fn scan_precise(
     prior: Option<&SourceCheckpoint>,
     observed_ms: i64,
 ) -> Result<PreciseScan> {
-    let session = read_session_header(path)?;
+    scan_precise_entry(path, None, device_id, prior, observed_ms, None)
+}
+
+/// Scan an already decompressed `.jsonl.zst` rollout. Zstd frames are not
+/// seekable, so the caller passes the decoded JSONL body.
+pub fn scan_precise_body(
+    path: &Path,
+    body: &[u8],
+    device_id: &str,
+    prior: Option<&SourceCheckpoint>,
+    observed_ms: i64,
+) -> Result<PreciseScan> {
+    scan_precise_entry(path, Some(body), device_id, prior, observed_ms, None)
+}
+
+/// Compaction writes a continuation rollout that keeps the original session id
+/// but carries its own turns. Scan it under a derived session id so both files
+/// count and legacy ordinals cannot collide across the pair.
+pub fn scan_precise_continuation(
+    path: &Path,
+    device_id: &str,
+    prior: Option<&SourceCheckpoint>,
+    observed_ms: i64,
+    session_id: &str,
+) -> Result<PreciseScan> {
+    scan_precise_entry(path, None, device_id, prior, observed_ms, Some(session_id))
+}
+
+pub fn scan_precise_continuation_body(
+    path: &Path,
+    body: &[u8],
+    device_id: &str,
+    prior: Option<&SourceCheckpoint>,
+    observed_ms: i64,
+    session_id: &str,
+) -> Result<PreciseScan> {
+    scan_precise_entry(
+        path,
+        Some(body),
+        device_id,
+        prior,
+        observed_ms,
+        Some(session_id),
+    )
+}
+
+fn scan_precise_entry(
+    path: &Path,
+    body: Option<&[u8]>,
+    device_id: &str,
+    prior: Option<&SourceCheckpoint>,
+    observed_ms: i64,
+    session_override: Option<&str>,
+) -> Result<PreciseScan> {
+    // A rollout written across a schema switch cannot mix both projections,
+    // but the cumulative counters span the whole file, so fall back to the
+    // legacy delta projection and count every turn exactly once.
+    match scan_precise_mode(
+        path,
+        body,
+        device_id,
+        prior,
+        observed_ms,
+        false,
+        session_override,
+    ) {
+        Err(CodexError::Invalid("mixed legacy/modern coverage")) => scan_precise_mode(
+            path,
+            body,
+            device_id,
+            prior,
+            observed_ms,
+            true,
+            session_override,
+        ),
+        other => other,
+    }
+}
+
+fn scan_precise_mode(
+    path: &Path,
+    body: Option<&[u8]>,
+    device_id: &str,
+    prior: Option<&SourceCheckpoint>,
+    observed_ms: i64,
+    force_legacy: bool,
+    session_override: Option<&str>,
+) -> Result<PreciseScan> {
+    let header_session = match body {
+        Some(bytes) => header_from_bytes(bytes)?,
+        None => read_session_header(path)?,
+    };
+    let session = session_override.unwrap_or(&header_session).to_owned();
     let key = session_key("codex", session.as_bytes())?;
     if let Some(cp) = prior {
         if cp.tool_id != "codex" || cp.source_key != key {
@@ -172,21 +332,23 @@ pub fn scan_precise(
     if !meta.is_file() {
         return Err(CodexError::Invalid("not a regular file"));
     }
-    let size = meta.len();
+    let physical_size = meta.len();
+    let size = body.map_or(physical_size, |bytes| bytes.len() as u64);
     let modified = mtime_ns(&meta)?;
     let path_identity = hash_path(path)?;
     let old = prior
         .filter(|x| x.parser_version == VERSION)
         .and_then(|x| serde_json::from_str::<V2Cursor>(&x.source_fingerprint).ok());
-    let reuse = match (prior, old.as_ref()) {
+    let reuse = body.is_none()
+        && match (prior, old.as_ref()) {
         (Some(cp), Some(saved)) => {
             cp.read_offset <= size
                 && saved.path_hash == path_identity
                 && (cp.read_offset != size || saved.mtime_ns == modified)
                 && saved.tail_hash == sha_tail(path, cp.read_offset)?
         }
-        _ => false,
-    };
+            _ => false,
+        };
     let mut offset = if reuse {
         prior.map_or(0, |x| x.read_offset)
     } else {
@@ -197,6 +359,9 @@ pub fn scan_precise(
     } else {
         String::new()
     };
+    if force_legacy {
+        old_mode = "legacy".into();
+    }
     let mut model = if reuse {
         old.as_ref().and_then(|x| x.model.clone())
     } else {
@@ -217,7 +382,11 @@ pub fn scan_precise(
     } else {
         0
     };
-    let mut rd = BufReader::new(File::open(path)?);
+    let reader = match body {
+        Some(bytes) => BodyReader::Memory(Cursor::new(bytes)),
+        None => BodyReader::File(File::open(path)?),
+    };
+    let mut rd = BufReader::new(reader);
     rd.seek(SeekFrom::Start(offset))?;
     let mut legacy = Vec::new();
     let mut modern = Vec::new();
@@ -225,21 +394,27 @@ pub fn scan_precise(
     let mut first_legacy_before_modern = false;
     let mut saw_positive_legacy = false;
     let mut legacy_error = None;
+    let mut last_count_ms: Option<i64> = None;
+    let mut title: Option<String> = None;
     let mut parsed = 0;
     let mut pending = false;
     loop {
         let start = rd.stream_position()?;
-        let (line, done) = bounded_line(&mut rd)?;
-        if line.is_empty() {
+        let line = bounded_line(&mut rd)?;
+        if line.bytes.is_empty() && !line.oversized {
             break;
         }
-        if !done {
+        if !line.complete {
             pending = true;
             offset = start;
             break;
         }
         parsed += 1;
-        let v: Value = serde_json::from_slice(&line)?;
+        if line.oversized {
+            offset = rd.stream_position()?;
+            continue;
+        }
+        let v: Value = serde_json::from_slice(&line.bytes)?;
         let typ = v.get("type").and_then(Value::as_str);
         let payload = v.get("payload");
         if typ == Some("turn_context") {
@@ -248,6 +423,38 @@ pub fn scan_precise(
                     return Err(CodexError::Invalid("model metadata"));
                 }
                 model = Some(s.to_owned());
+            }
+        }
+        if title.is_none()
+            && typ == Some("response_item")
+            && payload.and_then(|p| p.get("role")).and_then(Value::as_str) == Some("user")
+        {
+            let meta = payload.and_then(|p| p.get("internal_chat_message_metadata_passthrough"));
+            let from_user = meta
+                .and_then(|m| m.get("content_item_metadata"))
+                .and_then(Value::as_array)
+                .is_none_or(|items| {
+                    items.iter().any(|item| {
+                        item.get("provenance")
+                            .and_then(|p| p.get("type"))
+                            .and_then(Value::as_str)
+                            == Some("user")
+                    })
+                });
+            if let Some(text) = from_user
+                .then(|| {
+                    payload
+                        .and_then(|p| p.get("content"))
+                        .and_then(Value::as_array)
+                        .and_then(|items| {
+                            items
+                                .iter()
+                                .find_map(|i| i.get("text").and_then(Value::as_str))
+                        })
+                })
+                .flatten()
+            {
+                title = clean_title(text);
             }
         }
         if typ == Some("token_usage_record") {
@@ -282,13 +489,20 @@ pub fn scan_precise(
         }
         if typ == Some("event_msg")
             && payload.and_then(|p| p.get("type")).and_then(Value::as_str) == Some("token_count")
-            && old_mode != "modern"
-            && modern.is_empty()
+            && (force_legacy || (old_mode != "modern" && modern.is_empty()))
         {
+            last_count_ms = event_ms(&v)?;
             if let Some(info) = payload.and_then(|p| p.get("info")) {
                 if let Some(next) = Counters::from_info(info)? {
                     if last != Some(next) {
-                        match legacy_difference(next, last) {
+                        // A closed zstd archive is immutable: a decreasing
+                        // cumulative counter is an internal context reset (the
+                        // thread restarts its baseline), not a torn append.
+                        let baseline = match last {
+                            Some(prev) if body.is_some() && !next.monotonic_from(&prev) => None,
+                            other => other,
+                        };
+                        match legacy_difference(next, baseline) {
                             Ok(delta) => {
                                 if delta.total()? > 0 {
                                     if modern.is_empty() {
@@ -328,7 +542,7 @@ pub fn scan_precise(
         offset = rd.stream_position()?;
     }
     let after = fs::metadata(path)?;
-    if after.len() != size || mtime_ns(&after)? != modified || offset > size {
+    if after.len() != physical_size || mtime_ns(&after)? != modified || offset > size {
         return Err(CodexError::Invalid("file changed during scan"));
     }
     // An incomplete, rewritten source is not authoritative for deletion.
@@ -339,13 +553,16 @@ pub fn scan_precise(
     // New modern records in a previously legacy-tracked file require complete
     // replacement of the old delta projection, not a mixture of both schemas.
     if reuse && old_mode == "legacy" && !modern.is_empty() {
-        let rebuilt = scan_precise(path, device_id, None, observed_ms)?;
+        let rebuilt =
+            scan_precise_entry(path, body, device_id, None, observed_ms, session_override)?;
         if rebuilt.pending_line {
             return Err(CodexError::PendingHeader);
         }
         return Ok(rebuilt);
     }
-    let mode = if old_mode == "modern" || !modern.is_empty() {
+    let mode = if force_legacy {
+        "legacy"
+    } else if old_mode == "modern" || !modern.is_empty() {
         "modern"
     } else {
         "legacy"
@@ -359,7 +576,22 @@ pub fn scan_precise(
         // cannot be proven complete by simply ignoring cumulative snapshots.
         return Err(CodexError::Invalid("mixed legacy/modern coverage"));
     }
-    let records = if mode == "modern" { modern } else { legacy };
+    let records = if force_legacy {
+        // Cumulative deltas cover every turn up to the final snapshot; any
+        // response recorded after that snapshot has no delta yet and is added
+        // explicitly so the tail is not lost.
+        let cutoff = last_count_ms;
+        let mut merged = legacy;
+        merged.extend(modern.into_iter().filter(|r| match (cutoff, r.event_at_ms) {
+            (Some(cutoff), Some(at)) => at > cutoff,
+            _ => true,
+        }));
+        merged
+    } else if mode == "modern" {
+        modern
+    } else {
+        legacy
+    };
     // A newly replaced header-only file is not proof that previously measured
     // responses were deleted. Keep last-known-good until usage is observable.
     if !reuse && prior.is_some() && records.is_empty() {
@@ -374,13 +606,26 @@ pub fn scan_precise(
     });
     let cursor = V2Cursor {
         path_hash: path_identity,
-        tail_hash: sha_tail(path, offset)?,
+        tail_hash: match body {
+            Some(bytes) => {
+                let end = usize::try_from(offset)
+                    .map_err(|_| CodexError::Invalid("scan offset"))?;
+                if end > bytes.len() {
+                    return Err(CodexError::Invalid("scan offset beyond body"));
+                }
+                sha_tail_bytes(&bytes[..end])
+            }
+            None => sha_tail(path, offset)?,
+        },
         mtime_ns: modified,
         mode: old_mode.clone(),
         model,
         cumulative: if mode == "modern" { None } else { last },
         legacy_seq,
         response_seq,
+        compressed: body.is_some(),
+        physical_size,
+        scan_size: size,
     };
     let fingerprint = serde_json::to_string(&cursor)?;
     if fingerprint.len() > 1024 {
@@ -407,6 +652,7 @@ pub fn scan_precise(
         parsed_lines: parsed,
         pending_line: pending,
         mode: old_mode,
+        title,
     })
 }
 
@@ -419,12 +665,53 @@ pub struct PreciseReport {
     pub lines: usize,
     pub pending: usize,
     pub reconciled: usize,
+    pub unsupported: usize,
 }
 
 pub fn collect_codex_precise(
     home: &Path,
     store: &mut LocalStore,
     device_id: &str,
+) -> Result<PreciseReport> {
+    collect_codex_precise_with_policy(home, store, device_id, false)
+}
+
+fn scan_file_for(
+    file: &Path,
+    device_id: &str,
+    prior: Option<&SourceCheckpoint>,
+    observed_ms: i64,
+    continuation: Option<&str>,
+    body: Option<&[u8]>,
+) -> Result<PreciseScan> {
+    match (continuation, body) {
+        (Some(session_id), Some(body)) => {
+            scan_precise_continuation_body(file, body, device_id, prior, observed_ms, session_id)
+        }
+        (Some(session_id), None) => {
+            scan_precise_continuation(file, device_id, prior, observed_ms, session_id)
+        }
+        (None, Some(body)) => scan_precise_body(file, body, device_id, prior, observed_ms),
+        (None, None) => scan_precise(file, device_id, prior, observed_ms),
+    }
+}
+
+/// Desktop collection policy: a single unreadable or unprovable rollout must
+/// not zero out every other source. Such files are counted in `unsupported`
+/// and skipped; their previously committed projection stays untouched.
+pub fn collect_codex_precise_tolerant(
+    home: &Path,
+    store: &mut LocalStore,
+    device_id: &str,
+) -> Result<PreciseReport> {
+    collect_codex_precise_with_policy(home, store, device_id, true)
+}
+
+fn collect_codex_precise_with_policy(
+    home: &Path,
+    store: &mut LocalStore,
+    device_id: &str,
+    tolerant: bool,
 ) -> Result<PreciseReport> {
     let mut report = PreciseReport::default();
     let mut sessions = HashSet::new();
@@ -439,17 +726,94 @@ pub fn collect_codex_precise(
                 report.pending += 1;
                 continue;
             }
+            Err(e) if tolerant => {
+                eprintln!(
+                    "TokenScope: codex skipped {}: {e}",
+                    file.display()
+                );
+                report.unsupported += 1;
+                continue;
+            }
             Err(e) => return Err(e),
         };
-        let key = session_key("codex", session.as_bytes())?;
-        if !sessions.insert(key.clone()) {
+        let mut continuation: Option<String> = None;
+        let base_key = session_key("codex", session.as_bytes())?;
+        let key = if sessions.insert(base_key.clone()) {
+            base_key
+        } else if tolerant {
+            // A compaction continuation keeps the original session id. Give it
+            // a derived id so both rollouts are counted instead of dropping the
+            // newer file's turns.
+            let digest = hash_path(&file)?;
+            let derived = format!("{session}#{}", &digest[..8.min(digest.len())]);
+            let derived_key = session_key("codex", derived.as_bytes())?;
+            if !sessions.insert(derived_key.clone()) {
+                report.unsupported += 1;
+                continue;
+            }
+            eprintln!(
+                "TokenScope: codex continuation {} tracked as {derived}",
+                file.display()
+            );
+            continuation = Some(derived);
+            derived_key
+        } else {
             return Err(CodexError::Invalid("duplicate session sources"));
-        }
+        };
         let prior = store.checkpoint("codex", &key)?;
-        let scan = match scan_precise(&file, device_id, prior.as_ref(), now_ms()?) {
+        // Compressed rollouts are immutable archives. Their fingerprint is
+        // enough to prove nothing changed; decompressing 100 MiB every cycle
+        // would be wasteful.
+        if is_zstd_rollout(&file) {
+            if let Some(cp) = prior.as_ref() {
+                if cp.parser_version == VERSION {
+                    if let Ok(saved) = serde_json::from_str::<V2Cursor>(&cp.source_fingerprint) {
+                        let meta = fs::metadata(&file)?;
+                        if saved.compressed
+                            && saved.physical_size == meta.len()
+                            && saved.mtime_ns == mtime_ns(&meta)?
+                            && saved.scan_size == cp.read_offset
+                        {
+                            report.files += 1;
+                            report.unchanged += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+        let body = if is_zstd_rollout(&file) {
+            match decompress_rollout(&file) {
+                Ok(body) => Some(body),
+                Err(e) if tolerant => {
+                    eprintln!("TokenScope: codex skipped {}: {e}", file.display());
+                    report.unsupported += 1;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        } else {
+            None
+        };
+        let scan = match scan_file_for(
+            &file,
+            device_id,
+            prior.as_ref(),
+            now_ms()?,
+            continuation.as_deref(),
+            body.as_deref(),
+        ) {
             Ok(v) => v,
             Err(CodexError::PendingHeader) => {
                 report.pending += 1;
+                continue;
+            }
+            Err(e) if tolerant => {
+                eprintln!(
+                    "TokenScope: codex skipped {}: {e}",
+                    file.display()
+                );
+                report.unsupported += 1;
                 continue;
             }
             Err(e) => return Err(e),
@@ -458,7 +822,25 @@ pub fn collect_codex_precise(
         // incremental API, and it must NOT be treated as a complete source.
         // Re-read the entire file before generating any missing-record tombstones.
         let scan = if !scan.full_reconcile && scan.records.len() > 2000 {
-            let mut rebuilt = scan_precise(&file, device_id, None, now_ms()?)?;
+            let mut rebuilt = match scan_file_for(
+                &file,
+                device_id,
+                None,
+                now_ms()?,
+                continuation.as_deref(),
+                body.as_deref(),
+            ) {
+                Ok(v) => v,
+                Err(e) if tolerant => {
+                    eprintln!(
+                        "TokenScope: codex skipped {}: {e}",
+                        file.display()
+                    );
+                    report.unsupported += 1;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             if rebuilt.pending_line {
                 return Err(CodexError::PendingHeader);
             }
@@ -472,6 +854,9 @@ pub fn collect_codex_precise(
         } else {
             scan
         };
+        if let Some(name) = scan.title.as_deref() {
+            store.upsert_session_name(&scan.next.source_key, "codex", name, now_ms()?)?;
+        }
         let (inserted, revised, unchanged) = if scan.full_reconcile {
             if scan.pending_line && prior.is_some() {
                 return Err(CodexError::PendingHeader);

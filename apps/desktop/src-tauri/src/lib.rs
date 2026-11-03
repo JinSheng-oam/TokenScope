@@ -3,6 +3,7 @@
 use fs2::FileExt;
 use serde::Serialize;
 use std::{
+    collections::{HashMap, HashSet},
     env,
     ffi::OsString,
     fs::{self, OpenOptions},
@@ -14,13 +15,13 @@ use std::{
         Mutex,
     },
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     webview::WebviewWindowBuilder,
-    AppHandle, Manager,
+    AppHandle, Emitter, Manager,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 use tokenscope_local_ipc::DashboardResponse;
@@ -50,6 +51,22 @@ struct AgentProcess {
 struct AppLifecycle {
     quit_requested: AtomicBool,
     keep_alive_after_window_close: AtomicBool,
+}
+
+/// Remembers which range the UI is showing so background refreshes never
+/// replace data from a different selection.
+#[derive(Clone, Default)]
+struct DashboardRequest {
+    range: String,
+    start_date: Option<String>,
+    end_date: Option<String>,
+}
+
+#[derive(Default)]
+struct DashboardWatch {
+    request: Mutex<DashboardRequest>,
+    cache: Mutex<HashMap<String, (DashboardResponse, Instant)>>,
+    refreshing: Mutex<HashSet<String>>,
 }
 
 fn database_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -446,13 +463,113 @@ fn read_pipe_bounded(reader: impl Read, limit: usize) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn dashboard_key(range: &str, start: Option<&str>, end: Option<&str>, offset: u64) -> String {
+    format!(
+        "{range}|{}|{}|{offset}",
+        start.unwrap_or_default(),
+        end.unwrap_or_default()
+    )
+}
+
+/// Returns a cached projection immediately so range switches feel instant; a
+/// stale entry is refreshed in the background and pushed as an event.
 fn query_agent(
     app: &AppHandle,
     range: &str,
     session_offset: u64,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
 ) -> Result<DashboardResponse, String> {
-    if !["today", "7d", "30d", "all"].contains(&range) {
+    if !["today", "7d", "30d", "all", "custom"].contains(&range) {
         return Err("不支持的统计范围".into());
+    }
+    if range == "custom" && (start_date.is_none() || end_date.is_none()) {
+        return Err("自定义范围需要开始和结束日期".into());
+    }
+    let watch = app.state::<DashboardWatch>();
+    if let Ok(mut request) = watch.request.lock() {
+        *request = DashboardRequest {
+            range: range.to_owned(),
+            start_date: start_date.map(str::to_owned),
+            end_date: end_date.map(str::to_owned),
+        };
+    }
+    let key = dashboard_key(range, start_date, end_date, session_offset);
+    if session_offset == 0 {
+        let hit = watch
+            .cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&key).cloned());
+        if let Some((cached, at)) = hit {
+            if at.elapsed() > Duration::from_secs(10) {
+                spawn_dashboard_refresh(app, range, start_date, end_date);
+            }
+            return Ok(cached);
+        }
+    }
+    let response = query_agent_fresh(app, range, session_offset, start_date, end_date)?;
+    if session_offset == 0 {
+        if let Ok(mut cache) = watch.cache.lock() {
+            cache.insert(key, (response.clone(), Instant::now()));
+        }
+    }
+    Ok(response)
+}
+
+fn spawn_dashboard_refresh(
+    app: &AppHandle,
+    range: &str,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+) {
+    let app = app.clone();
+    let range = range.to_owned();
+    let start_date = start_date.map(str::to_owned);
+    let end_date = end_date.map(str::to_owned);
+    let key = dashboard_key(&range, start_date.as_deref(), end_date.as_deref(), 0);
+    let already_running = {
+        let watch = app.state::<DashboardWatch>();
+        let result = match watch.refreshing.lock() {
+            Ok(mut refreshing) => !refreshing.insert(key.clone()),
+            Err(_) => true,
+        };
+        result
+    };
+    if already_running {
+        return;
+    }
+    thread::spawn(move || {
+        let result =
+            query_agent_fresh(&app, &range, 0, start_date.as_deref(), end_date.as_deref());
+        let watch = app.state::<DashboardWatch>();
+        if let Ok(mut refreshing) = watch.refreshing.lock() {
+            refreshing.remove(&key);
+        }
+        match result {
+            Ok(response) => {
+                if let Ok(mut cache) = watch.cache.lock() {
+                    cache.insert(key, (response.clone(), Instant::now()));
+                }
+                let _ = app.emit("dashboard-updated", response);
+            }
+            Err(error) => eprintln!("TokenScope dashboard refresh warning: {error}"),
+        }
+    });
+}
+
+fn query_agent_fresh(
+    app: &AppHandle,
+    range: &str,
+    session_offset: u64,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+) -> Result<DashboardResponse, String> {
+    if !["today", "7d", "30d", "all", "custom"].contains(&range) {
+        return Err("不支持的统计范围".into());
+    }
+    if range == "custom" && (start_date.is_none() || end_date.is_none()) {
+        return Err("自定义范围需要开始和结束日期".into());
     }
     let db = database_path(app)?;
     if !db.is_file() {
@@ -460,14 +577,22 @@ fn query_agent(
     }
     let agent =
         resolve_agent(app).ok_or_else(|| "未找到 tokenscope-agent 可执行文件".to_string())?;
-    let mut child = Command::new(agent)
+    let mut command = Command::new(agent);
+    command
         .arg("--dashboard-json")
         .arg("--range")
         .arg(range)
         .arg("--session-offset")
         .arg(session_offset.to_string())
         .arg("--db")
-        .arg(&db)
+        .arg(&db);
+    if let Some(value) = start_date {
+        command.arg("--start-date").arg(value);
+    }
+    if let Some(value) = end_date {
+        command.arg("--end-date").arg(value);
+    }
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -478,7 +603,10 @@ fn query_agent(
     let stderr_pipe = child.stderr.take().ok_or("Agent stderr pipe unavailable")?;
     let stdout_reader = thread::spawn(move || read_pipe_bounded(stdout_pipe, 1_048_576));
     let stderr_reader = thread::spawn(move || read_pipe_bounded(stderr_pipe, 65_536));
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // A cold `全部` aggregate over a large local history can exceed five
+    // seconds on slower disks; background pushes keep the UI responsive while
+    // this bounded wait prevents an orphaned child process.
+    let deadline = Instant::now() + Duration::from_secs(20);
     let status = loop {
         if let Some(status) = child
             .try_wait()
@@ -491,7 +619,7 @@ fn query_agent(
             let _ = child.wait();
             let _ = stdout_reader.join();
             let _ = stderr_reader.join();
-            return Err("Dashboard 查询超时（5 秒）".into());
+            return Err("Dashboard 查询超时（20 秒）".into());
         }
         thread::sleep(Duration::from_millis(10));
     };
@@ -513,6 +641,98 @@ fn query_agent(
         serde_json::from_slice(&stdout).map_err(|e| format!("Agent 返回的数据格式无效：{e}"))?;
     response.validate().map_err(|e| e.to_string())?;
     Ok(response)
+}
+
+fn dashboard_signature(db: &Path) -> Option<(u64, u64)> {
+    let wal = PathBuf::from(format!("{}-wal", db.display()));
+    let meta = fs::metadata(&wal).or_else(|_| fs::metadata(db)).ok()?;
+    let modified = meta
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis() as u64;
+    Some((meta.len(), modified))
+}
+
+/// One long-lived reader: after the first snapshot, watch the Agent's WAL and
+/// push a fresh projection only when new usage actually landed. This replaces
+/// the previous timer that spawned a full query every 30 seconds.
+fn spawn_dashboard_watch(app: AppHandle) {
+    thread::spawn(move || {
+        let mut last = None;
+        loop {
+            thread::sleep(Duration::from_millis(1_200));
+            let Ok(db) = database_path(&app) else { continue };
+            if !db.is_file() {
+                continue;
+            }
+            let signature = dashboard_signature(&db);
+            if signature.is_none() || signature == last {
+                continue;
+            }
+            last = signature;
+            // Scans commit in bursts; let the burst settle before reading.
+            thread::sleep(Duration::from_millis(800));
+            let request = app
+                .state::<DashboardWatch>()
+                .request
+                .lock()
+                .map(|value| value.clone())
+                .unwrap_or_default();
+            if request.range.is_empty() {
+                continue;
+            }
+            match query_agent_fresh(
+                &app,
+                &request.range,
+                0,
+                request.start_date.as_deref(),
+                request.end_date.as_deref(),
+            ) {
+                Ok(response) => {
+                    let key = dashboard_key(
+                        &request.range,
+                        request.start_date.as_deref(),
+                        request.end_date.as_deref(),
+                        0,
+                    );
+                    if let Ok(mut cache) = app.state::<DashboardWatch>().cache.lock() {
+                        cache.insert(key, (response.clone(), Instant::now()));
+                    }
+                    if let Err(error) = app.emit("dashboard-updated", response) {
+                        eprintln!("TokenScope dashboard push warning: {error}");
+                    }
+                }
+                Err(error) => eprintln!("TokenScope dashboard push warning: {error}"),
+            }
+        }
+    });
+}
+
+/// Warms the standard ranges once in the background so the first manual switch
+/// hits the cache instead of paying for another cold aggregate.
+fn spawn_dashboard_warmup(app: AppHandle) {
+    thread::spawn(move || {
+        thread::sleep(Duration::from_secs(6));
+        for range in ["today", "7d", "30d", "all"] {
+            let key = dashboard_key(range, None, None, 0);
+            let cached = app
+                .state::<DashboardWatch>()
+                .cache
+                .lock()
+                .map(|cache| cache.contains_key(&key))
+                .unwrap_or(true);
+            if cached {
+                continue;
+            }
+            if let Ok(response) = query_agent_fresh(&app, range, 0, None, None) {
+                if let Ok(mut cache) = app.state::<DashboardWatch>().cache.lock() {
+                    cache.insert(key, (response, Instant::now()));
+                }
+            }
+        }
+    });
 }
 
 #[tauri::command]
@@ -572,10 +792,20 @@ async fn get_dashboard_snapshot(
     app: AppHandle,
     range: String,
     session_offset: u64,
+    start_date: Option<String>,
+    end_date: Option<String>,
 ) -> Result<DashboardResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || query_agent(&app, &range, session_offset))
-        .await
-        .map_err(|e| format!("Dashboard 查询任务失败：{e}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        query_agent(
+            &app,
+            &range,
+            session_offset,
+            start_date.as_deref(),
+            end_date.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("Dashboard 查询任务失败：{e}"))?
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -591,7 +821,7 @@ fn sync_context(
     hub_url: &str,
 ) -> Result<(HubUrl, CredentialKey, String, String), String> {
     let hub = HubUrl::parse(hub_url).map_err(|e| e.to_string())?;
-    let dashboard = query_agent(app, "all", 0)?;
+    let dashboard = query_agent_fresh(app, "all", 0, None, None)?;
     let identity = dashboard
         .snapshot
         .identity
@@ -824,6 +1054,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .manage(AgentProcess::default())
         .manage(AppLifecycle::default())
+        .manage(DashboardWatch::default())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec!["--background"]),
@@ -835,6 +1066,8 @@ pub fn run() {
             if let Err(error) = start_agent_inner(app.handle(), &time_zone, process.inner()) {
                 eprintln!("TokenScope Agent startup warning: {error}");
             }
+            spawn_dashboard_watch(app.handle().clone());
+            spawn_dashboard_warmup(app.handle().clone());
             // Login autostart runs the collector and tray only. No WebView is
             // created until the user chooses Open, keeping idle memory lower.
             let is_bg = env::args().any(|arg| arg == "--background");

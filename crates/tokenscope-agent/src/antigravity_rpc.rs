@@ -268,11 +268,13 @@ fn detect_processes() -> Result<Vec<ProcessInfo>, RpcError> {
 
 fn listening_ports(pid: u32) -> Result<Vec<u16>, RpcError> {
     #[cfg(windows)]
-    let output = run_capture("powershell", &[
-        "-NoProfile".into(), "-NonInteractive".into(), "-Command".into(),
-        // PID is parsed as u32 above; interpolation is digits only.
-        format!("Get-NetTCPConnection -OwningProcess {pid} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort")
-    ], Duration::from_secs(2))?;
+    // `Get-NetTCPConnection` regularly takes several seconds on Windows while
+    // `netstat` returns the same listener table in milliseconds.
+    let output = run_capture(
+        "netstat",
+        &["-ano".into(), "-p".into(), "TCP".into()],
+        Duration::from_secs(5),
+    )?;
     #[cfg(not(windows))]
     let output = {
         let lsof = run_capture(
@@ -301,9 +303,18 @@ fn listening_ports(pid: u32) -> Result<Vec<u16>, RpcError> {
     let mut ports = BTreeSet::new();
     #[cfg(windows)]
     for line in output.lines() {
-        if let Ok(port) = line.trim().parse::<u16>() {
-            if port > 0 {
-                ports.insert(port);
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 5 || !parts[3].eq_ignore_ascii_case("LISTENING") {
+            continue;
+        }
+        if parts[4].parse::<u32>() != Ok(pid) {
+            continue;
+        }
+        if let Some((_, port)) = parts[1].rsplit_once(':') {
+            if let Ok(port) = port.parse::<u16>() {
+                if port > 0 {
+                    ports.insert(port);
+                }
             }
         }
     }

@@ -19,7 +19,7 @@ use tokenscope_core_domain::{
 use tokenscope_local_store::{LocalStore, SourceCheckpoint};
 
 pub const MODULE_ID: &str = "source-claude";
-pub const PARSER_VERSION: u32 = 1;
+pub const PARSER_VERSION: u32 = 2;
 const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_FILES: usize = 20_000;
 const MAX_EVENTS: usize = 50_000; // bounded fallback; streaming parse is a later optimization
@@ -88,6 +88,21 @@ pub struct ClaudeScan {
     pub next: SourceCheckpoint,
     pub records: Vec<CanonicalRecord>,
     pub parsed_lines: usize,
+    /// Display-only label: an explicit Claude title, else the first prompt.
+    pub title: Option<String>,
+}
+
+fn clean_title(raw: &str) -> Option<String> {
+    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = collapsed.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let text: String = trimmed.chars().take(80).collect();
+    if text.chars().any(char::is_control) {
+        return None;
+    }
+    Some(text)
 }
 
 fn now_ms() -> Result<i64> {
@@ -326,13 +341,35 @@ pub fn scan_claude_file(
     let mut samples: HashMap<String, Sample> = HashMap::new();
     let mut inconsistent: HashSet<String> = HashSet::new();
     let mut parsed = 0_usize;
+    let mut custom_title: Option<String> = None;
+    let mut first_prompt: Option<String> = None;
     while let Some((line, complete)) = bounded_line(&mut stream)? {
         if !complete {
             return Err(ClaudeError::Pending);
         }
         parsed += 1;
         let v: Value = serde_json::from_slice(&line)?;
-        if v.get("type").and_then(Value::as_str) != Some("assistant") {
+        let kind = v.get("type").and_then(Value::as_str);
+        if custom_title.is_none() && kind == Some("custom-title") {
+            custom_title = v
+                .get("customTitle")
+                .and_then(Value::as_str)
+                .and_then(clean_title);
+        }
+        if first_prompt.is_none() && kind == Some("user") {
+            first_prompt = v
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| match c {
+                    Value::String(s) => Some(s.as_str()),
+                    Value::Array(items) => items
+                        .iter()
+                        .find_map(|i| i.get("text").and_then(Value::as_str)),
+                    _ => None,
+                })
+                .and_then(clean_title);
+        }
+        if kind != Some("assistant") {
             continue;
         }
         let Some(message) = v.get("message") else {
@@ -450,6 +487,7 @@ pub fn scan_claude_file(
         next,
         records,
         parsed_lines: parsed,
+        title: custom_title.or(first_prompt),
     }))
 }
 
@@ -484,6 +522,14 @@ pub fn collect_claude(
         // Full file was validated, including stable mtime and a complete final
         // JSONL line. Reconcile inside ONE SQLite transaction, paging prior
         // records and generating tombstones only after incoming rows are seen.
+        if let Some(name) = scan.title.as_deref() {
+            store.upsert_session_name(
+                &scan.next.source_key,
+                "claude",
+                name,
+                scan.next.last_scan_ms,
+            )?;
+        }
         let result = store.reconcile_complete_source(
             previous.as_ref(),
             &scan.next,

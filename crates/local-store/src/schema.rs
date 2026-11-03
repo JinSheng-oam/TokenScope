@@ -1,6 +1,6 @@
 //! Schema v1 is append-only at the migration layer. No destructive schema reset.
 
-pub const VERSION: i64 = 5;
+pub const VERSION: i64 = 6;
 pub const MIGRATION_001: &str = r#"
 CREATE TABLE schema_migrations (
   version INTEGER PRIMARY KEY,
@@ -149,4 +149,15 @@ CREATE TABLE codex_quota_snapshots (
   PRIMARY KEY(source_id,pool_id,window_duration_minutes)
 );
 CREATE INDEX ix_codex_quota_age ON codex_quota_snapshots(observed_at_ms);
+"#;
+
+// Display-only session labels. They never enter usage records, the outbox or
+// Hub sync payloads; deleting them only affects how the desktop lists sessions.
+pub const MIGRATION_006: &str = r#"
+CREATE TABLE session_names (
+  session_id TEXT PRIMARY KEY,
+  tool_id TEXT NOT NULL,
+  name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 200),
+  updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms >= 0)
+);
 "#;

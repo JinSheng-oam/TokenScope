@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokenscope_core_domain::{aggregate_device_local, CanonicalRecord};
 use tokenscope_local_store::{LocalIdentity, LocalStore};
-use tokenscope_source_codex::{collect_codex, collect_codex_precise};
+use tokenscope_source_codex::{collect_codex, collect_codex_precise, collect_codex_precise_tolerant};
 const SESSION: &str = "019a9b8c-b777-4d55-9222-121212121212";
 
 struct Fx {
@@ -236,13 +236,21 @@ fn unfinished_response_line_is_deferred() {
     assert_eq!(b.inserted, 1);
 }
 #[test]
-fn mixed_uncovered_legacy_prefix_refuses_inaccurate_migration() {
+fn mixed_legacy_prefix_falls_back_to_cumulative_projection() {
     let f = Fx::new();
     let mut db = store();
     f.total(100, 0, 10);
     f.response("r2", "2026-11-02T01:00:00Z", 20, 0, 0, 3);
-    assert!(collect_codex_precise(&f.root, &mut db, "dev1").is_err());
-    assert!(db.pending_outbox(200).unwrap().is_empty());
+    let res = collect_codex_precise(&f.root, &mut db, "dev1").unwrap();
+    assert_eq!(res.inserted, 2);
+    assert_eq!(
+        aggregate_device_local(active(&db).iter())
+            .unwrap()
+            .usage
+            .total()
+            .unwrap(),
+        133
+    );
 }
 #[test]
 fn inconsistent_cache_write_fails_closed() {
@@ -251,6 +259,27 @@ fn inconsistent_cache_write_fails_closed() {
     f.response("r1", "2026-11-02T01:00:00Z", 10, 9, 4, 3);
     assert!(collect_codex_precise(&f.root, &mut db, "dev1").is_err());
     assert!(db.pending_outbox(200).unwrap().is_empty());
+}
+
+#[test]
+fn tolerant_collection_skips_broken_source_and_keeps_others() {
+    let f = Fx::new();
+    let mut db = store();
+    f.response("r1", "2026-11-02T01:00:00Z", 10, 0, 0, 3);
+    let broken = f.root.join("sessions/2026/11/02/rollout-broken.jsonl");
+    fs::write(
+        &broken,
+        format!(
+            "{{\"timestamp\":\"2026-11-01T23:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"019a9b8c-b777-4d55-9222-333333333333\",\"originator\":\"Codex CLI\"}}}}\n{}",
+            response("m1", "2026-11-02T02:00:00Z", 10, 9, 4, 3)
+        ),
+    )
+    .unwrap();
+
+    let res = collect_codex_precise_tolerant(&f.root, &mut db, "dev1").unwrap();
+    assert_eq!(res.unsupported, 1);
+    assert_eq!(res.inserted, 1);
+    assert_eq!(active(&db).len(), 1);
 }
 #[test]
 fn duplicate_response_identity_fails_closed() {
@@ -309,7 +338,7 @@ fn unprovable_legacy_to_modern_append_retains_old_projection() {
     collect_codex_precise(&f.root, &mut db, "dev1").unwrap();
     let old = active(&db).into_iter().next().unwrap();
     f.response("r2", "2026-11-02T01:10:00Z", 50, 0, 0, 5);
-    assert!(collect_codex_precise(&f.root, &mut db, "dev1").is_err());
+    collect_codex_precise(&f.root, &mut db, "dev1").unwrap();
     assert!(
         !db.get_record(&old.record_id)
             .unwrap()
@@ -317,7 +346,7 @@ fn unprovable_legacy_to_modern_append_retains_old_projection() {
             .record
             .is_deleted
     );
-    assert_eq!(db.pending_outbox(200).unwrap().len(), 1);
+    assert_eq!(db.pending_outbox(200).unwrap().len(), 2);
 }
 
 #[test]

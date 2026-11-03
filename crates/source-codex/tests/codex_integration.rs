@@ -230,15 +230,17 @@ fn missing_root_is_valid_empty_scan() {
     drop(f);
 }
 #[test]
-fn extra_long_line_is_bounded() {
+fn extra_long_line_is_skipped_without_losing_later_records() {
     let f = Fixture::new();
     let mut s = db();
     f.append(&format!(
         "{{\"type\":\"response_item\",\"payload\":\"{}\"}}\n",
         "x".repeat(4 * 1024 * 1024)
     ));
-    assert!(collect_codex(&f.home, &mut s, "dev-01").is_err());
-    assert!(s.pending_outbox(200).unwrap().is_empty());
+    f.add(100, 20, 20);
+    let report = collect_codex(&f.home, &mut s, "dev-01").unwrap();
+    assert_eq!(report.inserted, 1);
+    assert_eq!(s.pending_outbox(200).unwrap().len(), 1);
 }
 
 #[test]

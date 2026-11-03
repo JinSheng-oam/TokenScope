@@ -19,9 +19,9 @@ use std::{
 };
 use tokenscope_local_ipc::DashboardResponse;
 use tokenscope_local_store::{LocalIdentity, LocalStore};
-use tokenscope_source_antigravity::collect_antigravity;
+use tokenscope_source_antigravity::collect_antigravity_tolerant;
 use tokenscope_source_claude::collect_claude;
-use tokenscope_source_codex::collect_codex_precise;
+use tokenscope_source_codex::collect_codex_precise_tolerant;
 use tokenscope_sync_client::{
     worker::{pull_usage_changes_once, sync_outbox_once},
     CredentialKey, HubClient, HubUrl, KeyringCredentialStore, SecretStore,
@@ -73,15 +73,16 @@ fn collect_once(
     options: &CollectionOptions<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if options.codex {
-        let report = collect_codex_precise(options.codex_root, store, options.device_id)?;
+        let report = collect_codex_precise_tolerant(options.codex_root, store, options.device_id)?;
         println!(
-            "codex scanned={} inserted={} revised={} unchanged={} parsed_lines={} partial={}",
+            "codex scanned={} inserted={} revised={} unchanged={} parsed_lines={} partial={} skipped={}",
             report.files,
             report.inserted,
             report.revised,
             report.unchanged,
             report.lines,
-            report.pending
+            report.pending,
+            report.unsupported
         );
     }
     if options.claude {
@@ -98,16 +99,20 @@ fn collect_once(
         );
     }
     if options.antigravity {
-        let r = collect_antigravity(
+        // An unreadable Antigravity corpus must not abort Codex/Claude collection.
+        match collect_antigravity_tolerant(
             options.antigravity_root,
             store,
             options.device_id,
             options.allow_antigravity_estimates,
-        )?;
-        println!("antigravity files={} conversations={} model_turns={} unknown_model_turns={} ambiguous={} measured_records={} estimated_records={} inserted={} revised={} tombstoned={} unchanged={} precision={}",
-            r.source_files, r.conversations, r.model_turns, r.unknown_model_turns,
-            r.ambiguous_conversations, r.measured_records, r.estimated_records, r.inserted, r.revised,
-            r.tombstoned, r.unchanged, if options.allow_antigravity_estimates { "ESTIMATED" } else { "ACTIVITY_ONLY" });
+        ) {
+            Ok(r) => println!("antigravity files={} conversations={} model_turns={} unknown_model_turns={} ambiguous={} measured_records={} estimated_records={} inserted={} revised={} tombstoned={} unchanged={} skipped={} skipped_rows={} precision={}",
+                r.source_files, r.conversations, r.model_turns, r.unknown_model_turns,
+                r.ambiguous_conversations, r.measured_records, r.estimated_records, r.inserted, r.revised,
+                r.tombstoned, r.unchanged, r.skipped_sources, r.skipped_rows,
+                if options.allow_antigravity_estimates { "ESTIMATED" } else { "ACTIVITY_ONLY" }),
+            Err(err) => eprintln!("TokenScope: antigravity scan skipped: {err}"),
+        }
     }
     Ok(())
 }
@@ -262,7 +267,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         let db = PathBuf::from(arg(&args, "--db").ok_or("missing --db")?);
-        let snapshot = dashboard::read_snapshot(&db, &dashboard_range, session_offset)?;
+        let start_date = arg(&args, "--start-date");
+        let end_date = arg(&args, "--end-date");
+        let snapshot = dashboard::read_snapshot(
+            &db,
+            &dashboard_range,
+            session_offset,
+            start_date.as_deref(),
+            end_date.as_deref(),
+        )?;
         let response = DashboardResponse::new(snapshot);
         println!("{}", serde_json::to_string(&response)?);
         return Ok(());
@@ -277,7 +290,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Lock before opening SQLite or touching local identity. OS releases this
     // lock if the process crashes or is killed.
     let _exclusive = AgentLock::acquire(&db)?;
-    let mut store = LocalStore::open(&db)?;
+    // Short-lived read commands must not open the write connection: doing so
+    // checkpoints the WAL on every dashboard refresh and dominates latency.
+    let mut store = if dashboard_json || show_antigravity {
+        LocalStore::open_readonly(&db)?
+    } else {
+        LocalStore::open(&db)?
+    };
     let prior = store.identity()?;
     // The stable device ID is generated once and persisted in SQLite on first
     // run. Existing databases always reuse their immutable stored identity.

@@ -40,9 +40,11 @@ pub fn read_snapshot(
     path: &Path,
     range: &str,
     session_offset: u64,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
 ) -> Result<DashboardSnapshot, Box<dyn std::error::Error>> {
-    if !["today", "7d", "30d", "all"].contains(&range) {
-        return Err("range must be today, 7d, 30d or all".into());
+    if !["today", "7d", "30d", "all", "custom"].contains(&range) {
+        return Err("range must be today, 7d, 30d, all or custom".into());
     }
     let store = LocalStore::open_readonly(path)?;
     let identity = store.identity()?;
@@ -57,45 +59,61 @@ pub fn read_snapshot(
     let now_utc = DateTime::<Utc>::from_timestamp_millis(now).ok_or("invalid system clock")?;
     let today = now_utc.with_timezone(&zone).date_naive();
 
-    let days_back = match range {
-        "today" => 0,
-        "7d" => 6,
-        "30d" | "all" => 29,
-        _ => unreachable!(),
-    };
-    let range_start_date = today - Duration::days(days_back);
-    let from_ms = if range == "all" {
-        None
+    let (from_ms, to_ms, chart_start, chart_end) = if range == "custom" {
+        let start = NaiveDate::parse_from_str(
+            start_date.ok_or("custom range requires --start-date")?,
+            "%Y-%m-%d",
+        )?;
+        let end = NaiveDate::parse_from_str(
+            end_date.ok_or("custom range requires --end-date")?,
+            "%Y-%m-%d",
+        )?;
+        if end < start || (end - start).num_days() > 92 {
+            return Err("custom range must be 1..93 days".into());
+        }
+        let from = local_midnight(start, zone)?;
+        let to = local_midnight(end + Duration::days(1), zone)?.min(now.saturating_add(1));
+        if to <= from {
+            return Err("custom range is empty".into());
+        }
+        (Some(from), Some(to), start, end.min(today))
     } else {
-        Some(local_midnight(range_start_date, zone)?)
-    };
-    let to_ms = if range == "all" {
-        None
-    } else {
-        Some(now.saturating_add(1))
+        let days_back = match range {
+            "today" => 0,
+            "7d" => 6,
+            "30d" | "all" => 29,
+            _ => unreachable!(),
+        };
+        let start = today - Duration::days(days_back);
+        let from = if range == "all" {
+            None
+        } else {
+            Some(local_midnight(start, zone)?)
+        };
+        let to = if range == "all" {
+            None
+        } else {
+            Some(now.saturating_add(1))
+        };
+        (from, to, start, today)
     };
 
     // The trend follows the selected range, except `all` which remains bounded
     // to 30 days. Each boundary is resolved independently so DST transitions
     // do not shift a day.
-    let chart_days_back = match range {
-        "today" => 0,
-        "7d" => 6,
-        _ => 29,
-    };
-    let chart_start = today - Duration::days(chart_days_back);
-    let mut daily_ranges = Vec::with_capacity(30);
-    for offset in 0..30 {
-        let date = chart_start + Duration::days(offset);
-        if date > today {
-            break;
-        }
+    let mut daily_ranges = Vec::with_capacity(31);
+    let mut date = chart_start;
+    while date <= chart_end {
         let start = local_midnight(date, zone)?;
         let next = local_midnight(date + Duration::days(1), zone)?;
         let end = next.min(now.saturating_add(1));
         if end > start {
             daily_ranges.push((date.format("%Y-%m-%d").to_string(), start, end));
         }
+        if daily_ranges.len() > 93 {
+            return Err("chart range too long".into());
+        }
+        date += Duration::days(1);
     }
 
     let zone_name = if zone_valid {
@@ -121,7 +139,14 @@ mod tests {
 
     #[test]
     fn range_is_strictly_allowlisted() {
-        assert!(read_snapshot(Path::new("/path/does/not/exist"), "../../etc/passwd", 0).is_err());
+        assert!(read_snapshot(
+            Path::new("/path/does/not/exist"),
+            "../../etc/passwd",
+            0,
+            None,
+            None
+        )
+        .is_err());
     }
 
     #[test]

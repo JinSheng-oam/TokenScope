@@ -43,7 +43,7 @@ fn quota(at: i64, remaining: Option<u16>) -> AntigravityQuota {
 }
 #[test]
 fn schema_migration_current_version() {
-    assert_eq!(db().schema_version().unwrap(), 5);
+    assert_eq!(db().schema_version().unwrap(), 6);
 }
 #[test]
 fn activity_and_usage_are_separate() {
@@ -213,7 +213,7 @@ fn existing_v1_identity_survives_upgrade() {
     }
     {
         let s = LocalStore::open(&path).unwrap();
-        assert_eq!(s.schema_version().unwrap(), 5);
+        assert_eq!(s.schema_version().unwrap(), 6);
         assert_eq!(s.identity().unwrap().unwrap().device_id, "v1-owner");
         assert_eq!(s.antigravity_activity_summary().unwrap().conversations, 0);
     }

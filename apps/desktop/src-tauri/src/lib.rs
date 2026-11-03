@@ -15,7 +15,7 @@ use std::{
         Mutex,
     },
     thread,
-    time::{Duration, Instant, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -24,7 +24,10 @@ use tauri::{
     AppHandle, Emitter, Manager,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
-use tokenscope_local_ipc::DashboardResponse;
+use tokenscope_local_ipc::{
+    DashboardResponse, SessionAnalysisResponse, SessionDeleteRequest, SessionDeleteResponse,
+    AGENT_CONTROL_DIRECTORY,
+};
 use tokenscope_sync_client::{
     pairing::{DeviceListResponse, PairRequest},
     CredentialKey, HubClient, HubUrl, KeyringCredentialStore, SecretStore,
@@ -643,6 +646,204 @@ fn query_agent_fresh(
     Ok(response)
 }
 
+fn query_agent_session_analysis(
+    app: &AppHandle,
+    range: &str,
+    session_offset: u64,
+    search: Option<&str>,
+    tool_id: Option<&str>,
+    model_id: Option<&str>,
+    project_id: Option<&str>,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+) -> Result<SessionAnalysisResponse, String> {
+    if !["today", "7d", "30d", "all", "custom"].contains(&range) {
+        return Err("不支持的统计范围".into());
+    }
+    if range == "custom" && (start_date.is_none() || end_date.is_none()) {
+        return Err("自定义范围需要开始和结束日期".into());
+    }
+    let db = database_path(app)?;
+    if !db.is_file() {
+        return Err("本地数据库尚未初始化，请确认 Agent 已成功启动".into());
+    }
+    let agent = resolve_agent(app).ok_or_else(|| "未找到 tokenscope-agent 可执行文件".to_string())?;
+    let mut command = Command::new(agent);
+    command
+        .arg("--session-analysis-json")
+        .arg("--range")
+        .arg(range)
+        .arg("--session-offset")
+        .arg(session_offset.to_string())
+        .arg("--db")
+        .arg(&db);
+    for (name, value) in [
+        ("--start-date", start_date),
+        ("--end-date", end_date),
+        ("--session-search", search),
+        ("--session-tool", tool_id),
+        ("--session-model", model_id),
+        ("--session-project", project_id),
+    ] {
+        if let Some(value) = value.filter(|value| !value.is_empty()) {
+            command.arg(name).arg(value);
+        }
+    }
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("启动会话查询失败：{e}"))?;
+    let stdout_pipe = child.stdout.take().ok_or("Agent stdout pipe unavailable")?;
+    let stderr_pipe = child.stderr.take().ok_or("Agent stderr pipe unavailable")?;
+    let stdout_reader = thread::spawn(move || read_pipe_bounded(stdout_pipe, 4_194_304));
+    let stderr_reader = thread::spawn(move || read_pipe_bounded(stderr_pipe, 65_536));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| format!("等待会话查询失败：{e}"))?
+        {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            return Err("会话查询超时（20 秒）".into());
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| "Agent stdout reader panicked")?
+        .map_err(|e| format!("读取 Agent stdout 失败：{e}"))?;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "Agent stderr reader panicked")?
+        .map_err(|e| format!("读取 Agent stderr 失败：{e}"))?;
+    if !status.success() {
+        return Err(format!(
+            "Agent 会话查询失败：{}",
+            String::from_utf8_lossy(&stderr).trim()
+        ));
+    }
+    let response: SessionAnalysisResponse = serde_json::from_slice(&stdout)
+        .map_err(|e| format!("Agent 返回的会话数据格式无效：{e}"))?;
+    response.validate().map_err(|e| e.to_string())?;
+    Ok(response)
+}
+
+fn request_agent_session_delete(
+    app: &AppHandle,
+    tool_id: &str,
+    session_id: &str,
+) -> Result<SessionDeleteResponse, String> {
+    if !["codex", "claude", "antigravity"].contains(&tool_id) {
+        return Err("不支持删除此来源的会话".into());
+    }
+    if session_id.is_empty() || session_id.len() > 1024 || session_id.chars().any(char::is_control) {
+        return Err("会话标识无效".into());
+    }
+    let db = database_path(app)?;
+    if !agent_is_running(&db)? {
+        return Err("本地采集器未运行，请刷新后重试".into());
+    }
+    let directory = db
+        .parent()
+        .ok_or("无效数据库路径")?
+        .join(AGENT_CONTROL_DIRECTORY);
+    fs::create_dir_all(&directory).map_err(|e| format!("创建 Agent 控制目录失败：{e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("设置 Agent 控制目录权限失败：{e}"))?;
+    }
+
+    static REQUEST_SEQUENCE: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(1);
+    let sequence = REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let request_id = format!("{:x}-{:x}-{:x}", std::process::id(), timestamp, sequence);
+    let request = SessionDeleteRequest {
+        request_id: request_id.clone(),
+        tool_id: tool_id.to_owned(),
+        session_id: session_id.to_owned(),
+    };
+    let body = serde_json::to_vec(&request).map_err(|e| format!("编码会话删除请求失败：{e}"))?;
+    let temporary = directory.join(format!("request-{request_id}.tmp"));
+    let request_path = directory.join(format!("request-{request_id}.json"));
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let write_request = (|| -> io::Result<()> {
+        let mut file = options.open(&temporary)?;
+        file.write_all(&body)?;
+        file.sync_all()?;
+        fs::rename(&temporary, &request_path)
+    })();
+    if let Err(error) = write_request {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("提交会话删除请求失败：{error}"));
+    }
+
+    let response_path = directory.join(format!("response-{request_id}.json"));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match fs::read(&response_path) {
+            Ok(bytes) => {
+                let _ = fs::remove_file(&response_path);
+                if bytes.len() > 8192 {
+                    return Err("Agent 会话删除响应超出大小限制".into());
+                }
+                let response: SessionDeleteResponse = serde_json::from_slice(&bytes)
+                    .map_err(|e| format!("读取 Agent 会话删除响应失败：{e}"))?;
+                if response.request_id != request_id {
+                    return Err("Agent 会话删除响应标识不匹配".into());
+                }
+                if let Some(error) = response.error.as_deref() {
+                    return Err(error.to_owned());
+                }
+                return Ok(response);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("读取 Agent 会话删除响应失败：{error}")),
+        }
+        if Instant::now() >= deadline {
+            let _ = fs::remove_file(&request_path);
+            return Err("Agent 30 秒内未处理会话删除请求，请稍后重试".into());
+        }
+        thread::sleep(Duration::from_millis(75));
+    }
+}
+
+#[tauri::command]
+async fn delete_session(
+    app: AppHandle,
+    tool_id: String,
+    session_id: String,
+) -> Result<SessionDeleteResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let response = request_agent_session_delete(&app, &tool_id, &session_id)?;
+        if let Ok(mut cache) = app.state::<DashboardWatch>().cache.lock() {
+            cache.clear();
+        }
+        Ok(response)
+    })
+    .await
+    .map_err(|e| format!("会话删除任务失败：{e}"))?
+}
+
 fn dashboard_signature(db: &Path) -> Option<(u64, u64)> {
     let wal = PathBuf::from(format!("{}-wal", db.display()));
     let meta = fs::metadata(&wal).or_else(|_| fs::metadata(db)).ok()?;
@@ -806,6 +1007,35 @@ async fn get_dashboard_snapshot(
     })
     .await
     .map_err(|e| format!("Dashboard 查询任务失败：{e}"))?
+}
+
+#[tauri::command]
+async fn get_session_analysis(
+    app: AppHandle,
+    range: String,
+    session_offset: u64,
+    search: Option<String>,
+    tool_id: Option<String>,
+    model_id: Option<String>,
+    project_id: Option<String>,
+    start_date: Option<String>,
+    end_date: Option<String>,
+) -> Result<SessionAnalysisResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        query_agent_session_analysis(
+            &app,
+            &range,
+            session_offset,
+            search.as_deref(),
+            tool_id.as_deref(),
+            model_id.as_deref(),
+            project_id.as_deref(),
+            start_date.as_deref(),
+            end_date.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("会话查询任务失败：{e}"))?
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1106,6 +1336,8 @@ pub fn run() {
             stop_agent,
             get_agent_status,
             get_dashboard_snapshot,
+            get_session_analysis,
+            delete_session,
             get_autostart_enabled,
             set_autostart_enabled,
             pair_hub_device,

@@ -2,23 +2,27 @@
 //! Legacy sessions use monotonic cumulative deltas. A schema switch triggers
 //! a full, source-scoped reconciliation with explicit tombstones.
 use super::{
-    bounded_line, decompress_rollout, discover_codex_files, event_ms, hash_path, header_from_bytes,
-    is_zstd_rollout, mtime_ns, now_ms, read_session_header, sha_tail, sha_tail_bytes, CodexError,
-    Counters, Result, MAX_FILES,
+    bounded_line, decompress_rollout, discover_codex_files, event_ms, hash_path,
+    is_zstd_rollout, mtime_ns, now_ms, read_session_header_metadata,
+    session_header_from_bytes, sha_tail, sha_tail_bytes, CodexError, Counters, Result, MAX_FILES,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
 use tokenscope_core_domain::{
-    session_key, stable_record_id, CanonicalRecord, Precision, TokenBreakdown, UsageScope,
+    project_key, session_key, stable_record_id, CanonicalRecord, Precision, TokenBreakdown,
+    UsageScope,
 };
 use tokenscope_local_store::{LocalStore, SourceCheckpoint};
 
-const VERSION: u32 = 3;
+const VERSION: u32 = 6;
 const MAX_BATCH: usize = 50_000; // explicit upper bound pending true streaming decoder
+const MAX_SESSION_INDEX_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_SESSION_INDEX_LINE: usize = 1024 * 1024;
+const MAX_SESSION_INDEX_ROWS: usize = 100_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct V2Cursor {
@@ -109,6 +113,37 @@ fn clean_title(raw: &str) -> Option<String> {
     Some(text)
 }
 
+fn codex_project_metadata(cwd: &str) -> Option<(String, String)> {
+    let path = Path::new(cwd);
+    if cwd.len() > 4096 || !path.is_absolute() || cwd.chars().any(char::is_control) {
+        return None;
+    }
+    let mut root = path;
+    for ancestor in path.ancestors().take(64) {
+        if ancestor.join(".git").exists() {
+            root = ancestor;
+            break;
+        }
+    }
+    let identity = root.to_string_lossy().trim().replace('\\', "/");
+    let identity = if cfg!(windows) {
+        identity.to_lowercase()
+    } else {
+        identity
+    };
+    let project_id = project_key("codex", identity.as_bytes()).ok()?;
+    let name = root.file_name().and_then(|value| value.to_str())?.trim();
+    if name.is_empty()
+        || name.chars().count() > 120
+        || name.chars().any(char::is_control)
+        || name.contains('/')
+        || name.contains('\\')
+    {
+        return None;
+    }
+    Some((project_id, name.to_owned()))
+}
+
 fn usage(v: &Value) -> Result<TokenBreakdown> {
     let number = |name: &str, required: bool| -> Result<u64> {
         match v.get(name) {
@@ -197,6 +232,7 @@ fn record(
     device: &str,
     native_key: &[u8],
     model: Option<String>,
+    project_id: Option<String>,
     at: i64,
     tokens: TokenBreakdown,
 ) -> Result<CanonicalRecord> {
@@ -212,7 +248,7 @@ fn record(
         },
         account_id: None,
         model_id: model,
-        project_id: None,
+        project_id,
         session_id: Some(session_key("codex", session.as_bytes())?),
         event_at_ms: Some(at),
         usage: tokens,
@@ -317,10 +353,16 @@ fn scan_precise_mode(
     force_legacy: bool,
     session_override: Option<&str>,
 ) -> Result<PreciseScan> {
-    let header_session = match body {
-        Some(bytes) => header_from_bytes(bytes)?,
-        None => read_session_header(path)?,
+    let header = match body {
+        Some(bytes) => session_header_from_bytes(bytes)?,
+        None => read_session_header_metadata(path)?,
     };
+    let header_session = header.id;
+    let project_id = header
+        .cwd
+        .as_deref()
+        .and_then(codex_project_metadata)
+        .map(|(project_id, _)| project_id);
     let session = session_override.unwrap_or(&header_session).to_owned();
     let key = session_key("codex", session.as_bytes())?;
     if let Some(cp) = prior {
@@ -354,6 +396,7 @@ fn scan_precise_mode(
     } else {
         0
     };
+    let title_from_start = offset == 0;
     let mut old_mode = if reuse {
         old.as_ref().map(|x| x.mode.clone()).unwrap_or_default()
     } else {
@@ -425,7 +468,8 @@ fn scan_precise_mode(
                 model = Some(s.to_owned());
             }
         }
-        if title.is_none()
+        if title_from_start
+            && title.is_none()
             && typ == Some("response_item")
             && payload.and_then(|p| p.get("role")).and_then(Value::as_str) == Some("user")
         {
@@ -476,6 +520,7 @@ fn scan_precise_mode(
                 device_id,
                 native.as_bytes(),
                 model.clone(),
+                project_id.clone(),
                 ts,
                 token,
             )?;
@@ -518,6 +563,7 @@ fn scan_precise_mode(
                                         device_id,
                                         format!("legacy:{legacy_seq}").as_bytes(),
                                         model.clone(),
+                                        project_id.clone(),
                                         ts,
                                         delta,
                                     )?;
@@ -666,6 +712,7 @@ pub struct PreciseReport {
     pub pending: usize,
     pub reconciled: usize,
     pub unsupported: usize,
+    pub missing_source_tombstones: usize,
 }
 
 pub fn collect_codex_precise(
@@ -696,6 +743,100 @@ fn scan_file_for(
     }
 }
 
+fn import_codex_session_names(
+    home: &Path,
+    store: &mut LocalStore,
+    source_keys: &HashMap<String, Vec<String>>,
+) -> Result<usize> {
+    let path = home.join("session_index.jsonl");
+    let before = match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => metadata,
+        Ok(_) => return Ok(0),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
+    if before.len() > MAX_SESSION_INDEX_BYTES {
+        return Err(CodexError::Limit("Codex session index size"));
+    }
+
+    let mut reader = BufReader::new(File::open(&path)?);
+    let mut line = Vec::new();
+    let mut names = HashMap::<String, Option<String>>::new();
+    let mut rows = 0usize;
+    loop {
+        line.clear();
+        let bytes = reader.read_until(b'\n', &mut line)?;
+        if bytes == 0 {
+            break;
+        }
+        rows = rows.saturating_add(1);
+        if rows > MAX_SESSION_INDEX_ROWS || line.len() > MAX_SESSION_INDEX_LINE {
+            return Err(CodexError::Limit("Codex session index rows"));
+        }
+        let has_newline = line.last() == Some(&b'\n');
+        let value: Value = match serde_json::from_slice(&line) {
+            Ok(value) => value,
+            Err(_) if !has_newline => break,
+            Err(error) => return Err(error.into()),
+        };
+        let Some(id) = value.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if id.len() < 8
+            || id.len() > 128
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        {
+            continue;
+        }
+        let Some(raw_name) = value.get("thread_name").and_then(Value::as_str) else {
+            continue;
+        };
+        let normalized = raw_name.split_whitespace().collect::<Vec<_>>().join(" ");
+        let name = if normalized.is_empty() {
+            None
+        } else if normalized.chars().any(char::is_control) {
+            continue;
+        } else {
+            Some(normalized.chars().take(200).collect::<String>())
+        };
+        // The index is append-only; the last row for an id carries its latest title.
+        names.insert(id.to_owned(), name);
+    }
+
+    let after = fs::symlink_metadata(&path)?;
+    if !after.is_file()
+        || after.file_type().is_symlink()
+        || before.len() != after.len()
+        || before.modified().ok() != after.modified().ok()
+    {
+        return Ok(0);
+    }
+
+    let updated_at_ms = now_ms()?;
+    let mut updated = 0usize;
+    for (id, name) in names {
+        let fallback_key;
+        let keys = match source_keys.get(&id) {
+            Some(keys) => keys.as_slice(),
+            None => {
+                fallback_key = session_key("codex", id.as_bytes())?;
+                std::slice::from_ref(&fallback_key)
+            }
+        };
+        for key in keys {
+            if let Some(name) = name.as_deref() {
+                store.upsert_session_name(key, "codex", name, updated_at_ms)?;
+                updated += 1;
+            } else {
+                store.clear_session_name(key, "codex")?;
+            }
+        }
+    }
+    Ok(updated)
+}
+
 /// Desktop collection policy: a single unreadable or unprovable rollout must
 /// not zero out every other source. Such files are counted in `unsupported`
 /// and skipped; their previously committed projection stays untouched.
@@ -715,12 +856,13 @@ fn collect_codex_precise_with_policy(
 ) -> Result<PreciseReport> {
     let mut report = PreciseReport::default();
     let mut sessions = HashSet::new();
+    let mut session_name_keys = HashMap::<String, Vec<String>>::new();
     let files = discover_codex_files(home)?;
     if files.len() > MAX_FILES {
         return Err(CodexError::Limit("too many files"));
     }
     for file in files {
-        let session = match read_session_header(&file) {
+        let header = match read_session_header_metadata(&file) {
             Ok(v) => v,
             Err(CodexError::PendingHeader) => {
                 report.pending += 1;
@@ -736,6 +878,14 @@ fn collect_codex_precise_with_policy(
             }
             Err(e) => return Err(e),
         };
+        let session = header.id;
+        if let Some((project_id, project_name)) = header
+            .cwd
+            .as_deref()
+            .and_then(codex_project_metadata)
+        {
+            store.upsert_project_name(&project_id, &project_name, now_ms()?)?;
+        }
         let mut continuation: Option<String> = None;
         let base_key = session_key("codex", session.as_bytes())?;
         let key = if sessions.insert(base_key.clone()) {
@@ -760,6 +910,10 @@ fn collect_codex_precise_with_policy(
         } else {
             return Err(CodexError::Invalid("duplicate session sources"));
         };
+        session_name_keys
+            .entry(session.clone())
+            .or_default()
+            .push(key.clone());
         let prior = store.checkpoint("codex", &key)?;
         // Compressed rollouts are immutable archives. Their fingerprint is
         // enough to prove nothing changed; decompressing 100 MiB every cycle
@@ -905,6 +1059,19 @@ fn collect_codex_precise_with_policy(
         report.lines += scan.parsed_lines;
         if scan.pending_line {
             report.pending += 1;
+        }
+    }
+    let inventory_roots_ready = home.join("sessions").is_dir()
+        || home.join("archived_sessions").is_dir();
+    if inventory_roots_ready && report.pending == 0 && report.unsupported == 0 {
+        report.missing_source_tombstones =
+            store.reconcile_missing_sources("codex", &sessions, now_ms()?)?;
+    }
+    if let Err(error) = import_codex_session_names(home, store, &session_name_keys) {
+        if tolerant {
+            eprintln!("TokenScope: codex session titles skipped: {error}");
+        } else {
+            return Err(error);
         }
     }
     Ok(report)

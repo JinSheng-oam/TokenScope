@@ -36,6 +36,55 @@ fn local_midnight(date: NaiveDate, zone: Tz) -> Result<i64, Box<dyn std::error::
     }
 }
 
+fn resolve_range(
+    range: &str,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+    zone: Tz,
+    now: i64,
+) -> Result<(Option<i64>, Option<i64>, NaiveDate, NaiveDate), Box<dyn std::error::Error>> {
+    let now_utc = DateTime::<Utc>::from_timestamp_millis(now).ok_or("invalid system clock")?;
+    let today = now_utc.with_timezone(&zone).date_naive();
+    if range == "custom" {
+        let start = NaiveDate::parse_from_str(
+            start_date.ok_or("custom range requires --start-date")?,
+            "%Y-%m-%d",
+        )?;
+        let end = NaiveDate::parse_from_str(
+            end_date.ok_or("custom range requires --end-date")?,
+            "%Y-%m-%d",
+        )?;
+        if end < start || (end - start).num_days() > 92 {
+            return Err("custom range must be 1..93 days".into());
+        }
+        let from = local_midnight(start, zone)?;
+        let to = local_midnight(end + Duration::days(1), zone)?.min(now.saturating_add(1));
+        if to <= from {
+            return Err("custom range is empty".into());
+        }
+        Ok((Some(from), Some(to), start, end.min(today)))
+    } else {
+        let days_back = match range {
+            "today" => 0,
+            "7d" => 6,
+            "30d" | "all" => 29,
+            _ => return Err("range must be today, 7d, 30d, all or custom".into()),
+        };
+        let start = today - Duration::days(days_back);
+        let from = if range == "all" {
+            None
+        } else {
+            Some(local_midnight(start, zone)?)
+        };
+        let to = if range == "all" {
+            None
+        } else {
+            Some(now.saturating_add(1))
+        };
+        Ok((from, to, start, today))
+    }
+}
+
 pub fn read_snapshot(
     path: &Path,
     range: &str,
@@ -56,47 +105,8 @@ pub fn read_snapshot(
     let zone_valid = parsed_zone.is_ok();
     let zone = parsed_zone.unwrap_or(chrono_tz::UTC);
     let now = now_ms()?;
-    let now_utc = DateTime::<Utc>::from_timestamp_millis(now).ok_or("invalid system clock")?;
-    let today = now_utc.with_timezone(&zone).date_naive();
-
-    let (from_ms, to_ms, chart_start, chart_end) = if range == "custom" {
-        let start = NaiveDate::parse_from_str(
-            start_date.ok_or("custom range requires --start-date")?,
-            "%Y-%m-%d",
-        )?;
-        let end = NaiveDate::parse_from_str(
-            end_date.ok_or("custom range requires --end-date")?,
-            "%Y-%m-%d",
-        )?;
-        if end < start || (end - start).num_days() > 92 {
-            return Err("custom range must be 1..93 days".into());
-        }
-        let from = local_midnight(start, zone)?;
-        let to = local_midnight(end + Duration::days(1), zone)?.min(now.saturating_add(1));
-        if to <= from {
-            return Err("custom range is empty".into());
-        }
-        (Some(from), Some(to), start, end.min(today))
-    } else {
-        let days_back = match range {
-            "today" => 0,
-            "7d" => 6,
-            "30d" | "all" => 29,
-            _ => unreachable!(),
-        };
-        let start = today - Duration::days(days_back);
-        let from = if range == "all" {
-            None
-        } else {
-            Some(local_midnight(start, zone)?)
-        };
-        let to = if range == "all" {
-            None
-        } else {
-            Some(now.saturating_add(1))
-        };
-        (from, to, start, today)
-    };
+    let (from_ms, to_ms, chart_start, chart_end) =
+        resolve_range(range, start_date, end_date, zone, now)?;
 
     // The trend follows the selected range, except `all` which remains bounded
     // to 30 days. Each boundary is resolved independently so DST transitions
@@ -131,6 +141,39 @@ pub fn read_snapshot(
         time_zone_valid: zone_valid,
         session_offset,
     })?)
+}
+
+pub fn read_session_analysis(
+    path: &Path,
+    range: &str,
+    session_offset: u64,
+    search: Option<&str>,
+    tool_id: Option<&str>,
+    model_id: Option<&str>,
+    project_id: Option<&str>,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+) -> Result<tokenscope_local_store::SessionAnalysisPage, Box<dyn std::error::Error>> {
+    if !["today", "7d", "30d", "all", "custom"].contains(&range) {
+        return Err("range must be today, 7d, 30d, all or custom".into());
+    }
+    let store = LocalStore::open_readonly(path)?;
+    let identity = store.identity()?.ok_or("local identity is not initialized")?;
+    let parsed_zone = Tz::from_str(&identity.time_zone);
+    let zone = parsed_zone.unwrap_or(chrono_tz::UTC);
+    let now = now_ms()?;
+    let (from_ms, to_ms, _, _) = resolve_range(range, start_date, end_date, zone, now)?;
+    Ok(store.session_analysis_page(
+        &identity.device_id,
+        from_ms,
+        to_ms,
+        session_offset,
+        50,
+        search,
+        tool_id,
+        model_id,
+        project_id,
+    )?)
 }
 
 #[cfg(test)]

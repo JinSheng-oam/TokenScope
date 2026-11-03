@@ -1956,6 +1956,7 @@ name = "tokenscope-source-antigravity"
 version = "0.1.0"
 dependencies = [
  "rusqlite",
+ "serde_json",
  "sha2",
  "tokenscope-core-domain",
  "tokenscope-local-store",

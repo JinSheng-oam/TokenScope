@@ -287,20 +287,34 @@ pub fn decompress_rollout(path: &Path) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct SessionHeader {
+    pub id: String,
+    pub cwd: Option<String>,
+}
+
 pub fn header_from_bytes(bytes: &[u8]) -> Result<String> {
-    header_from_reader(&mut BufReader::new(bytes))
+    Ok(session_header_from_reader(&mut BufReader::new(bytes))?.id)
 }
 
 fn read_session_header(path: &Path) -> Result<String> {
+    Ok(read_session_header_metadata(path)?.id)
+}
+
+pub(crate) fn session_header_from_bytes(bytes: &[u8]) -> Result<SessionHeader> {
+    session_header_from_reader(&mut BufReader::new(bytes))
+}
+
+pub(crate) fn read_session_header_metadata(path: &Path) -> Result<SessionHeader> {
     if is_zstd_rollout(path) {
         let mut decoder =
             zstd::stream::read::Decoder::new(BufReader::new(File::open(path)?))?;
-        return header_from_reader(&mut BufReader::new(&mut decoder));
+        return session_header_from_reader(&mut BufReader::new(&mut decoder));
     }
-    header_from_reader(&mut BufReader::new(File::open(path)?))
+    session_header_from_reader(&mut BufReader::new(File::open(path)?))
 }
 
-fn header_from_reader<R: BufRead>(rdr: &mut R) -> Result<String> {
+fn session_header_from_reader<R: BufRead>(rdr: &mut R) -> Result<SessionHeader> {
     let line = bounded_line(rdr)?;
     if line.oversized {
         return Err(CodexError::Invalid("oversized session header"));
@@ -334,7 +348,19 @@ fn header_from_reader<R: BufRead>(rdr: &mut R) -> Result<String> {
     {
         return Err(CodexError::Invalid("bad session id"));
     }
-    Ok(id.to_owned())
+    let cwd = payload
+        .get("cwd")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.trim().is_empty()
+                && value.len() <= 4096
+                && !value.chars().any(char::is_control)
+        })
+        .map(str::to_owned);
+    Ok(SessionHeader {
+        id: id.to_owned(),
+        cwd,
+    })
 }
 fn sha_tail(path: &Path, offset: u64) -> Result<String> {
     let mut f = File::open(path)?;

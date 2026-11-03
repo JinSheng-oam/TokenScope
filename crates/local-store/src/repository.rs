@@ -9,6 +9,24 @@ use tokenscope_core_domain::{
     payload_hash, CanonicalRecord, Precision, RevisionedRecord, TokenBreakdown, UsageScope,
 };
 
+const SESSION_LINKS_CTE: &str = r#"
+WITH session_links AS (
+    SELECT u.tool_id,u.session_id,u.model_id,u.project_id
+    FROM usage_records u
+    WHERE u.owner_device_id=?1 AND u.scope='device_local' AND u.is_deleted=0
+        AND u.session_id IS NOT NULL AND u.tool_id<>'antigravity'
+        AND (?2 IS NULL OR u.event_at_ms >= ?2) AND (?3 IS NULL OR u.event_at_ms < ?3)
+    UNION ALL
+    SELECT 'antigravity',rs.source_key,u.model_id,u.project_id
+    FROM record_sources rs JOIN usage_records u ON u.record_id=rs.record_id
+    WHERE rs.tool_id='antigravity' AND u.owner_device_id=?1
+        AND u.scope='device_local' AND u.is_deleted=0
+        AND (?2 IS NULL OR u.event_at_ms >= ?2) AND (?3 IS NULL OR u.event_at_ms < ?3)
+)
+"#;
+
+const PROJECT_LABEL_TOOL_ID: &str = "project-label";
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalIdentity {
     pub device_id: String,
@@ -341,6 +359,8 @@ pub struct SessionUsage {
     pub activity_observed_at_ms: Option<i64>,
     /// Display-only label captured from the source (never synced).
     pub display_name: Option<String>,
+    /// Opaque project identifiers represented by records in this session.
+    pub project_ids: Vec<String>,
     /// Per-model token split inside this session.
     pub models: Vec<SessionModelUsage>,
 }
@@ -358,6 +378,26 @@ pub struct SessionUsagePage {
     pub total: u64,
     pub offset: u64,
     pub limit: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionFilterOption {
+    pub key: String,
+    pub label: String,
+    pub session_count: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SessionFilterOptions {
+    pub tools: Vec<SessionFilterOption>,
+    pub models: Vec<SessionFilterOption>,
+    pub projects: Vec<SessionFilterOption>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionAnalysisPage {
+    pub page: SessionUsagePage,
+    pub filter_options: SessionFilterOptions,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -467,7 +507,7 @@ impl LocalStore {
             return Err(StoreError::UnsupportedSchema(version));
         }
         let migration_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6)",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7)",
             [],
             |r| r.get(0),
         )?;
@@ -476,7 +516,7 @@ impl LocalStore {
             [],
             |r| r.get(0),
         )?;
-        if migration_count != 6 || highest != schema::VERSION {
+        if migration_count != 7 || highest != schema::VERSION {
             return Err(StoreError::DatabaseInconsistent(
                 "schema_migrations disagrees with user_version",
             ));
@@ -624,8 +664,30 @@ impl LocalStore {
             tx.execute_batch("PRAGMA user_version=6;")?;
             tx.commit()?;
         }
+        if version <= 6 {
+            let prior: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6)",
+                [],
+                |r| r.get(0),
+            )?;
+            let highest: i64 = conn.query_row(
+                "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
+                [],
+                |r| r.get(0),
+            )?;
+            if prior != 6 || highest != 6 {
+                return Err(StoreError::DatabaseInconsistent(
+                    "legacy migration metadata invalid before v7",
+                ));
+            }
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(schema::MIGRATION_007)?;
+            tx.execute("INSERT INTO schema_migrations(version,applied_at_ms) VALUES (7,CAST(strftime('%s','now') AS INTEGER)*1000)", [])?;
+            tx.execute_batch("PRAGMA user_version=7;")?;
+            tx.commit()?;
+        }
         let count: i64 = conn.query_row(
-            "SELECT count(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6)",
+            "SELECT count(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7)",
             [],
             |r| r.get(0),
         )?;
@@ -634,7 +696,7 @@ impl LocalStore {
             [],
             |r| r.get(0),
         )?;
-        if count != 6 || future != schema::VERSION {
+        if count != 7 || future != schema::VERSION {
             return Err(StoreError::DatabaseInconsistent(
                 "schema_migrations disagrees with user_version",
             ));
@@ -841,10 +903,20 @@ impl LocalStore {
             )
             .optional()?;
         let owner = owner.ok_or(StoreError::NotInitialized)?;
+        let suppressed = load_suppressed_sessions(&tx, &next.tool_id)?;
+        let suppress_source = suppressed.contains(&next.source_key);
         let mut report = ApplyReport::default();
         for (hash, rec) in canonical {
             if rec.owner_device_id != owner {
                 return Err(StoreError::IdentityMismatch);
+            }
+            if suppress_source
+                || rec
+                .session_id
+                .as_ref()
+                .is_some_and(|session_id| suppressed.contains(session_id))
+            {
+                continue;
             }
             match upsert_source_record(&tx, &rec, &hash, &next.source_key, &owner, observed_at_ms)?
             {
@@ -861,6 +933,10 @@ impl LocalStore {
                 last_scan_ms=excluded.last_scan_ms,last_complete_scan_ms=excluded.last_complete_scan_ms,last_status=excluded.last_status",
             params![next.tool_id,next.source_key,next.source_fingerprint,db_int(next.read_offset)?,
                     i64::from(next.parser_version),next.last_scan_ms,next.last_complete_scan_ms,next.last_status]
+        )?;
+        tx.execute(
+            "DELETE FROM missing_source_candidates WHERE tool_id=?1 AND source_key=?2",
+            params![next.tool_id, next.source_key],
         )?;
         tx.commit()?;
         Ok(report)
@@ -937,6 +1013,8 @@ impl LocalStore {
             )
             .optional()?
             .ok_or(StoreError::NotInitialized)?;
+        let suppressed = load_suppressed_sessions(&tx, &next.tool_id)?;
+        let suppress_source = suppressed.contains(&next.source_key);
         tx.execute_batch(
             "CREATE TEMP TABLE IF NOT EXISTS tokenscope_seen (record_id TEXT PRIMARY KEY) WITHOUT ROWID; \
              DELETE FROM temp.tokenscope_seen;"
@@ -961,6 +1039,14 @@ impl LocalStore {
             }
             if let Some(n) = rec.usage.reasoning_tokens {
                 db_int(n)?;
+            }
+            if suppress_source
+                || rec
+                .session_id
+                .as_ref()
+                .is_some_and(|session_id| suppressed.contains(session_id))
+            {
+                continue;
             }
             let changed = tx.execute(
                 "INSERT OR IGNORE INTO temp.tokenscope_seen(record_id) VALUES (?1)",
@@ -1040,6 +1126,14 @@ impl LocalStore {
              last_scan_ms=excluded.last_scan_ms,last_complete_scan_ms=excluded.last_complete_scan_ms,last_status=excluded.last_status",
             params![next.tool_id,next.source_key,next.source_fingerprint,db_int(next.read_offset)?,
                 i64::from(next.parser_version),next.last_scan_ms,next.last_complete_scan_ms,next.last_status],
+        )?;
+        tx.execute(
+            "DELETE FROM missing_source_candidates WHERE tool_id=?1 AND source_key=?2",
+            params![next.tool_id, next.source_key],
+        )?;
+        tx.execute(
+            "DELETE FROM empty_source_candidates WHERE tool_id=?1 AND source_key=?2",
+            params![next.tool_id, next.source_key],
         )?;
         if let Some(a) = activity {
             tx.execute("INSERT INTO antigravity_activity_sources(source_key,known_turns,unknown_turns,observed_at_ms) \
@@ -1195,9 +1289,10 @@ impl LocalStore {
                 ("tool_id", Some(value)) => (value.clone(), value),
                 ("model_id", Some(value)) => (value.clone(), value),
                 ("project_id", Some(value)) => {
-                    let short = value.strip_prefix("prj_").unwrap_or(&value);
-                    let short = short.chars().take(8).collect::<String>();
-                    (value, format!("项目 {short}"))
+                    let label = self
+                        .project_display_name(&value)?
+                        .unwrap_or_else(|| "项目名称未提供".into());
+                    (value, label)
                 }
                 ("tool_id", None) => ("unknown-tool".into(), "未知工具".into()),
                 ("model_id", None) => ("unknown-model".into(), "未知模型".into()),
@@ -1278,11 +1373,72 @@ impl LocalStore {
         offset: u64,
         limit: u32,
     ) -> Result<SessionUsagePage> {
+        self.session_usage_page_filtered(
+            owner_device_id,
+            from_ms,
+            to_ms,
+            offset,
+            limit,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    pub fn session_analysis_page(
+        &self,
+        owner_device_id: &str,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+        offset: u64,
+        limit: u32,
+        search: Option<&str>,
+        tool_id: Option<&str>,
+        model_id: Option<&str>,
+        project_id: Option<&str>,
+    ) -> Result<SessionAnalysisPage> {
+        let page = self.session_usage_page_filtered(
+            owner_device_id,
+            from_ms,
+            to_ms,
+            offset,
+            limit,
+            search,
+            tool_id,
+            model_id,
+            project_id,
+        )?;
+        let filter_options = self.session_filter_options(owner_device_id, from_ms, to_ms)?;
+        Ok(SessionAnalysisPage {
+            page,
+            filter_options,
+        })
+    }
+
+    fn session_usage_page_filtered(
+        &self,
+        owner_device_id: &str,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+        offset: u64,
+        limit: u32,
+        search: Option<&str>,
+        tool_id: Option<&str>,
+        model_id: Option<&str>,
+        project_id: Option<&str>,
+    ) -> Result<SessionUsagePage> {
         if limit == 0 || limit > 200 || offset > i64::MAX as u64 {
             return Err(StoreError::InvalidInput("session page bounds"));
         }
-        let cte = r#"
-            WITH modern_codex AS (
+        let search = search.map(str::trim).filter(|value| !value.is_empty());
+        if search.is_some_and(|value| {
+            value.chars().count() > 120 || value.chars().any(char::is_control)
+        }) {
+            return Err(StoreError::InvalidInput("session search"));
+        }
+        let cte = format!(
+            r#"{SESSION_LINKS_CTE}, modern_codex AS (
                 SELECT source_key FROM source_checkpoints
                 WHERE tool_id='codex'
                     AND source_fingerprint LIKE '%"mode":"modern"%'
@@ -1328,6 +1484,14 @@ impl LocalStore {
                 SELECT source_key,COUNT(*) AS model_count
                 FROM antigravity_model_activity GROUP BY source_key
             ),
+            session_projects AS (
+                SELECT tool_id,session_id,group_concat(project_id) AS project_ids
+                FROM (
+                    SELECT DISTINCT tool_id,session_id,project_id
+                    FROM session_links WHERE project_id IS NOT NULL
+                )
+                GROUP BY tool_id,session_id
+            ),
             all_sessions AS (
                 SELECT session_id,tool_id,total_tokens,usage_record_count,exact_records,aggregate_records,
                     estimated_records,unknown_precision_records,untimed_records,model_count,
@@ -1346,19 +1510,48 @@ impl LocalStore {
                 -- with a zero total and an empty model split.
                 WHERE u.source_key IS NOT NULL
             )
-        "#;
+        "#
+        );
         let page_started = Instant::now();
         let page_sql = format!(
             r#"{cte}
             SELECT s.session_id,s.tool_id,s.total_tokens,s.usage_record_count,s.exact_records,s.aggregate_records,
                 s.estimated_records,s.unknown_precision_records,s.untimed_records,s.model_count,
                 s.known_response_count,s.unknown_response_count,s.last_event_at_ms,s.activity_observed_at_ms,n.name,
+                COALESCE(p.project_ids,''),
                 COUNT(*) OVER () AS total_rows
             FROM all_sessions s
-            LEFT JOIN session_names n ON n.session_id=s.session_id
+            LEFT JOIN session_names n ON n.session_id=s.session_id AND n.tool_id=s.tool_id
+            LEFT JOIN session_projects p ON p.tool_id=s.tool_id AND p.session_id=s.session_id
+            WHERE (?4 IS NULL OR
+                instr(lower(COALESCE(n.name,'未命名会话')),lower(?4))>0 OR
+                instr(lower(s.session_id),lower(?4))>0 OR
+                instr(lower(s.tool_id),lower(?4))>0 OR
+                EXISTS (
+                    SELECT 1 FROM session_links l
+                    WHERE l.tool_id=s.tool_id AND l.session_id=s.session_id
+                        AND (instr(lower(COALESCE(l.model_id,'')),lower(?4))>0
+                            OR instr(lower(COALESCE(l.project_id,'')),lower(?4))>0)
+                ))
+                AND (?5 IS NULL OR s.tool_id=?5)
+                AND (?6 IS NULL OR EXISTS (
+                    SELECT 1 FROM session_links l
+                    WHERE l.tool_id=s.tool_id AND l.session_id=s.session_id
+                        AND COALESCE(l.model_id,'unknown-model')=?6
+                ))
+                AND (?7 IS NULL OR
+                    (?7='no-project' AND NOT EXISTS (
+                        SELECT 1 FROM session_links l
+                        WHERE l.tool_id=s.tool_id AND l.session_id=s.session_id
+                            AND l.project_id IS NOT NULL
+                    )) OR EXISTS (
+                        SELECT 1 FROM session_links l
+                        WHERE l.tool_id=s.tool_id AND l.session_id=s.session_id
+                            AND l.project_id=?7
+                    ))
             ORDER BY COALESCE(s.last_event_at_ms,s.activity_observed_at_ms,0) DESC,
                 s.tool_id,s.session_id
-            LIMIT ?4 OFFSET ?5"#
+            LIMIT ?8 OFFSET ?9"#
         );
         let mut stmt = self.conn.prepare(&page_sql)?;
         let rows = stmt.query_map(
@@ -1366,6 +1559,10 @@ impl LocalStore {
                 owner_device_id,
                 from_ms,
                 to_ms,
+                search,
+                tool_id,
+                model_id,
+                project_id,
                 i64::from(limit),
                 i64::try_from(offset).map_err(|_| StoreError::IntegerOutOfRange)?
             ],
@@ -1386,7 +1583,8 @@ impl LocalStore {
                     r.get::<_, Option<i64>>(12)?,
                     r.get::<_, Option<i64>>(13)?,
                     r.get::<_, Option<String>>(14)?,
-                    r.get::<_, i64>(15)?,
+                    r.get::<_, String>(15)?,
+                    r.get::<_, i64>(16)?,
                 ))
             },
         )?;
@@ -1409,6 +1607,7 @@ impl LocalStore {
                     last_event_at_ms,
                     activity_observed_at_ms,
                     display_name,
+                    project_ids,
                     page_total,
                 ) = row?;
                 if total_rows.is_none() {
@@ -1430,6 +1629,11 @@ impl LocalStore {
                     last_event_at_ms,
                     activity_observed_at_ms,
                     display_name,
+                    project_ids: project_ids
+                        .split(',')
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_owned)
+                        .collect(),
                     models: Vec::new(),
                 })
             })
@@ -1438,11 +1642,33 @@ impl LocalStore {
             Some(value) => value,
             None if offset == 0 => 0,
             None => {
-                let count_sql = format!("{cte} SELECT COUNT(*) FROM all_sessions");
-                self.conn
-                    .query_row(&count_sql, params![owner_device_id, from_ms, to_ms], |r| {
-                        r.get(0)
-                    })?
+                let count_sql = format!(
+                    r#"{cte} SELECT COUNT(*) FROM all_sessions s
+                    LEFT JOIN session_names n ON n.session_id=s.session_id AND n.tool_id=s.tool_id
+                    WHERE (?4 IS NULL OR
+                        instr(lower(COALESCE(n.name,'未命名会话')),lower(?4))>0 OR
+                        instr(lower(s.session_id),lower(?4))>0 OR instr(lower(s.tool_id),lower(?4))>0 OR
+                        EXISTS (SELECT 1 FROM session_links l
+                            WHERE l.tool_id=s.tool_id AND l.session_id=s.session_id
+                                AND (instr(lower(COALESCE(l.model_id,'')),lower(?4))>0
+                                    OR instr(lower(COALESCE(l.project_id,'')),lower(?4))>0)))
+                        AND (?5 IS NULL OR s.tool_id=?5)
+                        AND (?6 IS NULL OR EXISTS (SELECT 1 FROM session_links l
+                            WHERE l.tool_id=s.tool_id AND l.session_id=s.session_id
+                                AND COALESCE(l.model_id,'unknown-model')=?6))
+                        AND (?7 IS NULL OR
+                            (?7='no-project' AND NOT EXISTS (SELECT 1 FROM session_links l
+                                WHERE l.tool_id=s.tool_id AND l.session_id=s.session_id
+                                    AND l.project_id IS NOT NULL))
+                            OR EXISTS (SELECT 1 FROM session_links l
+                                WHERE l.tool_id=s.tool_id AND l.session_id=s.session_id
+                                    AND l.project_id=?7))"#
+                );
+                self.conn.query_row(
+                    &count_sql,
+                    params![owner_device_id, from_ms, to_ms, search, tool_id, model_id, project_id],
+                    |r| r.get(0),
+                )?
             }
         };
         if std::env::var_os("TOKENSCOPE_DASHBOARD_PROFILE").is_some() {
@@ -1450,25 +1676,26 @@ impl LocalStore {
         }
         if !sessions.is_empty() {
             let mut models = self.conn.prepare(
-                "SELECT session_id,model_id,
+                "SELECT tool_id,session_id,model_id,
                         SUM(input_uncached_tokens+cache_read_tokens+cache_write_tokens+output_tokens+unclassified_tokens),
                         COUNT(*)
                  FROM usage_records
                  WHERE owner_device_id=?1 AND scope='device_local' AND is_deleted=0
-                   AND session_id IS NOT NULL
+                   AND session_id IS NOT NULL AND tool_id<>'antigravity'
                    AND (?2 IS NULL OR event_at_ms >= ?2) AND (?3 IS NULL OR event_at_ms < ?3)
-                 GROUP BY session_id,model_id
-                 ORDER BY 3 DESC",
+                 GROUP BY tool_id,session_id,model_id
+                 ORDER BY 4 DESC",
             )?;
-            let mut by_session: std::collections::HashMap<String, Vec<SessionModelUsage>> =
+            let mut by_session: std::collections::HashMap<(String, String), Vec<SessionModelUsage>> =
                 std::collections::HashMap::new();
             let mut rows = models.query(params![owner_device_id, from_ms, to_ms])?;
             while let Some(row) = rows.next()? {
-                let session_id: String = row.get(0)?;
-                let model_id: Option<String> = row.get(1)?;
-                let tokens: i64 = row.get(2)?;
-                let count: i64 = row.get(3)?;
-                by_session.entry(session_id).or_default().push(SessionModelUsage {
+                let tool_id: String = row.get(0)?;
+                let session_id: String = row.get(1)?;
+                let model_id: Option<String> = row.get(2)?;
+                let tokens: i64 = row.get(3)?;
+                let count: i64 = row.get(4)?;
+                by_session.entry((tool_id, session_id)).or_default().push(SessionModelUsage {
                     model_id,
                     total_tokens: pos_u64(tokens)?,
                     record_count: pos_u64(count)?,
@@ -1493,14 +1720,14 @@ impl LocalStore {
                 let model_id: Option<String> = row.get(1)?;
                 let tokens: i64 = row.get(2)?;
                 let count: i64 = row.get(3)?;
-                by_session.entry(session_id).or_default().push(SessionModelUsage {
+                by_session.entry(("antigravity".into(), session_id)).or_default().push(SessionModelUsage {
                     model_id,
                     total_tokens: pos_u64(tokens)?,
                     record_count: pos_u64(count)?,
                 });
             }
             for session in &mut sessions {
-                if let Some(list) = by_session.remove(&session.session_id) {
+                if let Some(list) = by_session.remove(&(session.tool_id.clone(), session.session_id.clone())) {
                     session.models = list;
                 }
             }
@@ -1511,6 +1738,356 @@ impl LocalStore {
             offset,
             limit,
         })
+    }
+
+    fn session_filter_options(
+        &self,
+        owner_device_id: &str,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+    ) -> Result<SessionFilterOptions> {
+        let sql = format!(
+            r#"{SESSION_LINKS_CTE}
+            SELECT dimension,facet_key,COUNT(*) FROM (
+                SELECT 'tool' AS dimension,tool_id AS facet_key,tool_id,session_id
+                FROM (SELECT DISTINCT tool_id,session_id FROM session_links)
+                UNION ALL
+                SELECT 'model',model_key,tool_id,session_id
+                FROM (
+                    SELECT DISTINCT tool_id,session_id,
+                        COALESCE(model_id,'unknown-model') AS model_key
+                    FROM session_links
+                )
+                UNION ALL
+                SELECT 'project',project_key,tool_id,session_id
+                FROM (
+                    SELECT DISTINCT tool_id,session_id,project_id AS project_key
+                    FROM session_links WHERE project_id IS NOT NULL
+                    UNION
+                    SELECT DISTINCT l.tool_id,l.session_id,'no-project'
+                    FROM session_links l
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM session_links p
+                        WHERE p.tool_id=l.tool_id AND p.session_id=l.session_id
+                            AND p.project_id IS NOT NULL
+                    )
+                )
+            ) AS facets
+            GROUP BY dimension,facet_key
+            ORDER BY dimension,3 DESC,2"#
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![owner_device_id, from_ms, to_ms], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        let mut options = SessionFilterOptions::default();
+        for row in rows {
+            let (dimension, key, session_count) = row?;
+            let session_count = pos_u64(session_count)?;
+            let option = match dimension.as_str() {
+                "tool" => SessionFilterOption {
+                    label: match key.as_str() {
+                        "codex" => "Codex".into(),
+                        "claude" => "Claude".into(),
+                        "antigravity" => "Antigravity".into(),
+                        _ => key.clone(),
+                    },
+                    key,
+                    session_count,
+                },
+                "model" => SessionFilterOption {
+                    label: if key == "unknown-model" {
+                        "未识别模型".into()
+                    } else {
+                        key.clone()
+                    },
+                    key,
+                    session_count,
+                },
+                "project" => SessionFilterOption {
+                    label: if key == "no-project" {
+                        "未关联项目".into()
+                    } else {
+                        self.project_display_name(&key)?
+                            .unwrap_or_else(|| "项目名称未提供".into())
+                    },
+                    key,
+                    session_count,
+                },
+                _ => continue,
+            };
+            match dimension.as_str() {
+                "tool" => options.tools.push(option),
+                "model" => options.models.push(option),
+                "project" => options.projects.push(option),
+                _ => {}
+            }
+        }
+        Ok(options)
+    }
+
+    /// Returns whether a session was manually removed from this device's statistics.
+    pub fn is_session_suppressed(&self, tool_id: &str, session_id: &str) -> Result<bool> {
+        validate_tool_id(tool_id)?;
+        validate_session_id(session_id)?;
+        Ok(self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM session_suppressions WHERE tool_id=?1 AND session_id=?2)",
+            params![tool_id, session_id],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// Removes a session from local usage and prevents later scans from importing it again.
+    /// Original source conversations are never modified by this operation.
+    pub fn delete_session(
+        &mut self,
+        tool_id: &str,
+        session_id: &str,
+        deleted_at_ms: i64,
+    ) -> Result<usize> {
+        validate_tool_id(tool_id)?;
+        validate_session_id(session_id)?;
+        if deleted_at_ms < 0 {
+            return Err(StoreError::InvalidInput("session deletion time"));
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let owner: String = tx
+            .query_row(
+                "SELECT device_id FROM local_identity WHERE singleton=1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotInitialized)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO session_suppressions(tool_id,session_id,deleted_at_ms) VALUES(?1,?2,?3)",
+            params![tool_id, session_id, deleted_at_ms],
+        )?;
+        let record_ids = if tool_id == "antigravity" {
+            let mut stmt = tx.prepare(
+                "SELECT DISTINCT u.record_id FROM usage_records u \
+                 JOIN record_sources rs ON rs.record_id=u.record_id \
+                 WHERE u.owner_device_id=?1 AND u.tool_id=?2 AND rs.tool_id=?2 \
+                   AND rs.source_key=?3 AND u.scope='device_local' AND u.is_deleted=0 \
+                 ORDER BY u.record_id",
+            )?;
+            let rows = stmt.query_map(params![owner, tool_id, session_id], |row| {
+                row.get::<_, String>(0)
+            })?;
+            let values = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+            values
+        } else {
+            let mut stmt = tx.prepare(
+                "SELECT record_id FROM usage_records \
+                 WHERE owner_device_id=?1 AND tool_id=?2 AND session_id=?3 \
+                   AND scope='device_local' AND is_deleted=0 ORDER BY record_id",
+            )?;
+            let rows = stmt.query_map(params![owner, tool_id, session_id], |row| {
+                row.get::<_, String>(0)
+            })?;
+            let values = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+            values
+        };
+        let activity_sources = if tool_id == "antigravity" {
+            vec![session_id.to_owned()]
+        } else {
+            Vec::new()
+        };
+        let mut deleted = 0usize;
+        for record_id in record_ids {
+            let mut envelope = read_record(&tx, &record_id)?
+                .ok_or(StoreError::DatabaseInconsistent("session record missing"))?;
+            if envelope.record.is_deleted {
+                continue;
+            }
+            envelope.record.is_deleted = true;
+            envelope.record.usage = TokenBreakdown::default();
+            envelope.record.estimated_cost_microusd = None;
+            envelope.record.price_version = None;
+            let hash = payload_hash(&envelope.record)?;
+            let revision = i64::try_from(envelope.record_revision)
+                .map_err(|_| StoreError::RevisionOverflow)?
+                .checked_add(1)
+                .ok_or(StoreError::RevisionOverflow)?;
+            write_record(&tx, &envelope.record, revision, &hash, deleted_at_ms)?;
+            enqueue(&tx, &record_id, revision, deleted_at_ms)?;
+            deleted += 1;
+        }
+        tx.execute(
+            "DELETE FROM session_names WHERE session_id=?1 AND tool_id=?2",
+            params![session_id, tool_id],
+        )?;
+        tx.execute(
+            "DELETE FROM empty_source_candidates WHERE tool_id=?1 AND source_key=?2",
+            params![tool_id, session_id],
+        )?;
+        for source_key in activity_sources {
+            tx.execute(
+                "DELETE FROM antigravity_activity_sources WHERE source_key=?1",
+                [&source_key],
+            )?;
+        }
+        tx.commit()?;
+        Ok(deleted)
+    }
+
+    /// Tombstones sources that remain absent from two complete inventories at least
+    /// 30 seconds apart. Partial, unreadable, or untrusted inventories must not call this.
+    pub fn reconcile_missing_sources(
+        &mut self,
+        tool_id: &str,
+        present_source_keys: &HashSet<String>,
+        observed_at_ms: i64,
+    ) -> Result<usize> {
+        validate_tool_id(tool_id)?;
+        if observed_at_ms < 0 {
+            return Err(StoreError::InvalidInput("source inventory time"));
+        }
+        for source_key in present_source_keys {
+            validate_source_key(source_key)?;
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(
+            "CREATE TEMP TABLE IF NOT EXISTS tokenscope_present_sources (source_key TEXT PRIMARY KEY) WITHOUT ROWID; \
+             DELETE FROM temp.tokenscope_present_sources;",
+        )?;
+        {
+            let mut insert = tx.prepare(
+                "INSERT OR IGNORE INTO temp.tokenscope_present_sources(source_key) VALUES(?1)",
+            )?;
+            for source_key in present_source_keys {
+                insert.execute([source_key])?;
+            }
+        }
+        tx.execute(
+            "DELETE FROM missing_source_candidates WHERE tool_id=?1 \
+             AND source_key IN (SELECT source_key FROM temp.tokenscope_present_sources)",
+            [tool_id],
+        )?;
+        let absent = {
+            let mut stmt = tx.prepare(
+                "SELECT cp.source_key FROM source_checkpoints cp \
+                 WHERE cp.tool_id=?1 AND cp.last_status='complete' \
+                   AND cp.last_complete_scan_ms=cp.last_scan_ms \
+                   AND NOT EXISTS (SELECT 1 FROM temp.tokenscope_present_sources p WHERE p.source_key=cp.source_key) \
+                 ORDER BY cp.source_key",
+            )?;
+            let rows = stmt.query_map([tool_id], |row| row.get::<_, String>(0))?;
+            let values = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+            values
+        };
+        let mut tombstoned_records = 0usize;
+        for source_key in absent {
+            tx.execute(
+                "INSERT INTO missing_source_candidates(tool_id,source_key,first_missing_at_ms,last_missing_at_ms,scan_count,tombstoned_at_ms) \
+                 VALUES(?1,?2,?3,?3,1,NULL) \
+                 ON CONFLICT(tool_id,source_key) DO UPDATE SET \
+                   last_missing_at_ms=MAX(missing_source_candidates.last_missing_at_ms,excluded.last_missing_at_ms), \
+                   scan_count=missing_source_candidates.scan_count+1 \
+                 WHERE missing_source_candidates.tombstoned_at_ms IS NULL",
+                params![tool_id, source_key, observed_at_ms],
+            )?;
+            let (first_missing, scan_count, tombstoned_at): (i64, i64, Option<i64>) = tx.query_row(
+                "SELECT first_missing_at_ms,scan_count,tombstoned_at_ms \
+                 FROM missing_source_candidates WHERE tool_id=?1 AND source_key=?2",
+                params![tool_id, source_key],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            if tombstoned_at.is_some()
+                || scan_count < 2
+                || observed_at_ms.saturating_sub(first_missing) < 30_000
+            {
+                continue;
+            }
+            tombstoned_records += tombstone_source_records(&tx, tool_id, &source_key, observed_at_ms)?;
+            tx.execute(
+                "DELETE FROM source_checkpoints WHERE tool_id=?1 AND source_key=?2",
+                params![tool_id, source_key],
+            )?;
+            tx.execute(
+                "UPDATE missing_source_candidates SET tombstoned_at_ms=?3 \
+                 WHERE tool_id=?1 AND source_key=?2 AND tombstoned_at_ms IS NULL",
+                params![tool_id, source_key, observed_at_ms],
+            )?;
+        }
+        tx.execute("DELETE FROM temp.tokenscope_present_sources", [])?;
+        tx.commit()?;
+        Ok(tombstoned_records)
+    }
+
+    /// Requires two complete empty Antigravity snapshots at least 30 seconds apart
+    /// before removing a conversation's previously counted usage.
+    pub fn reconcile_confirmed_empty_source(
+        &mut self,
+        expected: &SourceCheckpoint,
+        next: &SourceCheckpoint,
+        activity: &AntigravityActivity,
+        observed_at_ms: i64,
+    ) -> Result<Option<ReconcileReport>> {
+        expected.validate()?;
+        next.validate()?;
+        activity.validate()?;
+        if expected.tool_id != "antigravity"
+            || next.tool_id != "antigravity"
+            || expected.source_key != next.source_key
+            || next.last_status != "complete"
+            || next.last_complete_scan_ms != Some(next.last_scan_ms)
+            || observed_at_ms < 0
+        {
+            return Err(StoreError::InvalidInput("empty source reconciliation"));
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if load_checkpoint(&tx, &expected.tool_id, &expected.source_key)?.as_ref() != Some(expected)
+        {
+            return Err(StoreError::CheckpointConflict);
+        }
+        tx.execute(
+            "INSERT INTO empty_source_candidates(tool_id,source_key,first_empty_at_ms,last_empty_at_ms,scan_count) \
+             VALUES(?1,?2,?3,?3,1) \
+             ON CONFLICT(tool_id,source_key) DO UPDATE SET \
+               last_empty_at_ms=MAX(empty_source_candidates.last_empty_at_ms,excluded.last_empty_at_ms), \
+               scan_count=empty_source_candidates.scan_count+1",
+            params![next.tool_id, next.source_key, observed_at_ms],
+        )?;
+        let (first_empty, scan_count): (i64, i64) = tx.query_row(
+            "SELECT first_empty_at_ms,scan_count FROM empty_source_candidates \
+             WHERE tool_id=?1 AND source_key=?2",
+            params![next.tool_id, next.source_key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let confirmed = scan_count >= 2 && observed_at_ms.saturating_sub(first_empty) >= 30_000;
+        tx.commit()?;
+        if !confirmed {
+            return Ok(None);
+        }
+        self.reconcile_source_with_activity(
+            Some(expected),
+            next,
+            std::iter::empty(),
+            observed_at_ms,
+            Some(activity),
+        )
+        .map(Some)
+    }
+
+    pub fn clear_empty_source_candidate(&mut self, tool_id: &str, source_key: &str) -> Result<()> {
+        validate_tool_id(tool_id)?;
+        validate_source_key(source_key)?;
+        self.conn.execute(
+            "DELETE FROM empty_source_candidates WHERE tool_id=?1 AND source_key=?2",
+            params![tool_id, source_key],
+        )?;
+        Ok(())
     }
 
     /// Stores a display-only session label captured from the source transcript.
@@ -1535,6 +2112,9 @@ impl LocalStore {
         {
             return Err(StoreError::InvalidInput("session name"));
         }
+        if self.is_session_suppressed(tool_id, session_id)? {
+            return Ok(());
+        }
         self.conn.execute(
             "INSERT INTO session_names(session_id,tool_id,name,updated_at_ms)
              VALUES(?1,?2,?3,?4)
@@ -1544,6 +2124,63 @@ impl LocalStore {
             params![session_id, tool_id, name, updated_at_ms],
         )?;
         Ok(())
+    }
+
+    /// Clears a display-only title when its source no longer provides one.
+    pub fn clear_session_name(&mut self, session_id: &str, tool_id: &str) -> Result<bool> {
+        validate_tool_id(tool_id)?;
+        validate_session_id(session_id)?;
+        let changed = self.conn.execute(
+            "DELETE FROM session_names WHERE session_id=?1 AND tool_id=?2",
+            params![session_id, tool_id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Caches a sanitized project name locally; the opaque project ID remains
+    /// the only project value stored in usage records or sync payloads.
+    pub fn upsert_project_name(
+        &mut self,
+        project_id: &str,
+        name: &str,
+        updated_at_ms: i64,
+    ) -> Result<()> {
+        let name = name.trim();
+        if project_id.len() != 68
+            || !project_id.starts_with("prj_")
+            || !project_id[4..]
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            || name.is_empty()
+            || name == "."
+            || name == ".."
+            || name.chars().count() > 120
+            || name.chars().any(char::is_control)
+            || name.contains('/')
+            || name.contains('\\')
+            || updated_at_ms < 0
+        {
+            return Err(StoreError::InvalidInput("project display name"));
+        }
+        let cache_key = format!("project:{project_id}");
+        self.upsert_session_name(
+            &cache_key,
+            PROJECT_LABEL_TOOL_ID,
+            name,
+            updated_at_ms,
+        )
+    }
+
+    fn project_display_name(&self, project_id: &str) -> Result<Option<String>> {
+        let cache_key = format!("project:{project_id}");
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT name FROM session_names WHERE session_id=?1 AND tool_id=?2",
+                params![cache_key, PROJECT_LABEL_TOOL_ID],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
 
     /// Read-only dashboard aggregate. Daily ranges are calculated by the Agent
@@ -2100,13 +2737,8 @@ impl LocalStore {
                 _ => "no-project".into(),
             });
             let label = if dimension == "project_id" {
-                let short = key
-                    .strip_prefix("prj_")
-                    .unwrap_or(&key)
-                    .chars()
-                    .take(8)
-                    .collect::<String>();
-                format!("项目 {short}")
+                self.project_display_name(&key)?
+                    .unwrap_or_else(|| "项目名称未提供".into())
             } else {
                 key.clone()
             };
@@ -2408,6 +3040,129 @@ enum RecordChange {
     Inserted,
     Revised,
     Unchanged,
+}
+
+fn validate_tool_id(tool_id: &str) -> Result<()> {
+    if tool_id.is_empty()
+        || tool_id.len() > 64
+        || !tool_id
+            .bytes()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase())
+        || !tool_id
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+    {
+        return Err(StoreError::InvalidInput("session tool_id"));
+    }
+    Ok(())
+}
+
+fn validate_session_id(session_id: &str) -> Result<()> {
+    if session_id.is_empty() || session_id.len() > 1024 || session_id.chars().any(char::is_control)
+    {
+        return Err(StoreError::InvalidInput("session_id"));
+    }
+    Ok(())
+}
+
+fn validate_source_key(source_key: &str) -> Result<()> {
+    if source_key.is_empty() || source_key.len() > 1024 || source_key.chars().any(char::is_control)
+    {
+        return Err(StoreError::InvalidInput("source_key"));
+    }
+    Ok(())
+}
+
+fn load_suppressed_sessions(conn: &Connection, tool_id: &str) -> Result<HashSet<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT session_id FROM session_suppressions WHERE tool_id=?1 ORDER BY session_id",
+    )?;
+    let rows = stmt.query_map([tool_id], |row| row.get::<_, String>(0))?;
+    let values = rows.collect::<rusqlite::Result<HashSet<_>>>()?;
+    Ok(values)
+}
+
+fn tombstone_source_records(
+    tx: &rusqlite::Transaction<'_>,
+    tool_id: &str,
+    source_key: &str,
+    observed_at_ms: i64,
+) -> Result<usize> {
+    let record_ids = {
+        let mut stmt = tx.prepare(
+            "SELECT u.record_id FROM record_sources rs \
+             JOIN usage_records u ON u.record_id=rs.record_id \
+             WHERE rs.tool_id=?1 AND rs.source_key=?2 AND u.is_deleted=0 \
+             ORDER BY u.record_id",
+        )?;
+        let rows = stmt.query_map(params![tool_id, source_key], |row| {
+            row.get::<_, String>(0)
+        })?;
+        let values = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        values
+    };
+    let session_ids = {
+        let mut stmt = tx.prepare(
+            "SELECT DISTINCT u.session_id FROM record_sources rs \
+             JOIN usage_records u ON u.record_id=rs.record_id \
+             WHERE rs.tool_id=?1 AND rs.source_key=?2 AND u.session_id IS NOT NULL",
+        )?;
+        let rows = stmt.query_map(params![tool_id, source_key], |row| {
+            row.get::<_, String>(0)
+        })?;
+        let values = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        values
+    };
+    let mut tombstoned = 0usize;
+    for record_id in record_ids {
+        let source_count: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM record_sources WHERE record_id=?1",
+            [&record_id],
+            |row| row.get(0),
+        )?;
+        if source_count != 1 {
+            return Err(StoreError::SourceArbitrationConflict);
+        }
+        let mut envelope = read_record(tx, &record_id)?
+            .ok_or(StoreError::DatabaseInconsistent("source record missing"))?;
+        if envelope.record.is_deleted {
+            continue;
+        }
+        envelope.record.is_deleted = true;
+        envelope.record.usage = TokenBreakdown::default();
+        envelope.record.estimated_cost_microusd = None;
+        envelope.record.price_version = None;
+        let hash = payload_hash(&envelope.record)?;
+        let revision = i64::try_from(envelope.record_revision)
+            .map_err(|_| StoreError::RevisionOverflow)?
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        write_record(tx, &envelope.record, revision, &hash, observed_at_ms)?;
+        enqueue(tx, &record_id, revision, observed_at_ms)?;
+        tombstoned += 1;
+    }
+    for session_id in session_ids {
+        tx.execute(
+            "DELETE FROM session_names WHERE session_id=?1 AND tool_id=?2",
+            params![session_id, tool_id],
+        )?;
+    }
+    tx.execute(
+        "DELETE FROM session_names WHERE session_id=?1 AND tool_id=?2",
+        params![source_key, tool_id],
+    )?;
+    if tool_id == "antigravity" {
+        tx.execute(
+            "DELETE FROM antigravity_activity_sources WHERE source_key=?1",
+            [source_key],
+        )?;
+    }
+    tx.execute(
+        "DELETE FROM empty_source_candidates WHERE tool_id=?1 AND source_key=?2",
+        params![tool_id, source_key],
+    )?;
+    Ok(tombstoned)
 }
 
 fn upsert_source_record(

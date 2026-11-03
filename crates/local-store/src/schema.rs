@@ -1,6 +1,6 @@
 //! Schema v1 is append-only at the migration layer. No destructive schema reset.
 
-pub const VERSION: i64 = 6;
+pub const VERSION: i64 = 7;
 pub const MIGRATION_001: &str = r#"
 CREATE TABLE schema_migrations (
   version INTEGER PRIMARY KEY,
@@ -159,5 +159,34 @@ CREATE TABLE session_names (
   tool_id TEXT NOT NULL,
   name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 200),
   updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms >= 0)
+);
+"#;
+
+// M0-13: persisted local session exclusions and safe missing-source detection.
+// Suppressions prevent manual deletions from being re-imported. Missing-source
+// candidates require repeated complete inventories before usage is tombstoned.
+pub const MIGRATION_007: &str = r#"
+CREATE TABLE session_suppressions (
+  tool_id TEXT NOT NULL,
+  session_id TEXT NOT NULL CHECK(length(session_id) BETWEEN 1 AND 1024),
+  deleted_at_ms INTEGER NOT NULL CHECK(deleted_at_ms >= 0),
+  PRIMARY KEY(tool_id,session_id)
+);
+CREATE TABLE missing_source_candidates (
+  tool_id TEXT NOT NULL,
+  source_key TEXT NOT NULL CHECK(length(source_key) BETWEEN 1 AND 1024),
+  first_missing_at_ms INTEGER NOT NULL CHECK(first_missing_at_ms >= 0),
+  last_missing_at_ms INTEGER NOT NULL CHECK(last_missing_at_ms >= first_missing_at_ms),
+  scan_count INTEGER NOT NULL CHECK(scan_count > 0),
+  tombstoned_at_ms INTEGER CHECK(tombstoned_at_ms IS NULL OR tombstoned_at_ms >= first_missing_at_ms),
+  PRIMARY KEY(tool_id,source_key)
+);
+CREATE TABLE empty_source_candidates (
+  tool_id TEXT NOT NULL,
+  source_key TEXT NOT NULL CHECK(length(source_key) BETWEEN 1 AND 1024),
+  first_empty_at_ms INTEGER NOT NULL CHECK(first_empty_at_ms >= 0),
+  last_empty_at_ms INTEGER NOT NULL CHECK(last_empty_at_ms >= first_empty_at_ms),
+  scan_count INTEGER NOT NULL CHECK(scan_count > 0),
+  PRIMARY KEY(tool_id,source_key)
 );
 "#;

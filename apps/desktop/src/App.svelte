@@ -3,9 +3,11 @@
   import { listen } from '@tauri-apps/api/event';
   import {
     disconnectHubDevice,
+    deleteSession as deleteSessionUsage,
     getAgentStatus,
     getAutostartEnabled,
     getDashboardSnapshot,
+    getSessionAnalysis,
     isTauriRuntime,
     listHubDevices,
     pairHubDevice,
@@ -18,12 +20,25 @@
   import { icons } from './lib/icons';
   import { BOOTSTRAP_STAGE } from './lib/status';
   import { applyTheme, getInitialTheme, initThemeListener, type ThemeMode } from './lib/theme';
-  import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice } from './lib/types';
+import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice, SessionAnalysisPage, SessionUsage } from './lib/types';
 
   type Tab = 'overview' | 'devices' | 'tools' | 'models' | 'sessions' | 'projects' | 'quota' | 'settings';
   let activeTab: Tab = 'overview';
   let range: DashboardRange = '7d';
   let sessionOffset = 0;
+  let sessionAnalysis: SessionAnalysisPage | null = null;
+  let sessionSearch = '';
+  let sessionToolFilter = '';
+  let sessionModelFilter = '';
+  let sessionProjectFilter = '';
+  let sessionLoading = false;
+  let sessionError = '';
+  let sessionSearchTimer: ReturnType<typeof setTimeout> | undefined;
+  let sessionRequestSequence = 0;
+  let pendingSessionDeleteKey = '';
+  let deletingSessionKey = '';
+  let sessionActionMessage = '';
+  let sessionActionError = '';
   let customStart = '';
   let customEnd = '';
   let customOpen = false;
@@ -83,9 +98,11 @@
 
   $: topToolTotal = Math.max(1, ...(snapshot?.by_tool ?? []).map((item) => item.total_tokens));
   $: topModelTotal = Math.max(1, ...(snapshot?.by_model ?? []).map((item) => item.total_tokens));
-  $: sessionPage = snapshot?.session_usage;
+  $: sessionPage = sessionAnalysis?.page;
   $: sessionPageStart = sessionPage && sessionPage.total > 0 ? sessionPage.offset + 1 : 0;
   $: sessionPageEnd = Math.min((sessionPage?.offset ?? 0) + (sessionPage?.sessions.length ?? 0), sessionPage?.total ?? 0);
+  $: sessionFilterOptions = sessionAnalysis?.filter_options ?? { tools: [], models: [], projects: [] };
+  $: hasSessionFilters = Boolean(sessionSearch.trim() || sessionToolFilter || sessionModelFilter || sessionProjectFilter);
   $: antigravityUsage = (snapshot?.by_tool ?? []).find((item) => item.key === 'antigravity');
 
   $: selectableRemoteDevices = remoteDevices.filter(
@@ -140,10 +157,10 @@
     return toIsoDate(new Date(ms));
   }
 
-  function fetchSnapshot(offset: number) {
+  function fetchSnapshot() {
     return getDashboardSnapshot(
       range,
-      offset,
+      0,
       range === 'custom' ? customStart : undefined,
       range === 'custom' ? customEnd : undefined
     );
@@ -177,18 +194,11 @@
         errorMessage = 'Agent 已启动，正在初始化本地 SQLite WAL 数据库…';
         snapshot = null;
       } else {
-        let dashboard = await fetchSnapshot(sessionOffset);
-        const lastValidOffset = dashboard.session_usage.total === 0
-          ? 0
-          : Math.floor((dashboard.session_usage.total - 1) / dashboard.session_usage.limit) * dashboard.session_usage.limit;
-        if (sessionOffset > lastValidOffset) {
-          sessionOffset = lastValidOffset;
-          dashboard = await fetchSnapshot(sessionOffset);
-        }
-        snapshot = dashboard;
+        snapshot = await fetchSnapshot();
         if (!hubDisplayName && snapshot.identity?.display_name) {
           hubDisplayName = snapshot.identity.display_name;
         }
+        if (activeTab === 'sessions') void loadSessionAnalysis();
       }
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : String(error);
@@ -204,6 +214,9 @@
       return;
     }
     if (range === next) return;
+    if (sessionSearchTimer) window.clearTimeout(sessionSearchTimer);
+    sessionSearchTimer = undefined;
+    sessionRequestSequence += 1;
     range = next;
     sessionOffset = 0;
     void loadDashboard();
@@ -219,6 +232,9 @@
       return;
     }
     customOpen = false;
+    if (sessionSearchTimer) window.clearTimeout(sessionSearchTimer);
+    sessionSearchTimer = undefined;
+    sessionRequestSequence += 1;
     range = 'custom';
     sessionOffset = 0;
     void loadDashboard();
@@ -227,7 +243,108 @@
   function handleSessionPage(nextOffset: number) {
     if (nextOffset < 0 || nextOffset === sessionOffset) return;
     sessionOffset = nextOffset;
-    void loadDashboard();
+    void loadSessionAnalysis();
+  }
+
+  function handleSelectTab(nextTab: Tab) {
+    if (activeTab === nextTab) return;
+    activeTab = nextTab;
+    if (nextTab === 'sessions') void loadSessionAnalysis();
+  }
+
+  function scheduleSessionAnalysis() {
+    sessionRequestSequence += 1;
+    sessionOffset = 0;
+    if (sessionSearchTimer) window.clearTimeout(sessionSearchTimer);
+    sessionSearchTimer = window.setTimeout(() => {
+      sessionSearchTimer = undefined;
+      void loadSessionAnalysis();
+    }, 220);
+  }
+
+  function clearSessionFilters() {
+    sessionSearch = '';
+    sessionToolFilter = '';
+    sessionModelFilter = '';
+    sessionProjectFilter = '';
+    scheduleSessionAnalysis();
+  }
+
+  function sessionProjectLabel(projectId: string): string {
+    return sessionFilterOptions.projects.find((option) => option.key === projectId)?.label
+      ?? '项目名称未提供';
+  }
+
+  async function loadSessionAnalysis() {
+    if (!runtimeAvailable || activeTab !== 'sessions') return;
+    const requestSequence = ++sessionRequestSequence;
+    sessionLoading = true;
+    sessionError = '';
+    const filters = {
+      search: sessionSearch,
+      toolId: sessionToolFilter,
+      modelId: sessionModelFilter,
+      projectId: sessionProjectFilter,
+    };
+    const loadPage = (offset: number) => getSessionAnalysis(
+      range,
+      offset,
+      filters,
+      range === 'custom' ? customStart : undefined,
+      range === 'custom' ? customEnd : undefined
+    );
+    try {
+      let result = await loadPage(sessionOffset);
+      if (requestSequence !== sessionRequestSequence) return;
+      const lastValidOffset = result.page.total === 0
+        ? 0
+        : Math.floor((result.page.total - 1) / result.page.limit) * result.page.limit;
+      if (sessionOffset > lastValidOffset) {
+        sessionOffset = lastValidOffset;
+        result = await loadPage(sessionOffset);
+        if (requestSequence !== sessionRequestSequence) return;
+      }
+      sessionAnalysis = result;
+    } catch (error) {
+      if (requestSequence === sessionRequestSequence) {
+        sessionError = error instanceof Error ? error.message : String(error);
+      }
+    } finally {
+      if (requestSequence === sessionRequestSequence) sessionLoading = false;
+    }
+  }
+
+  function sessionActionKey(session: Pick<SessionUsage, 'tool_id' | 'session_id'>): string {
+    return `${session.tool_id}\u001f${session.session_id}`;
+  }
+
+  function requestSessionDelete(session: SessionUsage) {
+    sessionActionMessage = '';
+    sessionActionError = '';
+    pendingSessionDeleteKey = sessionActionKey(session);
+  }
+
+  function cancelSessionDelete() {
+    pendingSessionDeleteKey = '';
+    sessionActionError = '';
+  }
+
+  async function confirmSessionDelete(session: SessionUsage) {
+    const key = sessionActionKey(session);
+    if (deletingSessionKey) return;
+    deletingSessionKey = key;
+    sessionActionError = '';
+    sessionActionMessage = '';
+    try {
+      const deletedRecords = await deleteSessionUsage(session.tool_id, session.session_id);
+      pendingSessionDeleteKey = '';
+      sessionActionMessage = `会话已从本机统计移除（${formatNumber(deletedRecords)} 条记录）；原应用聊天未改动。`;
+      await loadDashboard(false);
+    } catch (error) {
+      sessionActionError = error instanceof Error ? error.message : String(error);
+    } finally {
+      deletingSessionKey = '';
+    }
   }
 
   function quotaWindowLabel(durationMinutes: number): string {
@@ -386,10 +503,11 @@
       hubUrl = window.localStorage.getItem('tokenscope.hubUrl') ?? '';
       void listen<{ protocol_version: number; snapshot: DashboardSnapshot }>('dashboard-updated', (event) => {
         const next = event.payload?.snapshot;
-        if (!next || next.range !== range || sessionOffset !== 0) return;
+        if (!next || next.range !== range) return;
         if (range === 'custom' && next.range_start_ms !== null && snapshotStartIso(next.range_start_ms) !== customStart) return;
         snapshot = next;
         errorMessage = '';
+        if (activeTab === 'sessions') void loadSessionAnalysis();
       }).then((unlisten) => {
         unlistenDashboard = unlisten;
       });
@@ -404,6 +522,7 @@
     const timer = window.setInterval(() => void loadDashboard(false), 300_000);
     return () => {
       window.clearInterval(timer);
+      if (sessionSearchTimer) window.clearTimeout(sessionSearchTimer);
       unlistenDashboard?.();
       cleanThemeListener();
     };
@@ -436,7 +555,7 @@
           aria-current={activeTab === item.id ? 'page' : undefined}
           aria-label={item.label}
           title={item.label}
-          onclick={() => (activeTab = item.id)}
+          onclick={() => handleSelectTab(item.id)}
         >
           <span class="nav-icon">{@html icons[item.iconKey]}</span>
           <span class="nav-label">{item.label}</span>
@@ -1098,17 +1217,73 @@
         {:else if activeTab === 'sessions'}
           <div class="page-header">
             <h1>会话分析</h1>
-            <p>按本地脱敏会话标识汇总 Token；时间未知的 Antigravity 用量仅在“全部”范围计入。会话名称与提示内容不会读取或展示。</p>
+            <p>按工具、模型和项目筛选；可搜索会话名称、ID、模型或项目标识。仅查询本机统计，不读取聊天正文。</p>
           </div>
 
           <section class="panel-card">
             <div class="panel-head">
               <div>
                 <h2>会话 Token 使用</h2>
-<p>显示 {formatNumber(sessionPageStart)}–{formatNumber(sessionPageEnd)} / {formatNumber(sessionPage?.total)} 个会话 · 当前范围：{rangeLabel}</p>
+                <p>{#if sessionPage}显示 {formatNumber(sessionPageStart)}–{formatNumber(sessionPageEnd)} / {formatNumber(sessionPage.total)} 个匹配会话{:else if sessionLoading}正在查询会话…{:else}当前范围：{rangeLabel}{/if}</p>
               </div>
               <span class="panel-tag">每页 {sessionPage?.limit ?? 50}</span>
             </div>
+
+            <div class="session-filter-panel">
+              <div class="session-filter-row">
+                <label class="session-filter-field session-search-field">
+                  <span>搜索会话</span>
+                  <input
+                    type="search"
+                    bind:value={sessionSearch}
+                    oninput={scheduleSessionAnalysis}
+                    placeholder="名称、会话 ID、模型或项目"
+                    aria-label="搜索会话名称、会话 ID、模型或项目"
+                  />
+                </label>
+                <label class="session-filter-field">
+                  <span>工具</span>
+                  <select bind:value={sessionToolFilter} onchange={scheduleSessionAnalysis} aria-label="按工具筛选会话">
+                    <option value="">全部工具</option>
+                    {#each sessionFilterOptions.tools as option}
+                      <option value={option.key}>{option.label} · {formatNumber(option.session_count)}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label class="session-filter-field">
+                  <span>模型</span>
+                  <select bind:value={sessionModelFilter} onchange={scheduleSessionAnalysis} aria-label="按模型筛选会话">
+                    <option value="">全部模型</option>
+                    {#each sessionFilterOptions.models as option}
+                      <option value={option.key}>{option.label} · {formatNumber(option.session_count)}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label class="session-filter-field">
+                  <span>项目</span>
+                  <select bind:value={sessionProjectFilter} onchange={scheduleSessionAnalysis} aria-label="按项目筛选会话">
+                    <option value="">全部项目</option>
+                    {#each sessionFilterOptions.projects as option}
+                      <option value={option.key}>{option.label} · {formatNumber(option.session_count)}</option>
+                    {/each}
+                  </select>
+                </label>
+                <button class="btn-secondary session-clear-btn" disabled={!hasSessionFilters} onclick={clearSessionFilters}>清除筛选</button>
+              </div>
+              <div class="session-filter-meta">
+                <span>多模型或多项目会话按“曾使用该项”匹配；Token 显示整段会话合计。</span>
+                <span class="session-filter-count" role="status">{sessionLoading ? '正在更新结果…' : `匹配 ${formatNumber(sessionPage?.total ?? 0)} 个会话`}</span>
+              </div>
+            </div>
+
+            {#if sessionActionError}
+              <div class="session-action-notice error" role="alert">{sessionActionError}</div>
+            {:else if sessionActionMessage}
+              <div class="session-action-notice success" role="status">{sessionActionMessage}</div>
+            {/if}
+            {#if sessionError}
+              <div class="session-action-notice error" role="alert">{sessionError}</div>
+            {/if}
 
             {#if sessionPage && sessionPage.sessions.length > 0}
               <div class="table-wrap">
@@ -1124,6 +1299,43 @@
                         <td>
                           <div class="session-name" title={session.display_name ?? undefined}>{session.display_name ?? '未命名会话'}</div>
                           <code title={session.session_id}>…{session.session_id.slice(-12)}</code>
+                          <div class="session-facet-list" aria-label="项目分类">
+                            {#if session.project_ids.length > 0}
+                              {#each session.project_ids.slice(0, 2) as projectId}
+                                <span class="session-facet-chip" title={sessionProjectLabel(projectId)}>{sessionProjectLabel(projectId)}</span>
+                              {/each}
+                              {#if session.project_ids.length > 2}<span class="session-facet-chip muted">+{session.project_ids.length - 2}</span>{/if}
+                            {:else}
+                              <span class="session-facet-chip muted">未关联项目</span>
+                            {/if}
+                          </div>
+                          <div class="session-row-actions">
+                            {#if pendingSessionDeleteKey === sessionActionKey(session)}
+                              <div class="session-action-confirm">
+                                <span>仅影响本机统计</span>
+                                <button
+                                  class="btn-danger session-action-btn"
+                                  disabled={deletingSessionKey !== ''}
+                                  onclick={() => void confirmSessionDelete(session)}
+                                >
+                                  {deletingSessionKey === sessionActionKey(session) ? '删除中…' : '确认删除'}
+                                </button>
+                                <button
+                                  class="btn-secondary session-action-btn"
+                                  disabled={deletingSessionKey !== ''}
+                                  onclick={cancelSessionDelete}
+                                >取消</button>
+                              </div>
+                            {:else}
+                              <button
+                                class="btn-danger session-delete-btn"
+                                aria-label={`从本机统计删除会话 ${session.display_name ?? session.session_id}`}
+                                title="只删除 TokenScope 本机统计，不删除原应用聊天"
+                                disabled={refreshing || deletingSessionKey !== ''}
+                                onclick={() => requestSessionDelete(session)}
+                              >删除</button>
+                            {/if}
+                          </div>
                         </td>
                         <td>{session.tool_id === 'codex' ? 'Codex' : session.tool_id === 'antigravity' ? 'Antigravity' : session.tool_id}</td>
                         <td class="session-models">
@@ -1176,8 +1388,28 @@
                   <button class="btn-secondary" disabled={!sessionPage || sessionOffset + sessionPage.limit >= sessionPage.total || refreshing} onclick={() => handleSessionPage(sessionOffset + (sessionPage?.limit ?? 50))}>下一页</button>
                 </div>
               </div>
+            {:else if sessionLoading && !sessionAnalysis}
+              <div class="session-empty-state" role="status">正在读取本机会话统计…</div>
+            {:else if sessionPage && sessionPage.total === 0 && hasSessionFilters}
+              <div class="session-empty-state">
+                <strong>没有匹配的会话</strong>
+                <p>调整搜索内容或分类条件，或清除筛选查看当前范围的全部会话。</p>
+                <button class="btn-secondary" onclick={clearSessionFilters}>清除筛选</button>
+              </div>
+            {:else if sessionPage}
+              <div class="session-empty-state">
+                <strong>这个时间范围内没有会话用量</strong>
+                <p>切换到“全部”可查看历史记录，以及来源未提供事件时间的用量。</p>
+                <button class="btn-secondary" disabled={range === 'all'} onclick={() => handleSelectRange('all')}>查看全部日期</button>
+              </div>
+            {:else if sessionError}
+              <div class="session-empty-state">
+                <strong>会话数据暂时无法读取</strong>
+                <p>请重试查询；本机统计数据不会因此被更改。</p>
+                <button class="btn-secondary" disabled={sessionLoading} onclick={() => void loadSessionAnalysis()}>重试</button>
+              </div>
             {:else}
-              <div class="empty-box">这个范围内还没有会话用量。选择“全部”可查看未提供事件时间的 Antigravity Token 记录。</div>
+              <div class="session-empty-state" role="status">选择“会话分析”后会读取当前日期范围的会话。</div>
             {/if}
           </section>
 
@@ -1194,7 +1426,7 @@
                 <table>
                   <thead>
                     <tr>
-                      <th>项目脱敏标识 (Hash)</th>
+                      <th>项目名称</th>
                       <th>Token 消耗量</th>
                       <th>用量记录数</th>
                       <th>全机份额</th>
@@ -1203,7 +1435,7 @@
                   <tbody>
                     {#each snapshot.by_project as prj}
                       <tr>
-                        <td><code>{prj.label}</code></td>
+                        <td>{prj.label}</td>
                         <td class="tabular">{formatNumber(prj.total_tokens)}</td>
                         <td class="tabular">{formatNumber(prj.record_count)}</td>
                         <td>

@@ -62,6 +62,7 @@ export type SessionUsage = {
   last_event_at_ms: number | null;
   activity_observed_at_ms: number | null;
   display_name: string | null;
+  project_ids: string[];
   models: SessionModelUsage[];
 };
 
@@ -69,6 +70,35 @@ export type SessionModelUsage = {
   model_id: string | null;
   total_tokens: number;
   record_count: number;
+};
+
+export type SessionFilterOption = {
+  key: string;
+  label: string;
+  session_count: number;
+};
+
+export type SessionFilterOptions = {
+  tools: SessionFilterOption[];
+  models: SessionFilterOption[];
+  projects: SessionFilterOption[];
+};
+
+export type SessionUsagePage = {
+  sessions: SessionUsage[];
+  total: number;
+  offset: number;
+  limit: number;
+};
+
+export type SessionAnalysisPage = {
+  page: SessionUsagePage;
+  filter_options: SessionFilterOptions;
+};
+
+export type SessionAnalysisResponse = {
+  protocol_version: number;
+  analysis: SessionAnalysisPage;
 };
 
 export type RemoteUsageBreakdown = {

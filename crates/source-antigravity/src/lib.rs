@@ -9,19 +9,21 @@
 //! CLI and IDE DBs with the same conversation identity are arbitrated before
 //! producing records, so synced duplicate sources do not double count.
 use rusqlite::{Connection, OpenFlags};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokenscope_core_domain::{
-    session_key, stable_record_id, CanonicalRecord, Precision, TokenBreakdown, UsageScope,
+    project_key, session_key, stable_record_id, CanonicalRecord, Precision, TokenBreakdown,
+    UsageScope,
 };
 use tokenscope_local_store::{AntigravityActivity, LocalStore, SourceCheckpoint};
 
 pub const MODULE_ID: &str = "source-antigravity";
-pub const PARSER_VERSION: u32 = 4;
+pub const PARSER_VERSION: u32 = 5;
 const MAX_FILES: usize = 20_000;
 const MAX_TURNS_PER_DB: u64 = 50_000;
 const MAX_MODELS_PER_DB: usize = 512;
@@ -331,6 +333,7 @@ fn make_record(
     device: &str,
     native_id: &str,
     model: Option<&str>,
+    project_id: Option<&str>,
     usage: NativeUsage,
     event_at_ms: Option<i64>,
 ) -> Result<CanonicalRecord> {
@@ -348,7 +351,7 @@ fn make_record(
         },
         account_id: None,
         model_id: model.map(str::to_string),
-        project_id: None,
+        project_id: project_id.map(str::to_owned),
         session_id: Some(session),
         event_at_ms,
         usage: TokenBreakdown {
@@ -419,6 +422,7 @@ fn read_step_timestamps(
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Snapshot {
     stem: String,
+    project_id: Option<String>,
     counts: BTreeMap<String, u64>,
     known_turns: u64,
     unknown_turns: u64,
@@ -426,7 +430,7 @@ struct Snapshot {
     records: Vec<CanonicalRecord>,
     missing_usage: BTreeMap<String, u64>,
 }
-fn read_db(path: &Path, stem: String, device: &str) -> Result<Snapshot> {
+fn read_db(path: &Path, stem: String, device: &str, project_id: Option<String>) -> Result<Snapshot> {
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     conn.busy_timeout(std::time::Duration::from_secs(2))?;
     // A single SQLite read transaction sees consistent DB+WAL state.
@@ -484,6 +488,7 @@ fn read_db(path: &Path, stem: String, device: &str) -> Result<Snapshot> {
                 device,
                 &native_id,
                 model.as_deref(),
+                project_id.as_deref(),
                 usage,
                 event_at_ms,
             )?)
@@ -528,6 +533,7 @@ fn read_db(path: &Path, stem: String, device: &str) -> Result<Snapshot> {
     }
     Ok(Snapshot {
         stem,
+        project_id,
         counts,
         known_turns,
         unknown_turns,
@@ -535,6 +541,173 @@ fn read_db(path: &Path, stem: String, device: &str) -> Result<Snapshot> {
         records,
         missing_usage,
     })
+}
+
+fn workspace_project_id(raw: Option<&str>) -> Option<String> {
+    let value: Value = serde_json::from_str(raw?).ok()?;
+    let mut uris = value
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|uri| !uri.is_empty() && uri.len() <= 4096 && !uri.chars().any(char::is_control))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    uris.sort();
+    uris.dedup();
+    if uris.is_empty() {
+        return None;
+    }
+    let mut identity = Vec::new();
+    for uri in uris {
+        let bytes = uri.as_bytes();
+        identity.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+        identity.extend_from_slice(bytes);
+    }
+    project_key("antigravity", &identity).ok()
+}
+
+fn safe_project_name(name: &str) -> Option<String> {
+    let name = name.trim();
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.chars().count() > 120
+        || name.chars().any(char::is_control)
+        || name.contains('/')
+        || name.contains('\\')
+    {
+        return None;
+    }
+    Some(name.to_owned())
+}
+
+fn decode_uri_component(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = *bytes.get(index + 1)?;
+            let low = *bytes.get(index + 2)?;
+            let hex = |byte: u8| match byte {
+                b'0'..=b'9' => Some(byte - b'0'),
+                b'a'..=b'f' => Some(byte - b'a' + 10),
+                b'A'..=b'F' => Some(byte - b'A' + 10),
+                _ => None,
+            };
+            decoded.push((hex(high)? << 4) | hex(low)?);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn uri_project_name(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.len() > 4096 || raw.chars().any(char::is_control) {
+        return None;
+    }
+    let uri = raw.split(['?', '#']).next()?;
+    let path = if let Some(path) = uri.strip_prefix("file://") {
+        path
+    } else if let Some((_, rest)) = uri.split_once("://") {
+        rest.split_once('/')?.1
+    } else {
+        uri
+    };
+    let component = path
+        .rsplit(['/', '\\'])
+        .find(|component| !component.is_empty())?;
+    safe_project_name(&decode_uri_component(component)?)
+}
+
+fn workspace_project_name(raw: Option<&str>) -> Option<String> {
+    let value: Value = serde_json::from_str(raw?).ok()?;
+    let mut names = value
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .filter_map(uri_project_name)
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    let joined = names.join(" + ");
+    let joined: String = joined.chars().take(120).collect();
+    safe_project_name(&joined)
+}
+
+#[derive(Clone)]
+struct ProjectMetadata {
+    project_id: String,
+    display_name: Option<String>,
+}
+
+fn project_index(gemini_home: &Path) -> HashMap<(String, String), ProjectMetadata> {
+    let mut projects = HashMap::new();
+    for prefix in [
+        "antigravity",
+        "antigravity-ide",
+        "antigravity-backup",
+        "antigravity-cli",
+    ] {
+        let path = gemini_home.join(prefix).join("conversation_summaries.db");
+        if !path.is_file() {
+            continue;
+        }
+        let Ok(conn) = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+            continue;
+        };
+        if conn.busy_timeout(std::time::Duration::from_secs(2)).is_err() {
+            continue;
+        }
+        let exists = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_summaries')",
+            [],
+            |row| row.get::<_, bool>(0),
+        );
+        if !matches!(exists, Ok(true)) {
+            continue;
+        }
+        let Ok(mut stmt) = conn.prepare(
+            "SELECT conversation_id,project_id,workspace_uris FROM conversation_summaries LIMIT 5000",
+        ) else {
+            continue;
+        };
+        let Ok(mut rows) = stmt.query([]) else {
+            continue;
+        };
+        loop {
+            let row = match rows.next() {
+                Ok(Some(row)) => row,
+                Ok(None) | Err(_) => break,
+            };
+            let id = match row.get::<_, String>(0) {
+                Ok(id) if !id.is_empty() && id.len() <= 200 && !id.chars().any(char::is_control) => id,
+                _ => continue,
+            };
+            let project = row.get::<_, Option<String>>(1).ok().flatten();
+            let workspace_uris = row.get::<_, Option<String>>(2).ok().flatten();
+            let project_id = project
+                .as_deref()
+                .filter(|value| !value.trim().is_empty() && value.len() <= 4096)
+                .and_then(|value| project_key("antigravity", value.trim().as_bytes()).ok())
+                .or_else(|| workspace_project_id(workspace_uris.as_deref()));
+            if let Some(project_id) = project_id {
+                projects.insert(
+                    (prefix.to_owned(), id),
+                    ProjectMetadata {
+                        project_id,
+                        display_name: workspace_project_name(workspace_uris.as_deref()),
+                    },
+                );
+            }
+        }
+    }
+    projects
 }
 
 /// Antigravity keeps conversation titles in a separate summaries database.
@@ -567,26 +740,26 @@ pub fn import_titles(gemini_home: &Path, store: &mut LocalStore) -> Result<usize
         if !exists {
             continue;
         }
-        let mut stmt = conn.prepare(
-            "SELECT conversation_id,title,preview FROM conversation_summaries LIMIT 5000",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT conversation_id,title FROM conversation_summaries LIMIT 5000")?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let id: String = row.get(0)?;
             let title: String = row.get(1)?;
-            let preview: String = row.get(2)?;
             if id.is_empty() || id.len() > 200 {
                 continue;
             }
-            // Antigravity leaves `title` empty for many older conversations;
-            // its own preview is the next best human-readable label.
-            let source = if title.trim().is_empty() { preview } else { title };
-            let name = source.split_whitespace().collect::<Vec<_>>().join(" ");
+            let key = stable_record_id("antigravity", b"conversation", id.as_bytes())?;
+            if title.trim().is_empty() {
+                store.clear_session_name(&key, "antigravity")?;
+                continue;
+            }
+            let name = title.split_whitespace().collect::<Vec<_>>().join(" ");
             if name.is_empty() || name.chars().count() > 200 {
+                store.clear_session_name(&key, "antigravity")?;
                 continue;
             }
             let name: String = name.chars().take(80).collect();
-            let key = stable_record_id("antigravity", b"conversation", id.as_bytes())?;
             if store
                 .upsert_session_name(&key, "antigravity", &name, now_ms()?)
                 .is_ok()
@@ -635,6 +808,7 @@ fn now_ms() -> Result<i64> {
 }
 fn dominates(a: &Snapshot, b: &Snapshot) -> bool {
     a.unknown_turns >= b.unknown_turns
+        && (b.project_id.is_none() || a.project_id == b.project_id)
         && b.counts
             .iter()
             .all(|(model, count)| a.counts.get(model).copied().unwrap_or_default() >= *count)
@@ -644,8 +818,14 @@ fn dominates(a: &Snapshot, b: &Snapshot) -> bool {
 }
 fn source_fingerprint(snapshot: &Snapshot, estimates: bool) -> String {
     let mut h = Sha256::new();
-    h.update(b"tokenscope/antigravity/generation-usage/v2\0");
+    h.update(b"tokenscope/antigravity/generation-usage/v3\0");
     h.update([u8::from(estimates)]);
+    if let Some(project_id) = &snapshot.project_id {
+        h.update((project_id.len() as u32).to_be_bytes());
+        h.update(project_id.as_bytes());
+    } else {
+        h.update(0u32.to_be_bytes());
+    }
     h.update(snapshot.unknown_turns.to_be_bytes());
     for (model, count) in &snapshot.counts {
         h.update((model.len() as u32).to_be_bytes());
@@ -704,7 +884,7 @@ fn source_records(
             precision: Precision::Estimated,
             account_id: None,
             model_id: Some(model.clone()),
-            project_id: None,
+            project_id: s.project_id.clone(),
             session_id: Some(session.clone()),
             event_at_ms: None,
             // We have no reliable cache attribution: keep estimated input
@@ -754,12 +934,14 @@ fn collect_antigravity_with_policy(
     skip_broken: bool,
 ) -> Result<AntigravityReport> {
     let paths = discover_databases(gemini_home)?;
+    let projects = project_index(gemini_home);
     let mut report = AntigravityReport {
         source_files: paths.len(),
         ..AntigravityReport::default()
     };
     let mut snapshots: BTreeMap<String, Snapshot> = BTreeMap::new();
     let mut ambiguous: BTreeSet<String> = BTreeSet::new();
+    let mut present_source_keys = HashSet::new();
     for path in paths {
         let stem = path
             .file_stem()
@@ -769,7 +951,26 @@ fn collect_antigravity_with_policy(
         if stem.is_empty() || stem.len() > 200 || stem.chars().any(char::is_control) {
             return Err(AntigravityError::Invalid("invalid conversation filename"));
         }
-        let snap = match read_db(&path, stem.clone(), device_id) {
+        let source_key = stable_record_id("antigravity", b"conversation", stem.as_bytes())?;
+        let prefix = path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str());
+        let project = prefix
+            .and_then(|prefix| projects.get(&(prefix.to_owned(), stem.clone())))
+            .cloned();
+        if let Some(project) = project.as_ref() {
+            if let Some(name) = project.display_name.as_deref() {
+                store.upsert_project_name(&project.project_id, name, now_ms()?)?;
+            }
+        }
+        let project_id = project.map(|project| project.project_id);
+        present_source_keys.insert(source_key.clone());
+        if store.is_session_suppressed("antigravity", &source_key)? {
+            continue;
+        }
+        let snap = match read_db(&path, stem.clone(), device_id, project_id) {
             Ok(snap) => snap,
             Err(_) if skip_broken => {
                 report.skipped_sources += 1;
@@ -798,18 +999,22 @@ fn collect_antigravity_with_policy(
             .unknown_model_turns
             .saturating_add(snapshot.unknown_turns);
         report.skipped_rows = report.skipped_rows.saturating_add(snapshot.skipped_rows);
+        let source_key = stable_record_id("antigravity", b"conversation", stem.as_bytes())?;
         // Keep the last complete estimate when this explicit-estimate scan
         // encounters unknown models; partial metadata cannot safely revise it.
         if estimate_tokens && snapshot.unknown_turns > 0 {
+            store.clear_empty_source_candidate("antigravity", &source_key)?;
             continue;
         }
-        // A suddenly empty live DB might be transient. Never tombstone its history.
-        if estimate_tokens && snapshot.known_turns == 0 {
-            continue;
-        }
-        let source_key = stable_record_id("antigravity", b"conversation", stem.as_bytes())?;
         let previous = store.checkpoint("antigravity", &source_key)?;
         let fp = source_fingerprint(&snapshot, estimate_tokens);
+        let complete_empty = snapshot.records.is_empty()
+            && snapshot.known_turns == 0
+            && snapshot.unknown_turns == 0
+            && snapshot.missing_usage.is_empty();
+        if !complete_empty {
+            store.clear_empty_source_candidate("antigravity", &source_key)?;
+        }
         if previous.as_ref().is_some_and(|p| {
             p.source_fingerprint == fp
                 && p.parser_version == PARSER_VERSION
@@ -818,8 +1023,28 @@ fn collect_antigravity_with_policy(
             report.unchanged += 1;
             continue;
         }
-        if previous.is_some() {
-            let prior_records = store.records_for_source("antigravity", &source_key, 20_000)?;
+        let observed_at = now_ms()?.max(previous.as_ref().map_or(0, |p| p.last_scan_ms));
+        let next = SourceCheckpoint {
+            tool_id: "antigravity".into(),
+            source_key,
+            source_fingerprint: fp,
+            read_offset: 0,
+            parser_version: PARSER_VERSION,
+            last_scan_ms: observed_at,
+            last_complete_scan_ms: Some(observed_at),
+            last_status: "complete".into(),
+        };
+        let activity = AntigravityActivity {
+            known_turns: snapshot.known_turns,
+            unknown_turns: snapshot.unknown_turns,
+            models: snapshot
+                .counts
+                .iter()
+                .map(|(m, n)| (m.clone(), *n))
+                .collect(),
+        };
+        if let Some(expected) = previous.as_ref() {
+            let prior_records = store.records_for_source("antigravity", &next.source_key, 20_000)?;
             let active_prior = prior_records
                 .iter()
                 .map(|row| &row.record)
@@ -832,42 +1057,30 @@ fn collect_antigravity_with_policy(
                         .iter()
                         .any(|current| current.record_id == record.record_id)
             });
-            let empty_after_usage = snapshot.records.is_empty() && snapshot.known_turns == 0;
-            if (!active_prior.is_empty() && empty_after_usage)
+            let empty_but_unproven = snapshot.records.is_empty() && !complete_empty;
+            if !active_prior.is_empty() && complete_empty {
+                if let Some(result) = store.reconcile_confirmed_empty_source(
+                    expected,
+                    &next,
+                    &activity,
+                    observed_at,
+                )? {
+                    report.tombstoned += result.tombstoned;
+                }
+                continue;
+            }
+            if (!active_prior.is_empty() && empty_but_unproven)
                 || (!snapshot.missing_usage.is_empty() && missing_prior_native)
             {
                 // A tokenless/partial snapshot cannot prove that previously
-                // measured generations were deleted. Keep both checkpoint and
-                // activity at their last complete state so reconciliation cannot
-                // create tombstones from missing counters.
+                // measured generations were deleted. Keep the last complete
+                // projection so missing counters cannot create tombstones.
                 continue;
             }
         }
-        // Activity-only collection MUST persist a separate model-turn snapshot.
-        // A parse failure above never triggers any update.
-        let observed_at = now_ms()?.max(previous.as_ref().map_or(0, |p| p.last_scan_ms));
-        let next = SourceCheckpoint {
-            tool_id: "antigravity".into(),
-            source_key,
-            source_fingerprint: fp,
-            read_offset: 0,
-            parser_version: PARSER_VERSION,
-            last_scan_ms: observed_at,
-            last_complete_scan_ms: Some(observed_at),
-            last_status: "complete".into(),
-        };
         let records = source_records(&snapshot, device_id, estimate_tokens)?;
         report.measured_records += snapshot.records.len();
         report.estimated_records += records.len().saturating_sub(snapshot.records.len());
-        let activity = AntigravityActivity {
-            known_turns: snapshot.known_turns,
-            unknown_turns: snapshot.unknown_turns,
-            models: snapshot
-                .counts
-                .iter()
-                .map(|(m, n)| (m.clone(), *n))
-                .collect(),
-        };
         let result = store.reconcile_source_with_activity(
             previous.as_ref(),
             &next,
@@ -882,5 +1095,12 @@ fn collect_antigravity_with_policy(
     // Titles live in a separate summaries DB; failing to read them must not
     // fail usage collection.
     let _ = import_titles(gemini_home, store);
+    if gemini_home.is_dir() && report.skipped_sources == 0 && ambiguous.is_empty() {
+        report.tombstoned += store.reconcile_missing_sources(
+            "antigravity",
+            &present_source_keys,
+            now_ms()?,
+        )?;
+    }
     Ok(report)
 }

@@ -2,10 +2,12 @@
 //! Transport is one request/response per short-lived Agent process; stdout is
 //! reserved for one JSON envelope and stderr for diagnostics.
 use serde::{Deserialize, Serialize};
-use tokenscope_local_store::DashboardSnapshot;
+use tokenscope_local_store::{DashboardSnapshot, SessionAnalysisPage};
 
 pub const MODULE_ID: &str = "local-ipc";
 pub const PROTOCOL_VERSION: u32 = 2;
+pub const AGENT_CONTROL_DIRECTORY: &str = "agent-control";
+pub const SESSION_ANALYSIS_PROTOCOL_VERSION: u32 = 1;
 /// Tracks the store schema so the desktop can never render a snapshot produced
 /// by an incompatible Agent/database pair.
 pub const SUPPORTED_DB_SCHEMA_VERSION: i64 = tokenscope_local_store::schema::VERSION;
@@ -15,6 +17,29 @@ pub const SUPPORTED_DB_SCHEMA_VERSION: i64 = tokenscope_local_store::schema::VER
 pub struct DashboardResponse {
     pub protocol_version: u32,
     pub snapshot: DashboardSnapshot,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionAnalysisResponse {
+    pub protocol_version: u32,
+    pub analysis: SessionAnalysisPage,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionDeleteRequest {
+    pub request_id: String,
+    pub tool_id: String,
+    pub session_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionDeleteResponse {
+    pub request_id: String,
+    pub deleted_records: usize,
+    pub error: Option<String>,
 }
 
 impl DashboardResponse {
@@ -34,6 +59,22 @@ impl DashboardResponse {
         }
         if !["today", "7d", "30d", "all", "custom"].contains(&self.snapshot.range.as_str()) {
             return Err("invalid dashboard range");
+        }
+        Ok(())
+    }
+}
+
+impl SessionAnalysisResponse {
+    pub fn new(analysis: SessionAnalysisPage) -> Self {
+        Self {
+            protocol_version: SESSION_ANALYSIS_PROTOCOL_VERSION,
+            analysis,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.protocol_version != SESSION_ANALYSIS_PROTOCOL_VERSION {
+            return Err("unsupported session analysis protocol version");
         }
         Ok(())
     }

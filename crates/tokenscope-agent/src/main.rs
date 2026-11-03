@@ -5,6 +5,7 @@ mod codex_rpc;
 mod dashboard;
 mod lock;
 mod quota;
+mod session_control;
 mod shutdown;
 use lock::AgentLock;
 use std::{
@@ -17,7 +18,7 @@ use std::{
     thread,
     time::Duration,
 };
-use tokenscope_local_ipc::DashboardResponse;
+use tokenscope_local_ipc::{DashboardResponse, SessionAnalysisResponse};
 use tokenscope_local_store::{LocalIdentity, LocalStore};
 use tokenscope_source_antigravity::collect_antigravity_tolerant;
 use tokenscope_source_claude::collect_claude;
@@ -49,6 +50,7 @@ fn usage() {
     [--import-antigravity-quota-json PATH] [--refresh-antigravity-quota] [--refresh-codex-quota] [--show-antigravity]
     [--display-name NAME] [--time-zone ZONE] [--daemon --interval-seconds 120]
     --dashboard-json [--range today|7d|30d|all]
+    --session-analysis-json [--range today|7d|30d|all] [--session-search TEXT]
     --shutdown-file PATH (daemon only; desktop lifecycle signal)
     --sync --hub-url HTTPS_OR_LOOPBACK | --sync-config PATH (daemon mode enables periodic sync)
     --sync-config PATH (plain-text non-secret Hub origin; read dynamically by daemon)
@@ -75,14 +77,15 @@ fn collect_once(
     if options.codex {
         let report = collect_codex_precise_tolerant(options.codex_root, store, options.device_id)?;
         println!(
-            "codex scanned={} inserted={} revised={} unchanged={} parsed_lines={} partial={} skipped={}",
+            "codex scanned={} inserted={} revised={} unchanged={} parsed_lines={} partial={} skipped={} missing_source_tombstones={}",
             report.files,
             report.inserted,
             report.revised,
             report.unchanged,
             report.lines,
             report.pending,
-            report.unsupported
+            report.unsupported,
+            report.missing_source_tombstones
         );
     }
     if options.claude {
@@ -175,12 +178,21 @@ fn pull_device_once(
     Ok(applied)
 }
 
-fn sleep_interruptible(stop: &AtomicBool, seconds: u64, shutdown_file: Option<&Path>) -> bool {
+fn sleep_interruptible(
+    stop: &AtomicBool,
+    seconds: u64,
+    shutdown_file: Option<&Path>,
+    store: &mut LocalStore,
+    db_path: &Path,
+) -> bool {
     // Poll a file-based shutdown signal so Tauri can stop the daemon without
     // platform-specific signals. Collection is never interrupted mid-transaction.
     for _ in 0..seconds.saturating_mul(4) {
         if stop.load(Ordering::Relaxed) || shutdown::consume(shutdown_file) {
             return true;
+        }
+        if let Err(error) = session_control::process_pending_requests(store, db_path) {
+            eprintln!("TokenScope session control warning: {error}");
         }
         thread::sleep(Duration::from_millis(250));
     }
@@ -208,6 +220,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let refresh_antigravity_quota = args.iter().any(|s| s == "--refresh-antigravity-quota");
     let refresh_codex_quota = args.iter().any(|s| s == "--refresh-codex-quota");
     let dashboard_json = args.iter().any(|s| s == "--dashboard-json");
+    let session_analysis_json = args.iter().any(|s| s == "--session-analysis-json");
     let sync_once = args.iter().any(|s| s == "--sync-once");
     let sync_enabled = args.iter().any(|s| s == "--sync");
     let sync_status = args.iter().any(|s| s == "--sync-status");
@@ -226,6 +239,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         && !refresh_antigravity_quota
         && !refresh_codex_quota
         && !dashboard_json
+        && !session_analysis_json
         && !sync_once
         && !sync_enabled
         && !sync_status
@@ -241,7 +255,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("manual quota import and local RPC refresh cannot be combined".into());
     }
     if daemon
-        && (quota_path.is_some() || show_antigravity || dashboard_json || sync_once || sync_status)
+        && (quota_path.is_some()
+            || show_antigravity
+            || dashboard_json
+            || session_analysis_json
+            || sync_once
+            || sync_status)
     {
         return Err(
             "quota import, dashboard query and status display are one-shot commands".into(),
@@ -258,6 +277,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             || show_antigravity
             || refresh_antigravity_quota
             || refresh_codex_quota
+            || session_analysis_json
             || sync_once
             || sync_enabled
             || sync_status
@@ -278,6 +298,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         )?;
         let response = DashboardResponse::new(snapshot);
         println!("{}", serde_json::to_string(&response)?);
+        return Ok(());
+    }
+    if session_analysis_json {
+        if codex
+            || claude
+            || antigravity
+            || quota_path.is_some()
+            || show_antigravity
+            || refresh_antigravity_quota
+            || refresh_codex_quota
+            || dashboard_json
+            || sync_once
+            || sync_enabled
+            || sync_status
+        {
+            return Err("session analysis query cannot be combined with collection or quota commands".into());
+        }
+        let db = PathBuf::from(arg(&args, "--db").ok_or("missing --db")?);
+        let start_date = arg(&args, "--start-date");
+        let end_date = arg(&args, "--end-date");
+        let analysis = dashboard::read_session_analysis(
+            &db,
+            &dashboard_range,
+            session_offset,
+            arg(&args, "--session-search").as_deref(),
+            arg(&args, "--session-tool").as_deref(),
+            arg(&args, "--session-model").as_deref(),
+            arg(&args, "--session-project").as_deref(),
+            start_date.as_deref(),
+            end_date.as_deref(),
+        )?;
+        println!("{}", serde_json::to_string(&SessionAnalysisResponse::new(analysis))?);
         return Ok(());
     }
     let interval: u64 = arg(&args, "--interval-seconds")
@@ -382,6 +434,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if shutdown::consume(shutdown_file.as_deref()) {
             break;
         }
+        if let Err(error) = session_control::process_pending_requests(&mut store, &db) {
+            eprintln!("TokenScope session control warning: {error}");
+        }
         match collect_once(
             &mut store,
             &CollectionOptions {
@@ -450,7 +505,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .saturating_mul(1_u64 << consecutive_failures.min(4))
                 .min(300)
         };
-        if sleep_interruptible(&stop, backoff, shutdown_file.as_deref()) {
+        if sleep_interruptible(&stop, backoff, shutdown_file.as_deref(), &mut store, &db) {
             break;
         }
     }

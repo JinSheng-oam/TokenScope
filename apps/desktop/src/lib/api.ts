@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AgentStatus, DashboardRange, DashboardResponse, DashboardSnapshot, PairHubResult, RemoteDeviceList } from './types';
+import type { AgentStatus, DashboardRange, DashboardResponse, DashboardSnapshot, PairHubResult, RemoteDeviceList, SessionAnalysisPage, SessionAnalysisResponse } from './types';
 
 export function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -27,6 +27,32 @@ export async function getDashboardSnapshot(
   });
   if (response.protocol_version !== 2) throw new Error('Agent IPC 协议版本不兼容，请更新桌面端和 Agent');
   return response.snapshot;
+}
+
+export async function getSessionAnalysis(
+  range: DashboardRange,
+  sessionOffset: number,
+  filters: { search: string; toolId: string; modelId: string; projectId: string },
+  startDate?: string,
+  endDate?: string
+): Promise<SessionAnalysisPage> {
+  const response = await invoke<SessionAnalysisResponse>('get_session_analysis', {
+    range,
+    sessionOffset,
+    search: filters.search.trim() || null,
+    toolId: filters.toolId || null,
+    modelId: filters.modelId || null,
+    projectId: filters.projectId || null,
+    startDate: startDate ?? null,
+    endDate: endDate ?? null,
+  });
+  if (response.protocol_version !== 1) throw new Error('会话查询协议版本不兼容，请更新桌面端和 Agent');
+  return response.analysis;
+}
+
+export async function deleteSession(toolId: string, sessionId: string): Promise<number> {
+  const response = await invoke<{ deletedRecords: number }>('delete_session', { toolId, sessionId });
+  return response.deletedRecords;
 }
 
 export async function getAutostartEnabled(): Promise<boolean> {

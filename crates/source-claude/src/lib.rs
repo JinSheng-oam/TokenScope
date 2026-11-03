@@ -105,6 +105,51 @@ fn clean_title(raw: &str) -> Option<String> {
     Some(text)
 }
 
+fn project_name_from_cwd(cwd: &str) -> Option<String> {
+    let path = Path::new(cwd);
+    if cwd.len() > 4096 || !path.is_absolute() || cwd.chars().any(char::is_control) {
+        return None;
+    }
+    let mut root = path;
+    for ancestor in path.ancestors().take(64) {
+        if ancestor.join(".git").exists() {
+            root = ancestor;
+            break;
+        }
+    }
+    let name = root.file_name()?.to_str()?.trim();
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.chars().count() > 120
+        || name.chars().any(char::is_control)
+        || name.contains('/')
+        || name.contains('\\')
+    {
+        return None;
+    }
+    Some(name.to_owned())
+}
+
+fn project_name_from_transcript(path: &Path) -> Option<String> {
+    let file = File::open(path).ok()?;
+    let mut reader = BufReader::new(file);
+    for _ in 0..32 {
+        let (line, _) = bounded_line(&mut reader).ok()??;
+        let Ok(value) = serde_json::from_slice::<Value>(&line) else {
+            continue;
+        };
+        if let Some(name) = value
+            .get("cwd")
+            .and_then(Value::as_str)
+            .and_then(project_name_from_cwd)
+        {
+            return Some(name);
+        }
+    }
+    None
+}
+
 fn now_ms() -> Result<i64> {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -500,10 +545,19 @@ pub fn collect_claude(
 ) -> Result<ClaudeReport> {
     let mut report = ClaudeReport::default();
     let mut sources = HashSet::new();
+    let mut present_sources = HashSet::new();
+    let mut named_projects = HashSet::new();
     for path in discover_claude_files(config_dir)? {
-        let (key, _, _) = file_identity(&path, config_dir)?;
+        let (key, _, project_id) = file_identity(&path, config_dir)?;
+        present_sources.insert(key.clone());
         if !sources.insert(key.clone()) {
             return Err(ClaudeError::Invalid("duplicate transcript identity"));
+        }
+        if !named_projects.contains(&project_id) {
+            if let Some(name) = project_name_from_transcript(&path) {
+                store.upsert_project_name(&project_id, &name, now_ms()?)?;
+                named_projects.insert(project_id);
+            }
         }
         let previous = store.checkpoint("claude", &key)?;
         let scan =
@@ -542,6 +596,10 @@ pub fn collect_claude(
         report.inserted += result.applied.inserted;
         report.revised += result.applied.revised;
         report.unchanged_records += result.applied.unchanged;
+    }
+    if config_dir.join("projects").is_dir() && report.pending_files == 0 {
+        report.deleted +=
+            store.reconcile_missing_sources("claude", &present_sources, now_ms()?)?;
     }
     Ok(report)
 }

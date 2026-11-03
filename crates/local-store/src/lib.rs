@@ -11,7 +11,8 @@ pub use repository::{
     AntigravityActivity, AntigravityActivitySummary, AntigravityQuota, ApplyReport, CodexQuota,
     DailyUsage, DashboardQuery, DashboardSnapshot, LocalIdentity, LocalStore,
     ModelActivityBreakdown, OutboxEntry, ReconcileReport, RemoteDeviceUsage, RemoteUsageBreakdown,
-    RemoteUsageChange, RemoteUsageTotals, SessionUsage, SessionUsagePage, SourceCheckpoint,
-    SourceHealth, SyncOutboxStatus, UsageBreakdown, UsageTotals,
+    RemoteUsageChange, RemoteUsageTotals, SessionAnalysisPage, SessionFilterOption,
+    SessionFilterOptions, SessionUsage, SessionUsagePage, SourceCheckpoint, SourceHealth,
+    SyncOutboxStatus, UsageBreakdown, UsageTotals,
 };
 pub const MODULE_ID: &str = "local-store";

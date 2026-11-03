@@ -66,7 +66,7 @@ fn unique_db() -> PathBuf {
 #[test]
 fn migration_and_one_time_identity() {
     let mut db = setup();
-    assert_eq!(db.schema_version().unwrap(), 6);
+    assert_eq!(db.schema_version().unwrap(), 7);
     db.init_identity(&identity()).unwrap();
     assert_eq!(db.identity().unwrap(), Some(identity()));
     let mut changed = identity();

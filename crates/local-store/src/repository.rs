@@ -27,6 +27,16 @@ WITH session_links AS (
 
 const PROJECT_LABEL_TOOL_ID: &str = "project-label";
 
+fn tool_display_name(tool_id: &str) -> String {
+    match tool_id {
+        "codex" => "Codex".into(),
+        "claude" => "Claude".into(),
+        "antigravity" => "Antigravity".into(),
+        "deepseek-harness" => "DeepSeek Harness".into(),
+        _ => tool_id.to_owned(),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalIdentity {
     pub device_id: String,
@@ -1286,7 +1296,7 @@ impl LocalStore {
                 untimed,
             ) = row?;
             let (key, label) = match (column, raw_key) {
-                ("tool_id", Some(value)) => (value.clone(), value),
+                ("tool_id", Some(value)) => (value.clone(), tool_display_name(&value)),
                 ("model_id", Some(value)) => (value.clone(), value),
                 ("project_id", Some(value)) => {
                     let label = self
@@ -1790,12 +1800,7 @@ impl LocalStore {
             let session_count = pos_u64(session_count)?;
             let option = match dimension.as_str() {
                 "tool" => SessionFilterOption {
-                    label: match key.as_str() {
-                        "codex" => "Codex".into(),
-                        "claude" => "Claude".into(),
-                        "antigravity" => "Antigravity".into(),
-                        _ => key.clone(),
-                    },
+                    label: tool_display_name(&key),
                     key,
                     session_count,
                 },
@@ -2736,11 +2741,12 @@ impl LocalStore {
                 "model_id" => "unknown-model".into(),
                 _ => "no-project".into(),
             });
-            let label = if dimension == "project_id" {
-                self.project_display_name(&key)?
-                    .unwrap_or_else(|| "项目名称未提供".into())
-            } else {
-                key.clone()
+            let label = match dimension {
+                "project_id" => self
+                    .project_display_name(&key)?
+                    .unwrap_or_else(|| "项目名称未提供".into()),
+                "tool_id" => tool_display_name(&key),
+                _ => key.clone(),
             };
             out.push(RemoteUsageBreakdown {
                 owner_device_id: owner,

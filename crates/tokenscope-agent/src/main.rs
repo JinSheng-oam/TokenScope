@@ -23,6 +23,7 @@ use tokenscope_local_store::{LocalIdentity, LocalStore};
 use tokenscope_source_antigravity::collect_antigravity_tolerant;
 use tokenscope_source_claude::collect_claude;
 use tokenscope_source_codex::collect_codex_precise_tolerant;
+use tokenscope_source_deepseek_harness::collect_deepseek_harness;
 use tokenscope_sync_client::{
     worker::{pull_usage_changes_once, sync_outbox_once},
     CredentialKey, HubClient, HubUrl, KeyringCredentialStore, SecretStore,
@@ -42,11 +43,22 @@ fn config_home(env_name: &str, child: &str) -> Result<PathBuf, Box<dyn std::erro
         .ok_or("missing HOME/USERPROFILE")?;
     Ok(PathBuf::from(base).join(child))
 }
+fn deepseek_harness_home() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(home) = env::var_os("DSH_HOME")
+        .filter(|value| !value.to_string_lossy().trim().is_empty())
+    {
+        return Ok(PathBuf::from(home));
+    }
+    let base = env::var_os("USERPROFILE")
+        .or_else(|| env::var_os("HOME"))
+        .ok_or("missing USERPROFILE/HOME")?;
+    Ok(PathBuf::from(base).join(".dsh"))
+}
 fn usage() {
     println!(
-        r#"Usage: tokenscope-agent [--scan-codex | --scan-claude | --scan-antigravity | --scan-all]
+        r#"Usage: tokenscope-agent [--scan-codex | --scan-claude | --scan-antigravity | --scan-deepseek-harness | --scan-all]
     --db PATH [--device-id ID] [--codex-home PATH] [--claude-home PATH]
-    [--antigravity-home PATH] [--antigravity-estimates]
+    [--antigravity-home PATH] [--deepseek-harness-home PATH] [--antigravity-estimates]
     [--import-antigravity-quota-json PATH] [--refresh-antigravity-quota] [--refresh-codex-quota] [--show-antigravity]
     [--display-name NAME] [--time-zone ZONE] [--daemon --interval-seconds 120]
     --dashboard-json [--range today|7d|30d|all]
@@ -63,9 +75,11 @@ struct CollectionOptions<'a> {
     codex: bool,
     claude: bool,
     antigravity: bool,
+    deepseek_harness: bool,
     codex_root: &'a Path,
     claude_root: &'a Path,
     antigravity_root: &'a Path,
+    deepseek_harness_root: &'a Path,
     allow_antigravity_estimates: bool,
     device_id: &'a str,
 }
@@ -115,6 +129,27 @@ fn collect_once(
                 r.tombstoned, r.unchanged, r.skipped_sources, r.skipped_rows,
                 if options.allow_antigravity_estimates { "ESTIMATED" } else { "ACTIVITY_ONLY" }),
             Err(err) => eprintln!("TokenScope: antigravity scan skipped: {err}"),
+        }
+    }
+    if options.deepseek_harness {
+        match collect_deepseek_harness(
+            options.deepseek_harness_root,
+            store,
+            options.device_id,
+        ) {
+            Ok(report) => println!(
+                "deepseek-harness files={} sessions={} model_calls={} inserted={} revised={} unchanged={} pending={} skipped={} deleted={}",
+                report.source_files,
+                report.sessions,
+                report.model_calls,
+                report.inserted,
+                report.revised,
+                report.unchanged,
+                report.pending,
+                report.skipped,
+                report.deleted,
+            ),
+            Err(error) => eprintln!("TokenScope: deepseek-harness scan skipped: {error}"),
         }
     }
     Ok(())
@@ -214,6 +249,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let antigravity = args
         .iter()
         .any(|s| s == "--scan-antigravity" || s == "--scan-all");
+    let deepseek_harness = args
+        .iter()
+        .any(|s| s == "--scan-deepseek-harness" || s == "--scan-all");
     let ag_estimates = args.iter().any(|s| s == "--antigravity-estimates");
     let quota_path = arg(&args, "--import-antigravity-quota-json");
     let show_antigravity = args.iter().any(|s| s == "--show-antigravity");
@@ -378,6 +416,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some(p) => PathBuf::from(p),
         None => config_home("TOKENSCOPE_GEMINI_HOME", ".gemini")?,
     };
+    let deepseek_harness_root = match arg(&args, "--deepseek-harness-home") {
+        Some(path) => PathBuf::from(path),
+        None => deepseek_harness_home()?,
+    };
     if let Some(path) = quota_path {
         let imported = quota::import_file(&mut store, &PathBuf::from(path))?;
         println!("antigravity quota snapshots updated={imported} (manual import, NOT OAuth/RPC)");
@@ -389,16 +431,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     if !daemon {
-        if codex || claude || antigravity {
+        if codex || claude || antigravity || deepseek_harness {
             collect_once(
                 &mut store,
                 &CollectionOptions {
                     codex,
                     claude,
                     antigravity,
+                    deepseek_harness,
                     codex_root: &codex_root,
                     claude_root: &claude_root,
                     antigravity_root: &ag_root,
+                    deepseek_harness_root: &deepseek_harness_root,
                     allow_antigravity_estimates: ag_estimates,
                     device_id: &device,
                 },
@@ -443,9 +487,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 codex,
                 claude,
                 antigravity,
+                    deepseek_harness,
                 codex_root: &codex_root,
                 claude_root: &claude_root,
                 antigravity_root: &ag_root,
+                    deepseek_harness_root: &deepseek_harness_root,
                 allow_antigravity_estimates: ag_estimates,
                 device_id: &device,
             },

@@ -1,0 +1,17 @@
+[package]
+name = "tokenscope-source-deepseek-harness"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "tokenscope_source_deepseek_harness"
+path = "src/lib.rs"
+
+[dependencies]
+tokenscope-core-domain = { path = "../core-domain" }
+tokenscope-local-store = { path = "../local-store" }
+serde_json = "1"
+sha2 = "0.10"
+zstd = "0.13"

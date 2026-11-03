@@ -1914,6 +1914,7 @@ dependencies = [
  "tokenscope-source-antigravity",
  "tokenscope-source-claude",
  "tokenscope-source-codex",
+ "tokenscope-source-deepseek-harness",
  "tokenscope-sync-client",
  "uuid",
 ]
@@ -1979,6 +1980,17 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "serde",
+ "serde_json",
+ "sha2",
+ "tokenscope-core-domain",
+ "tokenscope-local-store",
+ "zstd",
+]
+
+[[package]]
+name = "tokenscope-source-deepseek-harness"
+version = "0.1.0"
+dependencies = [
  "serde_json",
  "sha2",
  "tokenscope-core-domain",

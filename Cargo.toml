@@ -6,6 +6,7 @@ members = [
   "crates/source-codex",
   "crates/source-opencode",
   "crates/source-antigravity",
+  "crates/source-deepseek-harness",
   "crates/collector-engine",
   "crates/local-store",
   "crates/sync-client",

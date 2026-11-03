@@ -741,7 +741,7 @@ fn request_agent_session_delete(
     tool_id: &str,
     session_id: &str,
 ) -> Result<SessionDeleteResponse, String> {
-    if !["codex", "claude", "antigravity"].contains(&tool_id) {
+    if !["codex", "claude", "antigravity", "deepseek-harness"].contains(&tool_id) {
         return Err("不支持删除此来源的会话".into());
     }
     if session_id.is_empty() || session_id.len() > 1024 || session_id.chars().any(char::is_control) {

@@ -70,8 +70,181 @@
   let hubPaired = false;
   let remoteSelectedDevice = 'all';
 
-  // Sort States
+  // Sort & Trend View States
   let modelSortBy: 'tokens' | 'cost' = 'tokens';
+  type TrendViewMode = 'curve' | 'heatmap';
+  let trendViewMode: TrendViewMode = 'curve';
+  let hoveredCurveIndex: number | null = null;
+  let heatmapAllDaily: DashboardSnapshot['daily'] | null = null;
+
+  type HeatmapCell = {
+    date: string;
+    weekdayLabel: string;
+    total_tokens: number;
+    input_tokens: number;
+    output_tokens: number;
+    cache_tokens: number;
+    level: 0 | 1 | 2 | 3 | 4;
+    isToday: boolean;
+    isFuture: boolean;
+    colIndex: number;
+    rowIndex: number;
+  };
+  let hoveredHeatmapCell: HeatmapCell | null = null;
+
+  const weekdayNames = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+
+  function parseIsoLocal(iso: string): Date {
+    const [y, m, d] = iso.split('-').map((n) => Number(n));
+    if (!y || !m || !d) return new Date();
+    return new Date(y, m - 1, d);
+  }
+
+  function formatWeekday(iso: string): string {
+    const dt = parseIsoLocal(iso);
+    const monIdx = (dt.getDay() + 6) % 7;
+    return weekdayNames[monIdx] ?? '';
+  }
+
+  function buildHeatmapCalendar(
+    dailyList: DashboardSnapshot['daily'],
+    anchorIso: string,
+    numWeeks = 20
+  ): {
+    weeks: HeatmapCell[][];
+    monthHeaders: { colIndex: number; label: string }[];
+    activeDays: number;
+    peakDate: string;
+    peakTokens: number;
+  } {
+    const map = new Map<string, DashboardSnapshot['daily'][number]>();
+    for (const item of dailyList) {
+      map.set(item.date, item);
+    }
+
+    const todayStr = anchorIso || toIsoDate(new Date());
+    const todayDate = parseIsoLocal(todayStr);
+    const todayMonIdx = (todayDate.getDay() + 6) % 7; // 0=Mon .. 6=Sun
+    const currentWeekMonday = new Date(
+      todayDate.getFullYear(),
+      todayDate.getMonth(),
+      todayDate.getDate() - todayMonIdx
+    );
+    const startMonday = new Date(
+      currentWeekMonday.getFullYear(),
+      currentWeekMonday.getMonth(),
+      currentWeekMonday.getDate() - (numWeeks - 1) * 7
+    );
+
+    let maxTokens = 0;
+    let activeDays = 0;
+    let peakDate = '';
+    for (let w = 0; w < numWeeks; w++) {
+      for (let d = 0; d < 7; d++) {
+        const cellDate = new Date(
+          startMonday.getFullYear(),
+          startMonday.getMonth(),
+          startMonday.getDate() + w * 7 + d
+        );
+        const iso = toIsoDate(cellDate);
+        if (iso > todayStr) continue;
+        const entry = map.get(iso);
+        const total = entry?.total_tokens ?? 0;
+        if (total > 0) {
+          activeDays += 1;
+          if (total > maxTokens) {
+            maxTokens = total;
+            peakDate = iso;
+          }
+        }
+      }
+    }
+
+    const weeks: HeatmapCell[][] = [];
+    const monthHeaders: { colIndex: number; label: string }[] = [];
+    let lastMonth = -1;
+
+    for (let w = 0; w < numWeeks; w++) {
+      const col: HeatmapCell[] = [];
+      for (let d = 0; d < 7; d++) {
+        const cellDate = new Date(
+          startMonday.getFullYear(),
+          startMonday.getMonth(),
+          startMonday.getDate() + w * 7 + d
+        );
+        const iso = toIsoDate(cellDate);
+        const isFuture = iso > todayStr;
+        const entry = map.get(iso);
+        const total = isFuture ? 0 : (entry?.total_tokens ?? 0);
+        const input = isFuture ? 0 : (entry?.input_tokens ?? 0);
+        const output = isFuture ? 0 : (entry?.output_tokens ?? 0);
+        const cache = Math.max(0, total - input - output);
+
+        let level: 0 | 1 | 2 | 3 | 4 = 0;
+        if (total > 0 && maxTokens > 0) {
+          const ratio = total / maxTokens;
+          if (ratio >= 0.75) level = 4;
+          else if (ratio >= 0.5) level = 3;
+          else if (ratio >= 0.22) level = 2;
+          else level = 1;
+        }
+
+        if (d === 0) {
+          const m = cellDate.getMonth() + 1;
+          if (m !== lastMonth) {
+            monthHeaders.push({ colIndex: w, label: `${m}月` });
+            lastMonth = m;
+          }
+        }
+
+        col.push({
+          date: iso,
+          weekdayLabel: weekdayNames[d] ?? '',
+          total_tokens: total,
+          input_tokens: input,
+          output_tokens: output,
+          cache_tokens: cache,
+          level,
+          isToday: iso === todayStr,
+          isFuture,
+          colIndex: w,
+          rowIndex: d,
+        });
+      }
+      weeks.push(col);
+    }
+
+    return {
+      weeks,
+      monthHeaders,
+      activeDays,
+      peakDate,
+      peakTokens: maxTokens,
+    };
+  }
+
+  async function ensureHeatmapAllDaily() {
+    if (!runtimeAvailable) return;
+    if (range === 'all' && snapshot?.daily) {
+      heatmapAllDaily = snapshot.daily;
+      return;
+    }
+    try {
+      const fullSnap = await getDashboardSnapshot('all', 0);
+      heatmapAllDaily = fullSnap.daily;
+    } catch {
+      // Fallback to current snapshot.daily silently
+    }
+  }
+
+  function handleSwitchTrendView(mode: TrendViewMode) {
+    trendViewMode = mode;
+    hoveredCurveIndex = null;
+    hoveredHeatmapCell = null;
+    if (mode === 'heatmap') {
+      void ensureHeatmapAllDaily();
+    }
+  }
 
   // Navigation Items
   const navItems: { id: Tab; label: string; iconKey: keyof typeof icons }[] = [
@@ -91,10 +264,20 @@
   $: chartMax = Math.max(1, ...chartValues.map((item) => item.total_tokens));
   $: chartPoints = chartValues.map((item, index) => ({
     ...item,
+    cache_tokens: Math.max(0, item.total_tokens - item.input_tokens - item.output_tokens),
+    weekdayLabel: formatWeekday(item.date),
     x: chartValues.length <= 1 ? 420 : 64 + (index / (chartValues.length - 1)) * 708,
     y: 156 - (item.total_tokens / chartMax) * 124,
   }));
   $: chartPath = chartPoints.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
+  $: hoveredCurvePoint =
+    hoveredCurveIndex !== null && chartPoints[hoveredCurveIndex]
+      ? chartPoints[hoveredCurveIndex]
+      : null;
+  $: heatmapCalendar = buildHeatmapCalendar(
+    heatmapAllDaily ?? chartValues,
+    todayIso || chartValues[chartValues.length - 1]?.date || ''
+  );
 
   function formatCompactTokens(value: number): string {
     if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
@@ -206,6 +389,11 @@
         snapshot = null;
       } else {
         snapshot = await fetchSnapshot();
+        if (range === 'all') {
+          heatmapAllDaily = snapshot.daily;
+        } else if (trendViewMode === 'heatmap') {
+          void ensureHeatmapAllDaily();
+        }
         if (!hubDisplayName && snapshot.identity?.display_name) {
           hubDisplayName = snapshot.identity.display_name;
         }
@@ -793,111 +981,312 @@
               <div class="panel-head">
                 <div>
                   <h2>Token 使用趋势</h2>
-                  <p>按本机时区自然日汇集（时间未知记录不进入日趋势）</p>
+                  <p>
+                    {trendViewMode === 'heatmap'
+                      ? '近 20 周每日 Token 活跃度热力图（鼠标悬浮方格可查看当日明细）'
+                      : '按本机时区自然日汇集（鼠标悬浮节点可查看当日构成明细）'}
+                  </p>
                 </div>
-                <span class="panel-tag">{snapshot.daily.length} 天样本</span>
-              </div>
-
-              {#if chartValues.length > 0}
-                <div class="chart-wrap">
-                  <svg class="trend-svg" viewBox="0 0 800 176" role="img" aria-label="每日 Token 使用曲线">
-                    <defs>
-                      <linearGradient id="trendGradient" x1="0" x2="0" y1="0" y2="1">
-                        <stop offset="0%" stop-color="var(--brand-primary)" stop-opacity="0.32" />
-                        <stop offset="100%" stop-color="var(--brand-primary)" stop-opacity="0.02" />
-                      </linearGradient>
-                    </defs>
-
-                    <!-- Y-Axis Labels & Horizontal Grid Lines -->
-                    <text x="6" y="36" class="chart-grid-label">{formatCompactTokens(chartMax)}</text>
-                    <text x="6" y="98" class="chart-grid-label">{formatCompactTokens(Math.round(chartMax / 2))}</text>
-                    <text x="6" y="159" class="chart-grid-label">0</text>
-
-                    {#each [32, 73, 114, 156] as y}
-                      <line x1="56" x2="784" y1={y} y2={y} stroke="var(--chart-grid)" stroke-dasharray="4 6" />
-                    {/each}
-
-                    {#if chartPoints.length > 1}
-                      <path
-                        d={`${chartPath} L ${chartPoints[chartPoints.length - 1].x} 156 L ${chartPoints[0].x} 156 Z`}
-                        fill="url(#trendGradient)"
-                      />
-                      <path
-                        d={chartPath}
-                        fill="none"
-                        stroke="var(--brand-primary)"
-                        stroke-width="2.25"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      />
-                      {#each chartPoints as point}
-                        <circle
-                          cx={point.x}
-                          cy={point.y}
-                          r="3.5"
-                          fill="var(--bg-card)"
-                          stroke="var(--brand-primary)"
-                          stroke-width="2"
-                        >
-                          <title>{point.date}：{formatNumber(point.total_tokens)} Token</title>
-                        </circle>
-                      {/each}
-                    {:else if chartPoints.length === 1}
-                      <!-- Single-Day Visual Pulse ("今天" / 1-Day Sample) -->
-                      <line
-                        x1="56"
-                        x2="784"
-                        y1={chartPoints[0].y}
-                        y2={chartPoints[0].y}
-                        stroke="var(--brand-border)"
-                        stroke-dasharray="3 4"
-                      />
-                      <rect
-                        x={chartPoints[0].x - 32}
-                        y={chartPoints[0].y}
-                        width="64"
-                        height={Math.max(6, 156 - chartPoints[0].y)}
-                        rx="6"
-                        fill="url(#trendGradient)"
-                        stroke="var(--brand-border)"
-                      />
-                      <circle
-                        cx={chartPoints[0].x}
-                        cy={chartPoints[0].y}
-                        r="11"
-                        fill="var(--brand-subtle)"
-                      />
-                      <circle
-                        cx={chartPoints[0].x}
-                        cy={chartPoints[0].y}
-                        r="4.5"
-                        fill="var(--bg-card)"
-                        stroke="var(--brand-primary)"
-                        stroke-width="2.5"
-                      />
-                      <g transform={`translate(${chartPoints[0].x + 20}, ${Math.max(18, chartPoints[0].y - 12)})`}>
-                        <rect x="0" y="0" width="210" height="44" rx="6" class="chart-callout-box" />
-                        <text x="12" y="18" class="chart-callout-title">
-                          {chartPoints[0].date} · {formatNumber(chartPoints[0].total_tokens)}
-                        </text>
-                        <text x="12" y="34" class="chart-callout-sub">
-                          当日单点峰值（切换“7 天”查看连续曲线）
-                        </text>
-                      </g>
-                    {/if}
-                  </svg>
-                  <div class="chart-axis-labels">
-                    <span>{chartValues[0]?.date ?? ''}</span>
-                    <span class="chart-legend-inline">
-                      <span class="chart-legend-item"><span class="integrity-dot" style="background: var(--brand-primary);"></span>输入 {inputShareRate}%</span>
-                      <span class="chart-legend-item"><span class="integrity-dot aggregate"></span>输出 {outputShareRate}%</span>
-                      <span class="chart-legend-item"><span class="integrity-dot exact"></span>缓存 {cacheShareRate}%</span>
-                    </span>
-                    <span>{chartValues[chartValues.length - 1]?.date ?? ''}</span>
+                <div class="panel-head-actions">
+                  <span class="panel-tag">
+                    {trendViewMode === 'heatmap'
+                      ? `活跃 ${heatmapCalendar.activeDays} 天`
+                      : `${snapshot.daily.length} 天样本`}
+                  </span>
+                  <div class="trend-mode-switch" role="group" aria-label="趋势图显示模式">
+                    <button
+                      class="trend-mode-btn"
+                      class:selected={trendViewMode === 'curve'}
+                      aria-pressed={trendViewMode === 'curve'}
+                      onclick={() => handleSwitchTrendView('curve')}
+                    >
+                      曲线图
+                    </button>
+                    <button
+                      class="trend-mode-btn"
+                      class:selected={trendViewMode === 'heatmap'}
+                      aria-pressed={trendViewMode === 'heatmap'}
+                      onclick={() => handleSwitchTrendView('heatmap')}
+                    >
+                      热力图
+                    </button>
                   </div>
                 </div>
+              </div>
+
+              {#if trendViewMode === 'curve'}
+                {#if chartValues.length > 0}
+                  <div class="chart-wrap">
+                    <div
+                      class="chart-stage"
+                      role="region"
+                      aria-label="Token 趋势交互区"
+                      onmouseleave={() => (hoveredCurveIndex = null)}
+                    >
+                      <svg class="trend-svg" viewBox="0 0 800 176" role="img" aria-label="每日 Token 使用曲线">
+                        <defs>
+                          <linearGradient id="trendGradient" x1="0" x2="0" y1="0" y2="1">
+                            <stop offset="0%" stop-color="var(--brand-primary)" stop-opacity="0.32" />
+                            <stop offset="100%" stop-color="var(--brand-primary)" stop-opacity="0.02" />
+                          </linearGradient>
+                        </defs>
+
+                        <!-- Y-Axis Labels & Horizontal Grid Lines -->
+                        <text x="6" y="36" class="chart-grid-label">{formatCompactTokens(chartMax)}</text>
+                        <text x="6" y="98" class="chart-grid-label">{formatCompactTokens(Math.round(chartMax / 2))}</text>
+                        <text x="6" y="159" class="chart-grid-label">0</text>
+
+                        {#each [32, 73, 114, 156] as y}
+                          <line x1="56" x2="784" y1={y} y2={y} stroke="var(--chart-grid)" stroke-dasharray="4 6" />
+                        {/each}
+
+                        {#if hoveredCurvePoint}
+                          <line
+                            x1={hoveredCurvePoint.x}
+                            x2={hoveredCurvePoint.x}
+                            y1="24"
+                            y2="156"
+                            stroke="var(--brand-primary)"
+                            stroke-width="1.25"
+                            stroke-dasharray="3 3"
+                          />
+                        {/if}
+
+                        {#if chartPoints.length > 1}
+                          <path
+                            d={`${chartPath} L ${chartPoints[chartPoints.length - 1].x} 156 L ${chartPoints[0].x} 156 Z`}
+                            fill="url(#trendGradient)"
+                          />
+                          <path
+                            d={chartPath}
+                            fill="none"
+                            stroke="var(--brand-primary)"
+                            stroke-width="2.25"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                          {#each chartPoints as point, idx}
+                            {#if hoveredCurveIndex === idx}
+                              <circle cx={point.x} cy={point.y} r="9" fill="var(--brand-subtle)" />
+                            {/if}
+                            <circle
+                              cx={point.x}
+                              cy={point.y}
+                              r={hoveredCurveIndex === idx ? 4.5 : 3.5}
+                              fill={hoveredCurveIndex === idx ? 'var(--brand-primary)' : 'var(--bg-card)'}
+                              stroke="var(--brand-primary)"
+                              stroke-width="2"
+                            />
+                            <rect
+                              class="chart-hit-rect"
+                              x={point.x - Math.max(12, 360 / chartPoints.length)}
+                              y="16"
+                              width={Math.max(24, 720 / chartPoints.length)}
+                              height="146"
+                              role="presentation"
+                              onmouseenter={() => (hoveredCurveIndex = idx)}
+                            />
+                          {/each}
+                        {:else if chartPoints.length === 1}
+                          <!-- Single-Day Visual Pulse ("今天" / 1-Day Sample) -->
+                          <line
+                            x1="56"
+                            x2="784"
+                            y1={chartPoints[0].y}
+                            y2={chartPoints[0].y}
+                            stroke="var(--brand-border)"
+                            stroke-dasharray="3 4"
+                          />
+                          <rect
+                            x={chartPoints[0].x - 32}
+                            y={chartPoints[0].y}
+                            width="64"
+                            height={Math.max(6, 156 - chartPoints[0].y)}
+                            rx="6"
+                            fill="url(#trendGradient)"
+                            stroke="var(--brand-border)"
+                          />
+                          <circle
+                            cx={chartPoints[0].x}
+                            cy={chartPoints[0].y}
+                            r="11"
+                            fill="var(--brand-subtle)"
+                          />
+                          <circle
+                            cx={chartPoints[0].x}
+                            cy={chartPoints[0].y}
+                            r="4.5"
+                            fill="var(--bg-card)"
+                            stroke="var(--brand-primary)"
+                            stroke-width="2.5"
+                          />
+                          <rect
+                            class="chart-hit-rect"
+                            x="56"
+                            y="16"
+                            width="728"
+                            height="146"
+                            role="presentation"
+                            onmouseenter={() => (hoveredCurveIndex = 0)}
+                          />
+                        {/if}
+                      </svg>
+
+                      {#if hoveredCurvePoint}
+                        <div
+                          class="chart-hover-tooltip"
+                          style={`left: ${(hoveredCurvePoint.x / 800) * 100}%; top: ${Math.max(10, (hoveredCurvePoint.y / 176) * 100)}%; transform: translate(${hoveredCurvePoint.x > 520 ? '-106%' : hoveredCurvePoint.x < 220 ? '8%' : '-50%'}, ${hoveredCurvePoint.y < 68 ? '14px' : '-108%'});`}
+                        >
+                          <div class="tooltip-head">
+                            <span>{hoveredCurvePoint.date}</span>
+                            <span class="tooltip-weekday">{hoveredCurvePoint.weekdayLabel}</span>
+                          </div>
+                          <div class="tooltip-total-row">
+                            <span>当日总计</span>
+                            <strong>{formatNumber(hoveredCurvePoint.total_tokens)}</strong>
+                          </div>
+                          <div class="tooltip-breakdown">
+                            <div class="tooltip-row">
+                              <span class="tooltip-row-label"><span class="integrity-dot" style="background: var(--brand-primary);"></span>输入 Token</span>
+                              <span class="tooltip-row-val">{formatNumber(hoveredCurvePoint.input_tokens)}</span>
+                            </div>
+                            <div class="tooltip-row">
+                              <span class="tooltip-row-label"><span class="integrity-dot aggregate"></span>输出 Token</span>
+                              <span class="tooltip-row-val">{formatNumber(hoveredCurvePoint.output_tokens)}</span>
+                            </div>
+                            <div class="tooltip-row">
+                              <span class="tooltip-row-label"><span class="integrity-dot exact"></span>缓存/其他</span>
+                              <span class="tooltip-row-val">{formatNumber(hoveredCurvePoint.cache_tokens)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      {/if}
+                    </div>
+
+                    <div class="chart-axis-labels">
+                      <span>{chartValues[0]?.date ?? ''}</span>
+                      <span class="chart-legend-inline">
+                        <span class="chart-legend-item"><span class="integrity-dot" style="background: var(--brand-primary);"></span>输入 {inputShareRate}%</span>
+                        <span class="chart-legend-item"><span class="integrity-dot aggregate"></span>输出 {outputShareRate}%</span>
+                        <span class="chart-legend-item"><span class="integrity-dot exact"></span>缓存 {cacheShareRate}%</span>
+                      </span>
+                      <span>{chartValues[chartValues.length - 1]?.date ?? ''}</span>
+                    </div>
+                  </div>
+                {:else}
+                  <div class="empty-box">当前时间范围暂无可绘制的用量记录</div>
+                {/if}
               {:else}
-                <div class="empty-box">当前时间范围暂无可绘制的用量记录</div>
+                <!-- GitHub-Style Contribution Heatmap -->
+                <div class="chart-wrap">
+                  <div
+                    class="heatmap-stage"
+                    role="region"
+                    aria-label="GitHub 风格每日 Token 热力图"
+                    onmouseleave={() => (hoveredHeatmapCell = null)}
+                  >
+                    <div class="heatmap-scroll">
+                      <div class="heatmap-inner">
+                        <div
+                          class="heatmap-months"
+                          style={`grid-template-columns: repeat(${heatmapCalendar.weeks.length}, minmax(0, 1fr));`}
+                        >
+                          {#each heatmapCalendar.weeks as _, colIdx}
+                            {@const header = heatmapCalendar.monthHeaders.find((m) => m.colIndex === colIdx)}
+                            <span class="heatmap-month-label">{header ? header.label : ''}</span>
+                          {/each}
+                        </div>
+
+                        <div class="heatmap-body">
+                          <div class="heatmap-weekdays" aria-hidden="true">
+                            <span>一</span>
+                            <span></span>
+                            <span>三</span>
+                            <span></span>
+                            <span>五</span>
+                            <span></span>
+                            <span>日</span>
+                          </div>
+
+                          <div
+                            class="heatmap-grid"
+                            style={`grid-template-columns: repeat(${heatmapCalendar.weeks.length}, minmax(0, 1fr));`}
+                          >
+                            {#each heatmapCalendar.weeks as weekCol}
+                              <div class="heatmap-week-col">
+                                {#each weekCol as cell}
+                                  <div
+                                    class={`heatmap-cell level-${cell.level}`}
+                                    class:is-today={cell.isToday}
+                                    class:is-future={cell.isFuture}
+                                    role="img"
+                                    aria-label={`${cell.date} ${cell.weekdayLabel}：${formatNumber(cell.total_tokens)} Token`}
+                                    onmouseenter={() => {
+                                      if (!cell.isFuture) hoveredHeatmapCell = cell;
+                                    }}
+                                  ></div>
+                                {/each}
+                              </div>
+                            {/each}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {#if hoveredHeatmapCell}
+                      <div
+                        class="chart-hover-tooltip"
+                        style={`left: ${((hoveredHeatmapCell.colIndex + 0.5) / heatmapCalendar.weeks.length) * 100}%; top: ${((hoveredHeatmapCell.rowIndex + 1) / 7) * 100}%; transform: translate(${hoveredHeatmapCell.colIndex > heatmapCalendar.weeks.length - 6 ? '-105%' : hoveredHeatmapCell.colIndex < 4 ? '6%' : '-50%'}, -115%);`}
+                      >
+                        <div class="tooltip-head">
+                          <span>{hoveredHeatmapCell.date}{hoveredHeatmapCell.isToday ? ' (今天)' : ''}</span>
+                          <span class="tooltip-weekday">{hoveredHeatmapCell.weekdayLabel}</span>
+                        </div>
+                        <div class="tooltip-total-row">
+                          <span>当日总计</span>
+                          <strong>{formatNumber(hoveredHeatmapCell.total_tokens)}</strong>
+                        </div>
+                        {#if hoveredHeatmapCell.total_tokens > 0}
+                          <div class="tooltip-breakdown">
+                            <div class="tooltip-row">
+                              <span class="tooltip-row-label"><span class="integrity-dot" style="background: var(--brand-primary);"></span>输入 Token</span>
+                              <span class="tooltip-row-val">{formatNumber(hoveredHeatmapCell.input_tokens)}</span>
+                            </div>
+                            <div class="tooltip-row">
+                              <span class="tooltip-row-label"><span class="integrity-dot aggregate"></span>输出 Token</span>
+                              <span class="tooltip-row-val">{formatNumber(hoveredHeatmapCell.output_tokens)}</span>
+                            </div>
+                            <div class="tooltip-row">
+                              <span class="tooltip-row-label"><span class="integrity-dot exact"></span>缓存/其他</span>
+                              <span class="tooltip-row-val">{formatNumber(hoveredHeatmapCell.cache_tokens)}</span>
+                            </div>
+                          </div>
+                        {:else}
+                          <div style="font-size: 10.5px; color: var(--text-muted);">当日无 Token 消耗记录</div>
+                        {/if}
+                      </div>
+                    {/if}
+                  </div>
+
+                  <div class="chart-axis-labels">
+                    <span>
+                      {#if heatmapCalendar.peakDate}
+                        单日峰值：{heatmapCalendar.peakDate} ({formatCompactTokens(heatmapCalendar.peakTokens)})
+                      {:else}
+                        近 20 周暂无消耗峰值
+                      {/if}
+                    </span>
+                    <span class="heatmap-legend-scale" aria-label="热力图颜色强度图例">
+                      <span>少</span>
+                      <span class="heatmap-legend-swatch level-0"></span>
+                      <span class="heatmap-legend-swatch level-1"></span>
+                      <span class="heatmap-legend-swatch level-2"></span>
+                      <span class="heatmap-legend-swatch level-3"></span>
+                      <span class="heatmap-legend-swatch level-4"></span>
+                      <span>多</span>
+                    </span>
+                  </div>
+                </div>
               {/if}
             </section>
 

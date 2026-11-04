@@ -86,6 +86,46 @@ export async function rotateHubDeviceToken(hubUrl: string): Promise<number> {
   return invoke<number>('rotate_hub_device_token', { hubUrl });
 }
 
+export type WebDavPublicConfig = {
+  enabled: boolean;
+  url: string;
+  username: string;
+};
+
+export type WebDavSyncReport = {
+  uploaded_records: number;
+  uploaded_batches: number;
+  pulled_records: number;
+  pulled_batches: number;
+  remaining_due: number;
+};
+
+export async function testWebDavConnection(url: string, username: string, password: string): Promise<boolean> {
+  return invoke<boolean>('test_webdav_connection', { url, username, password });
+}
+
+export async function saveWebDavConfig(url: string, username: string, password: string): Promise<boolean> {
+  return invoke<boolean>('save_webdav_config', { url, username, password });
+}
+
+export async function getWebDavConfig(): Promise<WebDavPublicConfig | null> {
+  return invoke<WebDavPublicConfig | null>('get_webdav_config');
+}
+
+export async function disconnectWebDav(): Promise<boolean> {
+  return invoke<boolean>('disconnect_webdav');
+}
+
+export async function listWebDavDevices(): Promise<RemoteDeviceList> {
+  const response = await invoke<RemoteDeviceList>('list_webdav_devices');
+  if (response.protocol_version !== 1) throw new Error('WebDAV API 协议版本不兼容');
+  return response;
+}
+
+export async function syncWebDavNow(): Promise<WebDavSyncReport> {
+  return invoke<WebDavSyncReport>('sync_webdav_now');
+}
+
 export async function disconnectHubDevice(hubUrl: string): Promise<boolean> {
   return invoke<boolean>('disconnect_hub_device', { hubUrl });
 }

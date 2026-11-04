@@ -10,9 +10,20 @@
 
 .quota-item-card {
   padding: 16px;
-  background-color: var(--bg-secondary);
+  background-color: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.quota-item-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.quota-item-card.exhausted {
+  border-color: var(--color-danger-border);
+  background: linear-gradient(180deg, var(--color-danger-bg) 0%, var(--bg-card) 60%);
 }
 
 .quota-item-head {
@@ -27,7 +38,32 @@
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
-  text-transform: capitalize;
+}
+
+.quota-head-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.quota-status-pill {
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: var(--radius-pill);
+}
+
+.quota-status-pill.exhausted {
+  color: var(--color-danger);
+  background-color: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+}
+
+.quota-status-pill.warning {
+  color: var(--color-estimated);
+  background-color: var(--color-estimated-bg);
+  border: 1px solid var(--color-estimated-border);
 }
 
 .quota-gauge-val {
@@ -38,16 +74,39 @@
   letter-spacing: -0.03em;
   line-height: 1.1;
   color: var(--color-quota);
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
-.quota-reset-countdown {
-  font-size: 11px;
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 9px;
+.quota-gauge-val.exhausted {
+  color: var(--color-danger);
+}
+
+.quota-gauge-val.warning {
+  color: var(--color-estimated);
+}
+
+/* Track slot: Must have strong contrast against card bg */
+.quota-track {
+  height: 6px;
+  width: 100%;
+  border-radius: var(--radius-pill);
+  background-color: var(--border-subtle);
+  overflow: hidden;
+}
+
+.quota-track .rank-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background-color: var(--color-quota);
+  transition: width var(--transition-base);
+}
+
+.quota-track .rank-fill.warning {
+  background-color: var(--color-estimated);
+}
+
+.quota-track .rank-fill.exhausted {
+  background-color: var(--color-danger);
 }
 
 .quota-track.unknown {
@@ -58,7 +117,38 @@
   );
 }
 
+.quota-reset-countdown {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+}
+
 .quota-reset-countdown svg {
   width: 13px;
   height: 13px;
+  opacity: 0.75;
+}
+
+.quota-observed {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 5px;
+}
+
+.quota-observed.stale {
+  color: var(--color-estimated);
+}
+
+.stale-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--color-estimated);
+  display: inline-block;
 }

@@ -9,6 +9,7 @@ pub mod credentials;
 pub mod pairing;
 pub mod sync;
 pub mod url;
+pub mod webdav;
 pub mod worker;
 
 pub use client::{HubClient, HubClientError};

@@ -4,6 +4,7 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
   import type { ThemeMode } from '../lib/theme';
   import { icons } from '../lib/icons';
   import type { AgentStatus, DiagnosticReport, DiagnosticSeverity } from '../lib/types';
+  import { REFRESH_INTERVAL_OPTIONS } from './settingsController';
 
   export let currentTheme: ThemeMode;
   export let autostartEnabled: boolean;
@@ -13,12 +14,26 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
   export let agent: AgentStatus | null;
   export let onSwitchTheme: (mode: ThemeMode) => void;
   export let onToggleAutostart: () => Promise<void>;
+  export let rollingNumbersEnabled = true;
+  export let onToggleRollingNumbers: () => void = () => {};
+  export let refreshIntervalMs = 300_000;
+  export let onSetRefreshInterval: (intervalMs: number) => void = () => {};
   export let onRunDiagnostics: () => Promise<DiagnosticReport>;
 
   let diagnostics: DiagnosticReport | null = null;
   let diagnosticsBusy = false;
   let diagnosticsError = '';
   let diagnosticsCopied = false;
+
+  const refreshOptions = REFRESH_INTERVAL_OPTIONS.map((value) => ({
+    value,
+    label:
+      value === 0
+        ? '仅事件推送'
+        : value < 60_000
+          ? `${value / 1000} 秒`
+          : `${value / 60_000} 分钟`,
+  }));
 
   async function runDiagnostics() {
     if (diagnosticsBusy || !runtimeAvailable) return;
@@ -68,11 +83,16 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
     if (!value) return '未建立';
     return value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
   }
+
+  function refreshLabel(intervalMs: number): string {
+    if (intervalMs <= 0) return '仅事件推送';
+    return intervalMs < 60_000 ? `${intervalMs / 1000} 秒` : `${intervalMs / 60_000} 分钟`;
+  }
 </script>
 
 <div class="page-header">
             <h1>系统设置与偏好</h1>
-            <p>控制系统常驻生命周期、主题外观与本地采集行为</p>
+            <p>控制系统常驻生命周期、主题外观、更新速率与本地采集行为</p>
           </div>
 
           <!-- Theme Settings -->
@@ -107,6 +127,47 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
                 {@html icons.laptop} 跟随操作系统
               </button>
             </div>
+
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-subtle);">
+              <div>
+                <div style="font-size: 13px; font-weight: 600; color: var(--text-primary);">核心指标数字滚动动效</div>
+                <p style="margin: 2px 0 0; font-size: 11.5px; color: var(--text-muted);">开启后，使用总览顶部 4 项 Token 指标在加载与实时更新时呈现滚轮计数过渡</p>
+              </div>
+              <button
+                class="btn-secondary"
+                class:selected={rollingNumbersEnabled}
+                aria-pressed={rollingNumbersEnabled}
+                onclick={onToggleRollingNumbers}
+              >
+                {rollingNumbersEnabled ? '已开启 · 点击关闭' : '已关闭 · 点击开启'}
+              </button>
+            </div>
+          </section>
+
+          <!-- Refresh Interval -->
+          <section class="panel-card" style="margin-bottom: 16px;">
+            <div class="panel-head">
+              <div>
+                <h2>数据更新速率</h2>
+                <p>Agent 检测到新用量后会即时推送；这里控制兜底全量刷新的间隔，越短越及时，查询开销也越高。</p>
+              </div>
+              <span class="precision-chip aggregate">{refreshLabel(refreshIntervalMs)}</span>
+            </div>
+            <div class="refresh-options" role="group" aria-label="数据更新速率">
+              {#each refreshOptions as option}
+                <button
+                  class="btn-secondary"
+                  class:selected={refreshIntervalMs === option.value}
+                  aria-pressed={refreshIntervalMs === option.value}
+                  onclick={() => onSetRefreshInterval(option.value)}
+                >
+                  {option.label}
+                </button>
+              {/each}
+            </div>
+            <p class="refresh-hint">
+              当前{refreshIntervalMs > 0 ? `每 ${refreshLabel(refreshIntervalMs)} 兜底刷新一次` : '仅依赖 Agent 事件推送'}；顶栏刷新按钮始终可用。
+            </p>
           </section>
 
           <!-- Autostart & Lifecycle -->
@@ -130,16 +191,39 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
           </section>
 
           <!-- Supervisor Health Diagnostics -->
-          <section class="panel-card">
+          <section class="panel-card" style="margin-bottom: 16px;">
             <div class="panel-head">
-              <h2>本地 Agent 守护进程诊断</h2>
-              <span class="precision-chip exact">{agent?.running ? 'RUNNING' : 'STOPPED'}</span>
+              <div>
+                <h2>本地 Agent 守护进程状态</h2>
+                <p>负责 SQLite 本地写入、各工具日志监听解析与 Hub 凭证通信</p>
+              </div>
+              <span class="precision-chip" class:exact={agent?.running} class:danger={!agent?.running}>
+                {agent?.running ? 'RUNNING' : 'STOPPED'}
+              </span>
             </div>
-            <div style="font-size: 12.5px; line-height: 1.8; color: var(--text-secondary);">
-              <div>进程状态：<strong>{agent?.running ? '正常运行中' : '未连接'}</strong></div>
-              <div>二进制就绪：<strong>{agent?.binaryFound ? '已部署 (resources/tokenscope-agent)' : '未找到'}</strong></div>
-              <div>SQLite WAL 状态：<strong>{agent?.databaseReady ? '已就绪 (tokenscope.db)' : '初始化中'}</strong></div>
-              <div>桌面里程碑：<strong>{BOOTSTRAP_STAGE}</strong></div>
+            <div class="device-summary-strip" style="margin-bottom: 0;">
+              <div class="summary-pill-card">
+                <span class="summary-label">守护进程状态</span>
+                <div style="display: flex; align-items: center; gap: 7px; margin-top: 6px;">
+                  <span class="source-status-dot" class:complete={agent?.running} class:degraded={!agent?.running}></span>
+                  <strong style="margin: 0; font-size: 14px;">{agent?.running ? '正常运行中' : '未连接'}</strong>
+                </div>
+              </div>
+              <div class="summary-pill-card">
+                <span class="summary-label">Agent 二进制</span>
+                <strong style="margin-top: 6px; font-size: 14px;">{agent?.binaryFound ? '已部署' : '未找到'}</strong>
+                <span class="summary-foot">resources/tokenscope-agent</span>
+              </div>
+              <div class="summary-pill-card">
+                <span class="summary-label">SQLite WAL 数据库</span>
+                <strong style="margin-top: 6px; font-size: 14px;">{agent?.databaseReady ? '就绪 (WAL 模式)' : '初始化中'}</strong>
+                <span class="summary-foot">tokenscope.db</span>
+              </div>
+              <div class="summary-pill-card">
+                <span class="summary-label">桌面版本里程碑</span>
+                <strong style="margin-top: 6px; font-size: 14px;" class="tabular">{BOOTSTRAP_STAGE}</strong>
+                <span class="summary-foot">Linear Craft UI</span>
+              </div>
             </div>
           </section>
 
@@ -212,6 +296,23 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
           </section>
 
 <style>
+  .refresh-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .refresh-options .btn-secondary {
+    min-width: 76px;
+  }
+
+  .refresh-hint {
+    margin: 12px 0 0;
+    color: var(--text-muted);
+    font-size: 11.5px;
+    line-height: 1.55;
+  }
+
   .diagnostic-panel {
     margin-top: 16px;
   }

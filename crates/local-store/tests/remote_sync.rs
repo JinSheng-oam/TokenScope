@@ -140,3 +140,46 @@ fn invalid_remote_page_rolls_back_cache_and_cursor() {
         0
     );
 }
+
+
+#[test]
+fn webdav_device_batch_apply_and_cursor_tracking() {
+    use tokenscope_core_domain::RevisionedRecord;
+    let mut db = setup();
+    assert_eq!(db.webdav_cursor("remote-mac-01").unwrap(), 0);
+
+    let mut remote = rec("remote-msg-1", 100);
+    remote.owner_device_id = "remote-mac-01".into();
+    let env1 = RevisionedRecord::from_store(remote.clone(), 1).unwrap();
+
+    let applied = db
+        .apply_remote_device_records("remote-mac-01", 1, &[env1], 1000)
+        .unwrap();
+    assert_eq!(applied, 1);
+    assert_eq!(db.webdav_cursor("remote-mac-01").unwrap(), 1);
+
+    // Re-applying same or older batch seq is a no-op
+    let reapply = db
+        .apply_remote_device_records("remote-mac-01", 1, &[], 2000)
+        .unwrap();
+    assert_eq!(reapply, 0);
+
+    // Apply batch 2 with an updated record
+    remote.usage.output_tokens = 50;
+    let env2 = RevisionedRecord::from_store(remote, 2).unwrap();
+    let applied2 = db
+        .apply_remote_device_records("remote-mac-01", 2, &[env2], 3000)
+        .unwrap();
+    assert_eq!(applied2, 1);
+    assert_eq!(db.webdav_cursor("remote-mac-01").unwrap(), 2);
+
+    let totals = db
+        .remote_usage_totals(Some("remote-mac-01"), None, None)
+        .unwrap();
+    assert_eq!(totals.record_count, 1);
+    assert_eq!(totals.output_tokens, 50);
+
+    let cursors = db.all_webdav_cursors().unwrap();
+    assert_eq!(cursors.len(), 1);
+    assert_eq!(cursors[0], ("remote-mac-01".to_string(), 2));
+}

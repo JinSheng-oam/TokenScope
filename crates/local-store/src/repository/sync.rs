@@ -483,4 +483,134 @@ impl LocalStore {
         )?;
         Ok(changed == 1)
     }
+
+    pub fn webdav_cursor(&self, remote_device_id: &str) -> Result<u64> {
+        let val: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT last_batch_seq FROM webdav_sync_cursors WHERE remote_device_id = ?1",
+                [remote_device_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match val {
+            Some(v) => pos_u64(v),
+            None => Ok(0),
+        }
+    }
+
+    pub fn set_webdav_cursor(
+        &mut self,
+        remote_device_id: &str,
+        last_batch_seq: u64,
+        updated_at_ms: i64,
+    ) -> Result<()> {
+        if remote_device_id.is_empty() || updated_at_ms < 0 {
+            return Err(StoreError::InvalidInput("webdav cursor"));
+        }
+        self.conn.execute(
+            "INSERT INTO webdav_sync_cursors(remote_device_id, last_batch_seq, updated_at_ms)              VALUES (?1, ?2, ?3)              ON CONFLICT(remote_device_id) DO UPDATE SET              last_batch_seq = excluded.last_batch_seq, updated_at_ms = excluded.updated_at_ms",
+            params![remote_device_id, db_int(last_batch_seq)?, updated_at_ms],
+        )?;
+        Ok(())
+    }
+
+    pub fn all_webdav_cursors(&self) -> Result<Vec<(String, u64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT remote_device_id, last_batch_seq FROM webdav_sync_cursors ORDER BY remote_device_id"
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        let mut out = Vec::new();
+        for r in rows {
+            let (dev, seq) = r?;
+            out.push((dev, pos_u64(seq)?));
+        }
+        Ok(out)
+    }
+
+    pub fn apply_remote_device_records(
+        &mut self,
+        owner_device_id: &str,
+        batch_seq: u64,
+        records: &[tokenscope_core_domain::RevisionedRecord],
+        now_ms: i64,
+    ) -> Result<usize> {
+        if owner_device_id.is_empty() || batch_seq == 0 {
+            return Err(StoreError::InvalidInput("webdav batch parameters"));
+        }
+        let local_device_id = self.identity()?.map(|i| i.device_id).unwrap_or_default();
+        if owner_device_id == local_device_id {
+            return Ok(0);
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current_cursor: Option<i64> = tx
+            .query_row(
+                "SELECT last_batch_seq FROM webdav_sync_cursors WHERE remote_device_id = ?1",
+                [owner_device_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let current_seq = match current_cursor {
+            Some(v) => pos_u64(v)?,
+            None => 0,
+        };
+        if batch_seq <= current_seq {
+            return Ok(0);
+        }
+        let mut applied = 0usize;
+        for record in records {
+            if record.record.owner_device_id != owner_device_id {
+                return Err(StoreError::InvalidInput(
+                    "record owner does not match batch device",
+                ));
+            }
+            record
+                .validate()
+                .map_err(|_| StoreError::InvalidInput("invalid record envelope"))?;
+            let raw = serde_json::to_string(&record.record)
+                .map_err(|_| StoreError::InvalidInput("remote record serialization"))?;
+            let rev = db_int(record.record_revision)?;
+            let old: Option<(i64, String)> = tx
+                .query_row(
+                    "SELECT record_revision, payload_hash FROM remote_usage_cache WHERE owner_device_id = ?1 AND record_id = ?2",
+                    params![owner_device_id, record.record.record_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            if let Some((old_rev, old_hash)) = old {
+                if rev < old_rev {
+                    continue;
+                }
+                if rev == old_rev && !old_hash.is_empty() {
+                    if old_hash != record.payload_hash {
+                        return Err(StoreError::DatabaseInconsistent(
+                            "remote same-revision payload conflict",
+                        ));
+                    }
+                    continue;
+                }
+            }
+            tx.execute(
+                "INSERT INTO remote_usage_cache(owner_device_id, record_id, record_revision, payload_json, is_deleted, server_change_seq, payload_hash)                  VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)                  ON CONFLICT(owner_device_id, record_id) DO UPDATE SET                  record_revision=excluded.record_revision, payload_json=excluded.payload_json, is_deleted=excluded.is_deleted,                  server_change_seq=excluded.server_change_seq, payload_hash=excluded.payload_hash                  WHERE excluded.record_revision > remote_usage_cache.record_revision                  OR (excluded.record_revision = remote_usage_cache.record_revision AND remote_usage_cache.payload_hash = '')",
+                params![
+                    owner_device_id,
+                    record.record.record_id,
+                    rev,
+                    raw,
+                    record.record.is_deleted as i64,
+                    db_int(batch_seq)?,
+                    record.payload_hash,
+                ],
+            )?;
+            applied += 1;
+        }
+        tx.execute(
+            "INSERT INTO webdav_sync_cursors(remote_device_id, last_batch_seq, updated_at_ms)              VALUES (?1, ?2, ?3)              ON CONFLICT(remote_device_id) DO UPDATE SET              last_batch_seq = excluded.last_batch_seq, updated_at_ms = excluded.updated_at_ms",
+            params![owner_device_id, db_int(batch_seq)?, now_ms],
+        )?;
+        tx.commit()?;
+        Ok(applied)
+    }
 }

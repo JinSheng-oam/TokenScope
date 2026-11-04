@@ -34,7 +34,7 @@ impl LocalStore {
             return Err(StoreError::UnsupportedSchema(version));
         }
         let migration_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7)",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7,8)",
             [],
             |r| r.get(0),
         )?;
@@ -43,7 +43,7 @@ impl LocalStore {
             [],
             |r| r.get(0),
         )?;
-        if migration_count != 7 || highest != schema::VERSION {
+        if migration_count != 8 || highest != schema::VERSION {
             return Err(StoreError::DatabaseInconsistent(
                 "schema_migrations disagrees with user_version",
             ));
@@ -213,8 +213,30 @@ impl LocalStore {
             tx.execute_batch("PRAGMA user_version=7;")?;
             tx.commit()?;
         }
+        if version <= 7 {
+            let prior: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7)",
+                [],
+                |r| r.get(0),
+            )?;
+            let highest: i64 = conn.query_row(
+                "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
+                [],
+                |r| r.get(0),
+            )?;
+            if prior != 7 || highest != 7 {
+                return Err(StoreError::DatabaseInconsistent(
+                    "legacy migration metadata invalid before v8",
+                ));
+            }
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(schema::MIGRATION_008)?;
+            tx.execute("INSERT INTO schema_migrations(version,applied_at_ms) VALUES (8,CAST(strftime('%s','now') AS INTEGER)*1000)", [])?;
+            tx.execute_batch("PRAGMA user_version=8;")?;
+            tx.commit()?;
+        }
         let count: i64 = conn.query_row(
-            "SELECT count(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7)",
+            "SELECT count(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7,8)",
             [],
             |r| r.get(0),
         )?;
@@ -223,7 +245,7 @@ impl LocalStore {
             [],
             |r| r.get(0),
         )?;
-        if count != 7 || future != schema::VERSION {
+        if count != 8 || future != schema::VERSION {
             return Err(StoreError::DatabaseInconsistent(
                 "schema_migrations disagrees with user_version",
             ));

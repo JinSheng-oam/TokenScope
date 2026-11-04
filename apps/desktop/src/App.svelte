@@ -1,4 +1,5 @@
 <script lang="ts">
+  import DateRangePicker from './lib/DateRangePicker.svelte';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import {
@@ -15,11 +16,12 @@
   } from './lib/api';
   import { toIsoDate, type HeatmapCell } from './lib/heatmap';
   import { createHubController } from './lib/hubController';
+  import { createWebDavController } from './lib/webdavController';
   import { icons } from './lib/icons';
   import { createSessionController } from './lib/sessionController';
   import { createSettingsController } from './lib/settingsController';
   import { BOOTSTRAP_STAGE } from './lib/status';
-  import type { AgentStatus, DashboardRange, DashboardSnapshot } from './lib/types';
+  import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice } from './lib/types';
   import DevicesPage from './lib/DevicesPage.svelte';
   import ModelsPage from './lib/ModelsPage.svelte';
   import OverviewPage from './lib/OverviewPage.svelte';
@@ -45,6 +47,8 @@
   let runtimeAvailable = isTauriRuntime();
   let agentStarted = false;
   let unlistenDashboard: (() => void) | undefined;
+  let refreshTimer: number | undefined;
+  let appliedRefreshIntervalMs = -1;
 
   let remoteSelectedDevice = 'all';
 
@@ -59,6 +63,8 @@
   const sessionState = sessionController.state;
   const hubController = createHubController(() => runtimeAvailable);
   const hubState = hubController.state;
+  const webdavController = createWebDavController(() => runtimeAvailable);
+  const webdavState = webdavController.state;
   const settingsController = createSettingsController(() => runtimeAvailable);
   const settingsState = settingsController.state;
 
@@ -68,6 +74,15 @@
   let hoveredCurveIndex: number | null = null;
   let heatmapAllDaily: DashboardSnapshot['daily'] | null = null;
   let hoveredHeatmapCell: HeatmapCell | null = null;
+
+  $: exhaustedQuotaCount = (
+    (snapshot?.codex_quota.filter((q) => q.remaining_basis_points !== null && q.remaining_basis_points === 0).length ?? 0) +
+    (snapshot?.antigravity_quota.filter((q) => q.remaining_basis_points !== null && q.remaining_basis_points === 0).length ?? 0)
+  );
+  $: warningQuotaCount = (
+    (snapshot?.codex_quota.filter((q) => q.remaining_basis_points !== null && q.remaining_basis_points > 0 && q.remaining_basis_points < 2000).length ?? 0) +
+    (snapshot?.antigravity_quota.filter((q) => q.remaining_basis_points !== null && q.remaining_basis_points > 0 && q.remaining_basis_points < 2000).length ?? 0)
+  );
 
   async function ensureHeatmapAllDaily() {
     if (!runtimeAvailable) return;
@@ -123,7 +138,21 @@
   $: sessionFilterOptions = $sessionState.analysis?.filter_options ?? { tools: [], models: [], projects: [] };
   $: hasSessionFilters = Boolean($sessionState.search.trim() || $sessionState.toolFilter || $sessionState.modelFilter || $sessionState.projectFilter);
 
-  $: selectableRemoteDevices = $hubState.devices.filter(
+  $: allRemoteDevices = (() => {
+    const map = new Map<string, RemoteDevice>();
+    for (const d of $hubState.devices) {
+      map.set(d.device_id, d);
+    }
+    for (const d of $webdavState.devices) {
+      const existing = map.get(d.device_id);
+      if (!existing || (d.last_seen_ms ?? 0) >= (existing.last_seen_ms ?? 0)) {
+        map.set(d.device_id, d);
+      }
+    }
+    return Array.from(map.values());
+  })();
+
+  $: selectableRemoteDevices = allRemoteDevices.filter(
     (d) => d.device_id !== snapshot?.identity?.device_id && d.revoked_at_ms === null
   );
 
@@ -217,10 +246,26 @@
     if (activeTab === nextTab) return;
     activeTab = nextTab;
     if (nextTab === 'sessions') void sessionController.load();
+    if (nextTab === 'devices' && $webdavState.enabled) void webdavController.refreshDevices();
+  }
+
+  function applyRefreshInterval(intervalMs: number) {
+    if (intervalMs === appliedRefreshIntervalMs) return;
+    appliedRefreshIntervalMs = intervalMs;
+    if (refreshTimer !== undefined) {
+      window.clearInterval(refreshTimer);
+      refreshTimer = undefined;
+    }
+    if (intervalMs > 0) {
+      refreshTimer = window.setInterval(() => void loadDashboard(false), intervalMs);
+    }
   }
 
   onMount(() => {
     const cleanSettingsListener = settingsController.mount();
+    const unsubscribeRefreshInterval = settingsState.subscribe((current) => {
+      applyRefreshInterval(current.refreshIntervalMs);
+    });
 
     todayIso = toIsoDate(new Date());
     if (!customEnd) customEnd = todayIso;
@@ -242,13 +287,15 @@
 
     void loadDashboard().then(() => {
       if ($hubState.hubUrl) void hubController.refreshDevices();
+      void webdavController.loadConfig();
     });
 
-    // The Agent pushes a fresh projection whenever the WAL changes; this slow
-    // timer is only a safety net for a restarted Agent or a missed event.
-    const timer = window.setInterval(() => void loadDashboard(false), 300_000);
     return () => {
-      window.clearInterval(timer);
+      unsubscribeRefreshInterval();
+      if (refreshTimer !== undefined) {
+        window.clearInterval(refreshTimer);
+        refreshTimer = undefined;
+      }
       sessionController.dispose();
       unlistenDashboard?.();
       cleanSettingsListener();
@@ -286,8 +333,10 @@
         >
           <span class="nav-icon">{@html icons[item.iconKey]}</span>
           <span class="nav-label">{item.label}</span>
-          {#if item.id === 'quota' && ((snapshot?.antigravity_quota.length ?? 0) + (snapshot?.codex_quota.length ?? 0)) > 0}
-            <span class="nav-badge">{(snapshot?.antigravity_quota.length ?? 0) + (snapshot?.codex_quota.length ?? 0)}</span>
+          {#if item.id === 'quota' && exhaustedQuotaCount > 0}
+            <span class="nav-badge alert" title={`${exhaustedQuotaCount} 个额度池已耗尽`}>{exhaustedQuotaCount}</span>
+          {:else if item.id === 'quota' && warningQuotaCount > 0}
+            <span class="nav-badge warn" title={`${warningQuotaCount} 个额度池即将用尽`}>{warningQuotaCount}</span>
           {/if}
         </button>
       {/each}
@@ -357,17 +406,50 @@
             { value: '7d', label: '7 天' },
             { value: '30d', label: '30 天' },
             { value: 'all', label: '全部' },
-            { value: 'custom', label: '自定义' },
           ] as opt}
             <button
               class="range-btn"
               class:selected={range === opt.value}
               aria-pressed={range === opt.value}
-              onclick={() => handleSelectRange(opt.value as DashboardRange)}
+              onclick={() => {
+                customOpen = false;
+                handleSelectRange(opt.value as DashboardRange);
+              }}
             >
               {opt.label}
             </button>
           {/each}
+
+          <div class="custom-range-wrap">
+            <button
+              class="range-btn"
+              class:selected={range === 'custom'}
+              aria-pressed={range === 'custom'}
+              onclick={() => (customOpen = !customOpen)}
+            >
+              {#if range === 'custom' && customStart && customEnd}
+                {customStart.slice(5)} ~ {customEnd.slice(5)}
+              {:else}
+                自定义
+              {/if}
+            </button>
+
+            {#if customOpen}
+              <DateRangePicker
+                startDate={customStart}
+                endDate={customEnd}
+                maxDate={todayIso}
+                onApply={({ start, end }) => {
+                  customStart = start;
+                  customEnd = end;
+                  customOpen = false;
+                  handleSelectRange('custom');
+                  applyCustomRange();
+                }}
+                onClose={() => (customOpen = false)}
+              />
+            {/if}
+          </div>
         </div>
 
         <button
@@ -381,17 +463,6 @@
         </button>
       </div>
     </header>
-
-    {#if customOpen}
-      <div class="custom-range-bar" aria-label="自定义日期范围">
-        <span class="custom-range-label">自定义范围</span>
-        <input type="date" bind:value={customStart} max={customEnd || todayIso} aria-label="开始日期" />
-        <span class="custom-range-sep">至</span>
-        <input type="date" bind:value={customEnd} min={customStart} max={todayIso} aria-label="结束日期" />
-        <button class="custom-range-apply" onclick={applyCustomRange}>应用</button>
-        <button class="custom-range-close" onclick={() => (customOpen = false)}>收起</button>
-      </div>
-    {/if}
 
     <!-- Page Content Area -->
     <section class="page-content" class:fit-viewport={activeTab === 'overview' && !!snapshot && !loading}>
@@ -440,6 +511,7 @@
             heatmapCalendar={dashboardView.heatmapCalendar}
             topToolTotal={dashboardView.topToolTotal}
             onSwitchTrendView={handleSwitchTrendView}
+            rollingNumbersEnabled={$settingsState.rollingNumbersEnabled}
             onNavigateTools={() => handleSelectTab('tools')}
             onNavigateSessions={() => handleSelectTab('sessions')}
           />
@@ -448,7 +520,7 @@
           <DevicesPage
             {snapshot}
             local={dashboardView.local}
-            remoteDevices={$hubState.devices}
+            remoteDevices={allRemoteDevices}
             {selectableRemoteDevices}
             bind:remoteSelectedDevice
             remoteToolRows={dashboardView.remoteToolRows}
@@ -465,6 +537,21 @@
             onRenameHubDevice={hubController.renameDevice}
             onRotateHubCredential={hubController.rotateCredential}
             onDisconnectHub={hubController.disconnect}
+            bind:webdavUrl={$webdavState.url}
+            bind:webdavUsername={$webdavState.username}
+            bind:webdavPassword={$webdavState.password}
+            webdavEnabled={$webdavState.enabled}
+            webdavBusy={$webdavState.busy}
+            webdavTesting={$webdavState.testing}
+            webdavSyncing={$webdavState.syncing}
+            webdavError={$webdavState.error}
+            webdavSuccess={$webdavState.success}
+            webdavLastSyncAt={$webdavState.lastSyncAt}
+            onTestWebDav={webdavController.testConnection}
+            onSaveWebDav={webdavController.saveConfig}
+            onSyncWebDavNow={webdavController.syncNow}
+            onRefreshWebDavDevices={webdavController.refreshDevices}
+            onDisconnectWebDav={webdavController.disconnect}
           />
         <!-- TAB 3: TOOLS ANALYSIS (工具分析) -->
         {:else if activeTab === 'tools'}
@@ -520,12 +607,16 @@
         {:else if activeTab === 'settings'}
           <SettingsPage
             currentTheme={$settingsState.theme}
+            rollingNumbersEnabled={$settingsState.rollingNumbersEnabled}
+            refreshIntervalMs={$settingsState.refreshIntervalMs}
             autostartEnabled={$settingsState.autostartEnabled}
             autostartBusy={$settingsState.autostartBusy}
             autostartError={$settingsState.autostartError}
             {runtimeAvailable}
             {agent}
             onSwitchTheme={settingsController.setTheme}
+            onToggleRollingNumbers={settingsController.toggleRollingNumbers}
+            onSetRefreshInterval={settingsController.setRefreshInterval}
             onToggleAutostart={settingsController.toggleAutostart}
             onRunDiagnostics={runDiagnostics}
           />

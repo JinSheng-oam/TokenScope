@@ -1,6 +1,6 @@
 //! Schema v1 is append-only at the migration layer. No destructive schema reset.
 
-pub const VERSION: i64 = 7;
+pub const VERSION: i64 = 8;
 pub const MIGRATION_001: &str = r#"
 CREATE TABLE schema_migrations (
   version INTEGER PRIMARY KEY,
@@ -188,5 +188,14 @@ CREATE TABLE empty_source_candidates (
   last_empty_at_ms INTEGER NOT NULL CHECK(last_empty_at_ms >= first_empty_at_ms),
   scan_count INTEGER NOT NULL CHECK(scan_count > 0),
   PRIMARY KEY(tool_id,source_key)
+);
+"#;
+
+
+pub const MIGRATION_008: &str = r#"
+CREATE TABLE webdav_sync_cursors (
+  remote_device_id TEXT PRIMARY KEY,
+  last_batch_seq INTEGER NOT NULL DEFAULT 0 CHECK(last_batch_seq >= 0),
+  updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms >= 0)
 );
 "#;

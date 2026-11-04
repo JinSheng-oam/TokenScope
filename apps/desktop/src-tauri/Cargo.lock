@@ -4405,6 +4405,7 @@ dependencies = [
 name = "tokenscope-desktop"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "fs2",
  "iana-time-zone",
  "serde",
@@ -4413,6 +4414,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-autostart",
  "tokenscope-local-ipc",
+ "tokenscope-local-store",
  "tokenscope-sync-client",
  "zeroize",
 ]

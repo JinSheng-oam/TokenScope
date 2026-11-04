@@ -170,59 +170,13 @@
   white-space: nowrap;
 }
 
-.metric-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* Top Metric Rolling Number */
+.rolling-num {
+  transition: color 240ms ease;
 }
 
-.metric-foot strong {
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-
-.hero-card .metric-foot {
-  flex-wrap: wrap;
-  row-gap: 2px;
-  white-space: normal;
-}
-
-.hero-card .metric-foot > span {
-  white-space: nowrap;
-}
-
-.metric-split-bar {
-  display: flex;
-  height: 3px;
-  width: 100%;
-  margin-top: 8px;
-  border-radius: var(--radius-pill);
-  background-color: var(--bg-secondary);
-  overflow: hidden;
-  gap: 1px;
-}
-
-.metric-split-seg {
-  height: 100%;
-  transition: width var(--transition-base);
-}
-
-.metric-split-seg.input {
-  background-color: var(--brand-primary);
-}
-
-.metric-split-seg.output {
-  background-color: var(--color-aggregate);
-}
-
-.metric-split-seg.cache {
-  background-color: var(--color-exact);
+.rolling-num.is-updating {
+  color: var(--brand-primary);
 }
 
 /* Precision Chips (Domain Core) */
@@ -268,6 +222,18 @@
   background-color: var(--color-quota-bg);
   border: 1px solid var(--color-quota-border);
   color: var(--color-quota);
+}
+
+.precision-chip.danger {
+  background-color: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+  color: var(--color-danger);
+}
+
+.precision-chip.muted {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
 }
 
 /* Data Precision Integrity Guardrail (Compact Single-Line Telemetry Bar) */

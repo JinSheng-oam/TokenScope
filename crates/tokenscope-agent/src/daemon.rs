@@ -22,6 +22,7 @@ pub(super) struct DaemonOptions<'a> {
     pub(super) sync_enabled: bool,
     pub(super) sync_hub_url: Option<&'a str>,
     pub(super) sync_config_path: Option<&'a Path>,
+    pub(super) sync_webdav_config_path: Option<&'a Path>,
 }
 
 fn sleep_interruptible(
@@ -91,6 +92,7 @@ pub(super) fn run(
             }
         }
         if options.sync_enabled {
+            // 1. Hub Sync
             match sync::resolve_sync_hub_url(options.sync_hub_url, options.sync_config_path) {
                 Ok(Some(raw_url)) => match sync::sync_device_once(store, &raw_url, device) {
                     Ok(report) => match sync::pull_device_once(store, &raw_url, device) {
@@ -110,6 +112,45 @@ pub(super) fn run(
                 },
                 Ok(None) => {} // No Hub has been paired on this device yet.
                 Err(err) => eprintln!("TokenScope sync configuration invalid: {err}"),
+            }
+
+            // 2. WebDAV Sync
+            match sync::resolve_webdav_config(options.sync_webdav_config_path) {
+                Ok(Some(config)) => {
+                    let identity = store.identity().unwrap_or(None);
+                    let display_name = identity
+                        .as_ref()
+                        .map(|i| i.display_name.as_str())
+                        .unwrap_or("This device");
+                    let time_zone = identity
+                        .as_ref()
+                        .map(|i| i.time_zone.as_str())
+                        .unwrap_or("UTC");
+                    match sync::sync_webdav_device_once(
+                        store,
+                        &config,
+                        device,
+                        display_name,
+                        time_zone,
+                    ) {
+                        Ok((report, devices)) => {
+                            if report.uploaded_records > 0 || report.pulled_records > 0 {
+                                println!(
+                                    "webdav sync uploaded_records={} uploaded_batches={} pulled_records={} pulled_batches={} remaining_due={} remote_devices={}",
+                                    report.uploaded_records,
+                                    report.uploaded_batches,
+                                    report.pulled_records,
+                                    report.pulled_batches,
+                                    report.remaining_due,
+                                    devices.len()
+                                );
+                            }
+                        }
+                        Err(err) => eprintln!("TokenScope WebDAV sync deferred: {err}"),
+                    }
+                }
+                Ok(None) => {} // WebDAV not configured or disabled
+                Err(err) => eprintln!("TokenScope WebDAV configuration invalid: {err}"),
             }
         }
         let backoff = if consecutive_failures == 0 {

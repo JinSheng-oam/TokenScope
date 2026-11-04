@@ -16,11 +16,13 @@ tauri-build = { version = "2.0.0", features = [] }
 tauri = { version = "2.0.0", features = ["tray-icon"] }
 tauri-plugin-autostart = "2.0.0"
 tokenscope-local-ipc = { path = "../../../crates/local-ipc" }
+tokenscope-local-store = { path = "../../../crates/local-store" }
 tokenscope-sync-client = { path = "../../../crates/sync-client" }
 fs2 = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 iana-time-zone = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 zeroize = { version = "1.8", features = ["alloc"] }
 
 # Keep WebView/GTK dependencies isolated from the lightweight Agent workspace.

@@ -160,12 +160,31 @@ export function quotaIsStale(observedAtMs: number, now = Date.now()): boolean {
   return now - observedAtMs > 15 * 60_000;
 }
 
+export function formatQuotaPoolName(poolId: string): string {
+  const normalized = poolId.toLowerCase().trim();
+  if (normalized === 'claude_gpt') return 'Claude / GPT';
+  if (normalized === 'gemini_4_argon') return 'Gemini 4 Argon';
+  if (normalized === 'gemini') return 'Gemini';
+  if (normalized === 'codex') return 'Codex';
+  return poolId
+    .split(/[_-]/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 export function formatCountdown(resetAtMs: number | null, now = Date.now()): string {
   if (resetAtMs === null) return '未提供重置时间';
   const diff = resetAtMs - now;
   if (diff <= 0) return '即将重置';
-  const hours = Math.floor(diff / 3_600_000);
+  const totalHours = Math.floor(diff / 3_600_000);
   const mins = Math.floor((diff % 3_600_000) / 60_000);
   const secs = Math.floor((diff % 60_000) / 1000);
-  return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')} 后重置`;
+
+  if (totalHours >= 24) {
+    const days = Math.floor(totalHours / 24);
+    const remHours = totalHours % 24;
+    return remHours > 0 ? `${days}天 ${remHours}小时 后重置` : `${days}天 后重置`;
+  }
+  return `${totalHours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')} 后重置`;
 }

@@ -8,6 +8,7 @@ mod lifecycle;
 mod paths;
 mod settings;
 mod state;
+mod webdav;
 
 use agent::{start_agent_inner, stop_agent_inner};
 use dashboard::{spawn_dashboard_warmup, spawn_dashboard_watch};
@@ -83,7 +84,13 @@ pub fn run() {
             hub::list_hub_devices,
             hub::rename_hub_device,
             hub::rotate_hub_device_token,
-            hub::disconnect_hub_device
+            hub::disconnect_hub_device,
+            webdav::test_webdav_connection,
+            webdav::save_webdav_config,
+            webdav::get_webdav_config,
+            webdav::disconnect_webdav,
+            webdav::list_webdav_devices,
+            webdav::sync_webdav_now
         ])
         .build(tauri::generate_context!())
         .expect("TokenScope desktop initialization failed");

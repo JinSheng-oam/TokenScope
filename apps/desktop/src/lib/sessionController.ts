@@ -138,8 +138,17 @@ export function createSessionController(dependencies: SessionControllerDependenc
   }
 
   function projectLabel(projectId: string): string {
-    return get(state).analysis?.filter_options.projects.find((option) => option.key === projectId)?.label
-      ?? '项目名称未提供';
+    const found = get(state).analysis?.filter_options.projects.find((option) => option.key === projectId)?.label;
+    if (found && found !== '项目名称未提供' && !found.startsWith('prj_') && found.trim().length > 0) {
+      return found;
+    }
+    const clean = projectId.replace(/[\/\\]+$/, '');
+    const parts = clean.split(/[\/\\]/);
+    const last = parts[parts.length - 1];
+    if (last && last.length > 0 && last !== 'unknown' && !last.startsWith('prj_')) {
+      return last;
+    }
+    return '';
   }
 
   function requestDelete(session: SessionUsage) {

@@ -1,82 +1,127 @@
 <script lang="ts">
-import { formatCost, formatNumber, percentOf, relativeTime } from '../lib/format';
+  import { formatCost, formatNumber, formatToolLabel, percentOf, relativeTime } from '../lib/format';
   import type { DashboardSnapshot, UsageTotals } from '../lib/types';
 
   export let snapshot: DashboardSnapshot;
   export let local: UsageTotals | undefined;
+
+  $: completeCount = snapshot.source_health.filter((s) => s.status === 'complete').length;
 </script>
 
 <div class="page-header">
-            <h1>工具分析</h1>
-            <p>已接入 AI 工具的原生解析器监控、扫描健康状态与用量汇总</p>
+  <div>
+    <h1>工具分析</h1>
+    <p>已接入 AI 工具的原生解析器监控、扫描健康状态与用量汇总</p>
+  </div>
+</div>
+
+<section class="panel-card" style="margin-bottom: 16px;">
+  <div class="panel-head">
+    <div>
+      <h2>工具用量详细矩阵</h2>
+      <p>按本机 AI 编程助手与命令行工具分类汇总用量与估算支出</p>
+    </div>
+    <span class="panel-tag">{snapshot.by_tool.length} 个本地来源</span>
+  </div>
+
+  {#if snapshot.by_tool.length > 0}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 48px;">#</th>
+            <th>工具名称</th>
+            <th class="tabular">Token 总量</th>
+            <th class="tabular">用量记录数</th>
+            <th class="tabular">估算成本</th>
+            <th class="tabular" style="width: 180px;">全机占比</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each snapshot.by_tool as tool, idx}
+            <tr>
+              <td><span class="rank-num tabular">{String(idx + 1).padStart(2, '0')}</span></td>
+              <td>
+                <div style="display: flex; align-items: baseline; gap: 6px;">
+                  <strong>{tool.label}</strong>
+                  {#if tool.key && tool.key.toLowerCase() !== tool.label.toLowerCase()}
+                    <code style="font-size: 11px; color: var(--text-muted);">{tool.key}</code>
+                  {/if}
+                </div>
+              </td>
+              <td class="tabular"><strong>{formatNumber(tool.total_tokens)}</strong></td>
+              <td class="tabular">{formatNumber(tool.record_count)}</td>
+              <td class="tabular">{formatCost(tool.estimated_cost_microusd)}</td>
+              <td class="tabular">
+                <div class="table-track-cell">
+                  <div class="rank-track">
+                    <div class="rank-fill" style={`width: ${percentOf(tool.total_tokens, local?.total_tokens ?? 0)}%`}></div>
+                  </div>
+                  <span class="rank-share tabular">{percentOf(tool.total_tokens, local?.total_tokens ?? 0).toFixed(1)}%</span>
+                </div>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {:else}
+    <div class="empty-box">暂无工具统计记录</div>
+  {/if}
+</section>
+
+<!-- Collector Health -->
+<section class="panel-card">
+  <div class="panel-head">
+    <div>
+      <h2>采集器健康度与检查点</h2>
+      <p>各工具最近扫描与完整事务写入时间戳</p>
+    </div>
+    <span class="panel-tag">{completeCount} / {snapshot.source_health.length} 状态正常</span>
+  </div>
+
+  {#if snapshot.source_health.length > 0}
+    <div class="form-grid" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));">
+      {#each snapshot.source_health as source}
+        <div class="metric-card" style="padding: 12px 14px; gap: 8px;">
+          <div class="metric-head" style="align-items: center;">
+            <div style="display: flex; align-items: center; gap: 7px; min-width: 0;">
+              <span
+                class="source-status-dot"
+                class:complete={source.status === 'complete'}
+                class:partial={source.status === 'partial'}
+                class:degraded={source.status === 'degraded'}
+              ></span>
+              <strong style="font-size: 13px; color: var(--text-primary);">{formatToolLabel(source.tool_id)}</strong>
+            </div>
+            <span
+              class="precision-chip"
+              class:exact={source.status === 'complete'}
+              class:estimated={source.status === 'partial'}
+              class:danger={source.status === 'degraded'}
+            >
+              {source.status === 'complete' ? '正常' : source.status === 'partial' ? '部分' : '异常'}
+            </span>
           </div>
 
-          <section class="panel-card" style="margin-bottom: 16px;">
-            <div class="panel-head">
-              <h2>工具用量详细矩阵</h2>
-              <span class="panel-tag">{snapshot.by_tool.length} 个本地来源</span>
+          <div style="display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--text-secondary); margin-top: 4px;">
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: var(--text-muted);">最近扫描</span>
+              <span>{relativeTime(source.last_scan_ms)}</span>
             </div>
-            {#if snapshot.by_tool.length > 0}
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>工具名称</th>
-                      <th>Token 总量</th>
-                      <th>用量记录数</th>
-                      <th>估算成本</th>
-                      <th>全机占比</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {#each snapshot.by_tool as tool}
-                      <tr>
-                        <td><strong>{tool.label}</strong></td>
-                        <td class="tabular">{formatNumber(tool.total_tokens)}</td>
-                        <td class="tabular">{formatNumber(tool.record_count)}</td>
-                        <td class="tabular">{formatCost(tool.estimated_cost_microusd)}</td>
-                        <td>
-                          <div class="rank-track" style="width: 100px;">
-                            <div class="rank-fill" style={`width: ${percentOf(tool.total_tokens, local?.total_tokens ?? 0)}%`}></div>
-                          </div>
-                        </td>
-                      </tr>
-                    {/each}
-                  </tbody>
-                </table>
-              </div>
-            {:else}
-              <div class="empty-box">暂无工具统计记录</div>
-            {/if}
-          </section>
-
-          <!-- Collector Health -->
-          <section class="panel-card">
-            <div class="panel-head">
-              <div>
-                <h2>采集器健康度与检查点</h2>
-                <p>各工具最近扫描与完整事务写入时间戳</p>
-              </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: var(--text-muted);">完整扫描</span>
+              <span>{relativeTime(source.last_complete_scan_ms)}</span>
             </div>
-            {#if snapshot.source_health.length > 0}
-              <div class="form-grid">
-                {#each snapshot.source_health as source}
-                  <div class="metric-card">
-                    <div class="metric-head">
-                      <strong>{source.tool_id}</strong>
-                      <span class="precision-chip" class:exact={source.status === 'complete'} class:danger={source.status === 'degraded'}>
-                        {source.status === 'complete' ? '正常' : source.status === 'partial' ? '部分' : '异常'}
-                      </span>
-                    </div>
-                    <div style="margin-top: 8px; font-size: 11.5px; color: var(--text-secondary);">
-                      <div>最近扫描：{relativeTime(source.last_scan_ms)}</div>
-                      <div>完整扫描：{relativeTime(source.last_complete_scan_ms)}</div>
-                      <div>来源文件数：{source.source_count}</div>
-                    </div>
-                  </div>
-                {/each}
-              </div>
-            {:else}
-              <div class="empty-box">暂无来源检查点记录</div>
-            {/if}
-          </section>
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: var(--text-muted);">覆盖来源</span>
+              <span class="tabular">{formatNumber(source.source_count)} 个</span>
+            </div>
+          </div>
+        </div>
+      {/each}
+    </div>
+  {:else}
+    <div class="empty-box">暂无来源检查点记录</div>
+  {/if}
+</section>

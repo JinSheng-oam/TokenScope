@@ -1,7 +1,7 @@
 use crate::{
     paths::{
         agent_is_running, database_path, resolve_agent, rotate_agent_log, shutdown_path,
-        sync_config_path, validate_time_zone,
+        sync_config_path, webdav_config_path, validate_time_zone,
     },
     state::{AgentProcess, AgentStatus},
 };
@@ -83,6 +83,7 @@ pub(crate) fn start_agent_inner(
         .map_err(|e| format!("打开 Agent 日志失败：{e}"))?;
     let stderr = log.try_clone().map_err(|e| e.to_string())?;
     let sync_config = sync_config_path(app)?;
+    let webdav_config = webdav_config_path(app)?;
     let child = Command::new(&agent)
         .args([
             "--scan-all",
@@ -97,6 +98,8 @@ pub(crate) fn start_agent_inner(
         .arg(&db)
         .arg("--sync-config")
         .arg(&sync_config)
+        .arg("--sync-webdav-config")
+        .arg(&webdav_config)
         .arg("--display-name")
         .arg("This device")
         .arg("--time-zone")

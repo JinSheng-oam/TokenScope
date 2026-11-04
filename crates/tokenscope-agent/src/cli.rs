@@ -79,10 +79,12 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     let diagnose_json = args.iter().any(|s| s == "--diagnose-json");
     let session_analysis_json = args.iter().any(|s| s == "--session-analysis-json");
     let sync_once = args.iter().any(|s| s == "--sync-once");
+    let sync_webdav_once = args.iter().any(|s| s == "--sync-webdav-once");
     let sync_enabled = args.iter().any(|s| s == "--sync");
     let sync_status = args.iter().any(|s| s == "--sync-status");
     let sync_hub_url = arg(&args, "--hub-url");
     let sync_config_path = arg(&args, "--sync-config").map(PathBuf::from);
+    let sync_webdav_config_path = arg(&args, "--sync-webdav-config").map(PathBuf::from);
     let shutdown_file = arg(&args, "--shutdown-file").map(PathBuf::from);
     let dashboard_range = arg(&args, "--range").unwrap_or_else(|| "7d".into());
     let session_offset: u64 = arg(&args, "--session-offset")
@@ -296,8 +298,8 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| "UTC".into());
     store.init_identity(&LocalIdentity {
         device_id: device.clone(),
-        display_name: display,
-        time_zone: zone,
+        display_name: display.clone(),
+        time_zone: zone.clone(),
     })?;
     if !read_only_store {
         if marked.as_deref() != Some(device.as_str()) {
@@ -382,6 +384,26 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("sync uploaded={} unchanged={} superseded={} acknowledged={} blocked={} remaining_due={} remote_changes_applied={}",
                 report.uploaded, report.unchanged, report.superseded, report.acknowledged, report.blocked, report.remaining_due, pulled);
         }
+        if sync_webdav_once {
+            let config = sync::resolve_webdav_config(sync_webdav_config_path.as_deref())?
+                .ok_or("no WebDAV configuration found; configure WebDAV sync first")?;
+            let (report, devices) = sync::sync_webdav_device_once(
+                &mut store,
+                &config,
+                &device,
+                &display,
+                &zone,
+            )?;
+            println!(
+                "webdav sync uploaded_records={} uploaded_batches={} pulled_records={} pulled_batches={} remaining_due={} remote_devices={}",
+                report.uploaded_records,
+                report.uploaded_batches,
+                report.pulled_records,
+                report.pulled_batches,
+                report.remaining_due,
+                devices.len()
+            );
+        }
         return Ok(());
     }
     daemon::run(
@@ -408,6 +430,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             sync_enabled,
             sync_hub_url: sync_hub_url.as_deref(),
             sync_config_path: sync_config_path.as_deref(),
+            sync_webdav_config_path: sync_webdav_config_path.as_deref(),
         },
     )
 }

@@ -5,6 +5,7 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
   import type { ChartPoint } from '../lib/dashboardView';
   import type { HeatmapCalendar, HeatmapCell } from '../lib/heatmap';
   import { icons } from '../lib/icons';
+  import RollingNumber from './RollingNumber.svelte';
   import type { DashboardSnapshot, UsageTotals } from '../lib/types';
 
   export let snapshot: DashboardSnapshot;
@@ -28,6 +29,7 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
   export let onSwitchTrendView: (mode: TrendViewMode) => void;
   export let onNavigateTools: () => void;
   export let onNavigateSessions: () => void;
+  export let rollingNumbersEnabled = true;
 
   $: recentSessions = snapshot.session_usage.sessions.slice(0, 4);
   $: untimedRecordCount = snapshot.by_tool.reduce((sum, tool) => sum + tool.untimed_records, 0);
@@ -115,7 +117,7 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
                 </span>
               </div>
               <div class="metric-val">
-                {formatNumber(local?.total_tokens)}
+                <RollingNumber value={local?.total_tokens} enabled={rollingNumbersEnabled} />
               </div>
               <div class="metric-foot">
                 <span>非缓存 <strong>{formatNumber((local?.total_tokens ?? 0) - cacheTokens)}</strong></span>
@@ -138,7 +140,7 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
                 <span class="panel-tag tabular">占总量 {inputShareRate}%</span>
               </div>
               <div class="metric-val">
-                {formatNumber(local?.input_tokens)}
+                <RollingNumber value={local?.input_tokens} enabled={rollingNumbersEnabled} />
               </div>
               <div class="metric-foot">
                 <span>不含缓存读取与写入</span>
@@ -151,7 +153,7 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
                 <span class="panel-tag tabular">推理 {reasoningShareRate}%</span>
               </div>
               <div class="metric-val">
-                {formatNumber(local?.output_tokens)}
+                <RollingNumber value={local?.output_tokens} enabled={rollingNumbersEnabled} />
               </div>
               <div class="metric-foot">
                 <span>含推理 <strong>{formatNumber(local?.reasoning_tokens)}</strong> (输出子集)</span>
@@ -164,7 +166,7 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
                 <span class="precision-chip exact" title={`输入缓存命中率 ${cacheHitRate}%`}>缓存率 {cacheHitRate}%</span>
               </div>
               <div class="metric-val">
-                {formatNumber(cacheTokens)}
+                <RollingNumber value={cacheTokens} enabled={rollingNumbersEnabled} />
               </div>
               <div class="metric-foot">
                 <span>读 <strong>{formatNumber(local?.cache_read_tokens)}</strong> · 写 <strong>{formatNumber(local?.cache_write_tokens)}</strong></span>

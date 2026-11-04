@@ -147,6 +147,56 @@ pub(crate) fn persist_sync_hub_url(app: &AppHandle, hub_origin: &str) -> Result<
     Ok(())
 }
 
+pub(crate) fn webdav_config_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法获取应用数据目录：{e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("无法创建应用数据目录：{e}"))?;
+    Ok(dir.join("sync-webdav.json"))
+}
+
+pub(crate) fn persist_webdav_config_file(app: &AppHandle, json_content: &str) -> Result<(), String> {
+    let path = webdav_config_path(app)?;
+    let mut temp = path.clone();
+    temp.set_extension(format!("tmp-{}", std::process::id()));
+    match fs::remove_file(&temp) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("清理旧 WebDAV 配置临时文件失败：{error}")),
+    }
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&temp)
+        .map_err(|e| format!("创建 WebDAV 配置文件失败：{e}"))?;
+    file.write_all(json_content.as_bytes())
+        .map_err(|e| format!("写入 WebDAV 配置文件失败：{e}"))?;
+    file.sync_all()
+        .map_err(|e| format!("WebDAV 配置落盘失败：{e}"))?;
+    match fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("清理旧 WebDAV 配置失败：{error}")),
+    }
+    fs::rename(&temp, &path).map_err(|e| format!("原子替换 WebDAV 配置失败：{e}"))?;
+    Ok(())
+}
+
+pub(crate) fn clear_webdav_config_file(app: &AppHandle) -> Result<(), String> {
+    let path = webdav_config_path(app)?;
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("删除 WebDAV 配置文件失败：{error}")),
+    }
+}
+
 pub(crate) fn clear_sync_hub_url(app: &AppHandle) -> Result<(), String> {
     let path = sync_config_path(app)?;
     match fs::remove_file(path) {

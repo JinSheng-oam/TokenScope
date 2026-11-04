@@ -13,6 +13,6 @@ pub use repository::{
     ModelActivityBreakdown, OutboxEntry, ReconcileReport, RemoteDeviceUsage, RemoteUsageBreakdown,
     RemoteUsageChange, RemoteUsageTotals, SessionAnalysisPage, SessionFilterOption,
     SessionFilterOptions, SessionUsage, SessionUsagePage, SourceCheckpoint, SourceHealth,
-    SyncOutboxStatus, UsageBreakdown, UsageTotals,
+    SyncOutboxStatus, ToolUsageOverview, UsageBreakdown, UsageOverview, UsageTotals,
 };
 pub const MODULE_ID: &str = "local-store";

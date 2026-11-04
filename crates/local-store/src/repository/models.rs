@@ -313,6 +313,24 @@ pub struct UsageBreakdown {
     pub untimed_records: u64,
 }
 
+/// Lightweight local usage projection used by the diagnostics panel. It avoids
+/// building a full dashboard snapshot when the user only needs a health check.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct UsageOverview {
+    pub total_tokens: u64,
+    pub record_count: u64,
+    pub last_event_at_ms: Option<i64>,
+    pub tools: Vec<ToolUsageOverview>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolUsageOverview {
+    pub tool_id: String,
+    pub total_tokens: u64,
+    pub record_count: u64,
+    pub last_event_at_ms: Option<i64>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ModelActivityBreakdown {
     pub tool_id: String,

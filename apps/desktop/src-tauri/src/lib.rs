@@ -2,6 +2,7 @@
 //! The WebView never opens SQLite or reads source logs.
 mod agent;
 mod dashboard;
+mod diagnostics;
 mod hub;
 mod lifecycle;
 mod paths;
@@ -75,6 +76,7 @@ pub fn run() {
             dashboard::get_dashboard_snapshot,
             dashboard::get_session_analysis,
             dashboard::delete_session,
+            diagnostics::run_diagnostics,
             settings::get_autostart_enabled,
             settings::set_autostart_enabled,
             hub::pair_hub_device,

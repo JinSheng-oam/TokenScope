@@ -20,5 +20,5 @@ pub use models::{
     OutboxEntry, ReconcileReport, RemoteDeviceUsage, RemoteUsageBreakdown, RemoteUsageChange,
     RemoteUsageTotals, SessionAnalysisPage, SessionFilterOption, SessionFilterOptions,
     SessionUsage, SessionUsagePage, SourceCheckpoint, SourceHealth, SyncOutboxStatus,
-    UsageBreakdown, UsageTotals,
+    ToolUsageOverview, UsageBreakdown, UsageOverview, UsageTotals,
 };

@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AgentStatus, DashboardRange, DashboardResponse, DashboardSnapshot, PairHubResult, RemoteDeviceList, SessionAnalysisPage, SessionAnalysisResponse } from './types';
+import type { AgentStatus, DashboardRange, DashboardResponse, DashboardSnapshot, DiagnosticReport, PairHubResult, RemoteDeviceList, SessionAnalysisPage, SessionAnalysisResponse } from './types';
 
 export function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -11,6 +11,10 @@ export async function startAgent(timeZone: string): Promise<AgentStatus> {
 
 export async function getAgentStatus(): Promise<AgentStatus> {
   return invoke<AgentStatus>('get_agent_status');
+}
+
+export async function runDiagnostics(): Promise<DiagnosticReport> {
+  return invoke<DiagnosticReport>('run_diagnostics');
 }
 
 export async function getDashboardSnapshot(

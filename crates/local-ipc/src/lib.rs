@@ -42,6 +42,121 @@ pub struct SessionDeleteResponse {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticSeverity {
+    #[default]
+    Ok,
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DiagnosticCheck {
+    pub id: String,
+    pub title: String,
+    pub severity: DiagnosticSeverity,
+    pub detail: String,
+    pub action: Option<String>,
+}
+
+impl DiagnosticCheck {
+    pub fn new(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        severity: DiagnosticSeverity,
+        detail: impl Into<String>,
+        action: Option<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            severity,
+            detail: detail.into(),
+            action,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DiagnosticToolUsage {
+    pub tool_id: String,
+    pub total_tokens: u64,
+    pub record_count: u64,
+    pub last_event_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DiagnosticFacts {
+    pub database_path: String,
+    pub database_bytes: u64,
+    pub wal_bytes: u64,
+    pub schema_version: Option<i64>,
+    pub expected_schema_version: i64,
+    pub device_id: Option<String>,
+    pub marker_present: bool,
+    pub record_count: u64,
+    pub total_tokens: u64,
+    pub source_count: u64,
+    pub last_event_at_ms: Option<i64>,
+    pub last_scan_at_ms: Option<i64>,
+    pub free_disk_bytes: Option<u64>,
+    pub agent_running: bool,
+    pub agent_path: Option<String>,
+    pub legacy_database_path: Option<String>,
+    pub log_bytes: u64,
+    pub log_modified_at_ms: Option<i64>,
+    pub sync_pending: u64,
+    pub sync_deferred: u64,
+    pub sync_blocked: u64,
+    pub sync_last_status: String,
+    pub tools: Vec<DiagnosticToolUsage>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DiagnosticReport {
+    pub generated_at_ms: i64,
+    pub overall: DiagnosticSeverity,
+    pub checks: Vec<DiagnosticCheck>,
+    pub facts: DiagnosticFacts,
+}
+
+impl DiagnosticReport {
+    pub fn new(generated_at_ms: i64, facts: DiagnosticFacts) -> Self {
+        Self {
+            generated_at_ms,
+            overall: DiagnosticSeverity::Ok,
+            checks: Vec::new(),
+            facts,
+        }
+    }
+
+    pub fn push(&mut self, check: DiagnosticCheck) {
+        self.checks.push(check);
+        self.recompute_overall();
+    }
+
+    pub fn recompute_overall(&mut self) {
+        // Informational checks must not make a healthy system look degraded.
+        self.overall = if self
+            .checks
+            .iter()
+            .any(|check| check.severity == DiagnosticSeverity::Error)
+        {
+            DiagnosticSeverity::Error
+        } else if self
+            .checks
+            .iter()
+            .any(|check| check.severity == DiagnosticSeverity::Warning)
+        {
+            DiagnosticSeverity::Warning
+        } else {
+            DiagnosticSeverity::Ok
+        };
+    }
+}
+
 impl DashboardResponse {
     pub fn new(snapshot: DashboardSnapshot) -> Self {
         Self {

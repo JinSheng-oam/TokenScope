@@ -2,7 +2,7 @@ use crate::{
     antigravity_rpc, codex_rpc,
     collection::{collect_once, CollectionOptions},
     daemon::{self, DaemonOptions},
-    dashboard, identity,
+    dashboard, diagnostics, identity,
     lock::AgentLock,
     quota, sync,
 };
@@ -42,6 +42,7 @@ fn usage() {
     [--import-antigravity-quota-json PATH] [--refresh-antigravity-quota] [--refresh-codex-quota] [--show-antigravity]
     [--display-name NAME] [--time-zone ZONE] [--daemon --interval-seconds 120]
     --dashboard-json [--range today|7d|30d|all]
+    --diagnose-json
     --session-analysis-json [--range today|7d|30d|all] [--session-search TEXT]
     --shutdown-file PATH (daemon only; desktop lifecycle signal)
     --sync --hub-url HTTPS_OR_LOOPBACK | --sync-config PATH (daemon mode enables periodic sync)
@@ -75,6 +76,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     let refresh_antigravity_quota = args.iter().any(|s| s == "--refresh-antigravity-quota");
     let refresh_codex_quota = args.iter().any(|s| s == "--refresh-codex-quota");
     let dashboard_json = args.iter().any(|s| s == "--dashboard-json");
+    let diagnose_json = args.iter().any(|s| s == "--diagnose-json");
     let session_analysis_json = args.iter().any(|s| s == "--session-analysis-json");
     let sync_once = args.iter().any(|s| s == "--sync-once");
     let sync_enabled = args.iter().any(|s| s == "--sync");
@@ -86,6 +88,31 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     let session_offset: u64 = arg(&args, "--session-offset")
         .unwrap_or_else(|| "0".into())
         .parse()?;
+    if diagnose_json {
+        if codex
+            || claude
+            || antigravity
+            || deepseek_harness
+            || quota_path.is_some()
+            || show_antigravity
+            || refresh_antigravity_quota
+            || refresh_codex_quota
+            || dashboard_json
+            || session_analysis_json
+            || sync_once
+            || sync_enabled
+            || sync_status
+            || args.iter().any(|s| s == "--daemon")
+        {
+            return Err(
+                "diagnostic query cannot be combined with collection or other commands".into(),
+            );
+        }
+        let db = PathBuf::from(arg(&args, "--db").ok_or("missing --db")?);
+        let report = diagnostics::diagnose(&db);
+        println!("{}", serde_json::to_string(&report)?);
+        return Ok(());
+    }
     if !codex
         && !claude
         && !antigravity
@@ -94,6 +121,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         && !refresh_antigravity_quota
         && !refresh_codex_quota
         && !dashboard_json
+        && !diagnose_json
         && !session_analysis_json
         && !sync_once
         && !sync_enabled

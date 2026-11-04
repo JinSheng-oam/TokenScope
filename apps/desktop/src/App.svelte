@@ -10,6 +10,7 @@
     getAgentStatus,
     getDashboardSnapshot,
     isTauriRuntime,
+    runDiagnostics,
     startAgent,
   } from './lib/api';
   import { toIsoDate, type HeatmapCell } from './lib/heatmap';
@@ -526,6 +527,7 @@
             {agent}
             onSwitchTheme={settingsController.setTheme}
             onToggleAutostart={settingsController.toggleAutostart}
+            onRunDiagnostics={runDiagnostics}
           />
         {/if}
       {/if}

@@ -3,13 +3,58 @@ use super::super::records::{
     load_checkpoint, load_suppressed_sessions, read_record, upsert_source_record, RecordChange,
 };
 use super::super::LocalStore;
-use crate::error::{db_int, Result, StoreError};
+use crate::error::{db_int, pos_u64, Result, StoreError};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use std::collections::HashSet;
 use tokenscope_core_domain::{payload_hash, CanonicalRecord, TokenBreakdown};
 impl LocalStore {
     pub fn checkpoint(&self, tool_id: &str, source_key: &str) -> Result<Option<SourceCheckpoint>> {
         load_checkpoint(&self.conn, tool_id, source_key)
+    }
+
+    pub fn source_checkpoints(&self) -> Result<Vec<SourceCheckpoint>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tool_id,source_key,source_fingerprint,read_offset,parser_version,last_scan_ms,last_complete_scan_ms,last_status \
+             FROM source_checkpoints ORDER BY tool_id,last_scan_ms DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, i64>(5)?,
+                r.get::<_, Option<i64>>(6)?,
+                r.get::<_, String>(7)?,
+            ))
+        })?;
+        let mut checkpoints = Vec::new();
+        for row in rows {
+            let (
+                tool_id,
+                source_key,
+                source_fingerprint,
+                offset,
+                parser,
+                last_scan_ms,
+                last_complete_scan_ms,
+                last_status,
+            ) = row?;
+            let parser_version = u32::try_from(parser)
+                .map_err(|_| StoreError::DatabaseInconsistent("invalid parser version"))?;
+            checkpoints.push(SourceCheckpoint {
+                tool_id,
+                source_key,
+                source_fingerprint,
+                read_offset: pos_u64(offset)?,
+                parser_version,
+                last_scan_ms,
+                last_complete_scan_ms,
+                last_status,
+            });
+        }
+        Ok(checkpoints)
     }
 
     /// Entire scan result is one BEGIN IMMEDIATE transaction: current records,

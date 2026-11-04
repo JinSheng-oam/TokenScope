@@ -186,6 +186,56 @@ export type AgentStatus = {
   message: string;
 };
 
+export type DiagnosticSeverity = 'ok' | 'info' | 'warning' | 'error';
+
+export type DiagnosticCheck = {
+  id: string;
+  title: string;
+  severity: DiagnosticSeverity;
+  detail: string;
+  action: string | null;
+};
+
+export type DiagnosticToolUsage = {
+  tool_id: string;
+  total_tokens: number;
+  record_count: number;
+  last_event_at_ms: number | null;
+};
+
+export type DiagnosticFacts = {
+  database_path: string;
+  database_bytes: number;
+  wal_bytes: number;
+  schema_version: number | null;
+  expected_schema_version: number;
+  device_id: string | null;
+  marker_present: boolean;
+  record_count: number;
+  total_tokens: number;
+  source_count: number;
+  last_event_at_ms: number | null;
+  last_scan_at_ms: number | null;
+  free_disk_bytes: number | null;
+  agent_running: boolean;
+  agent_path: string | null;
+  legacy_database_path: string | null;
+  log_bytes: number;
+  log_modified_at_ms: number | null;
+  sync_pending: number;
+  sync_deferred: number;
+  sync_blocked: number;
+  sync_last_status: string;
+  tools: DiagnosticToolUsage[];
+};
+
+export type DiagnosticReport = {
+  generated_at_ms: number;
+  overall: DiagnosticSeverity;
+  checks: DiagnosticCheck[];
+  facts: DiagnosticFacts;
+};
+
 export type DashboardRange = 'today' | '7d' | '30d' | 'all' | 'custom';
 
 export type DashboardResponse = {

@@ -1,5 +1,6 @@
 use super::super::models::{
-    tool_display_name, ModelActivityBreakdown, UsageBreakdown, UsageTotals,
+    tool_display_name, ModelActivityBreakdown, ToolUsageOverview, UsageBreakdown, UsageOverview,
+    UsageTotals,
 };
 use super::super::{LocalStore, PROJECT_LABEL_TOOL_ID};
 use crate::error::{pos_u64, Result, StoreError};
@@ -84,6 +85,47 @@ impl LocalStore {
             estimated_records: pos_u64(estimated)?,
             unknown_precision_records: pos_u64(unknown)?,
         })
+    }
+
+    /// Bounded aggregate used by the diagnostics panel; never builds the full
+    /// dashboard projection or scans per-record history in application memory.
+    pub fn usage_overview(&self) -> Result<UsageOverview> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tool_id, \
+             COALESCE(SUM(input_uncached_tokens + cache_read_tokens + cache_write_tokens + output_tokens + unclassified_tokens),0), \
+             COUNT(*), MAX(event_at_ms) \
+             FROM usage_records WHERE scope='device_local' AND is_deleted=0 \
+             AND owner_device_id=(SELECT device_id FROM local_identity WHERE singleton=1) \
+             GROUP BY tool_id ORDER BY 2 DESC,1",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, Option<i64>>(3)?,
+            ))
+        })?;
+        let mut overview = UsageOverview::default();
+        for row in rows {
+            let (tool_id, total, count, last_event_at_ms) = row?;
+            let total = pos_u64(total)?;
+            let count = pos_u64(count)?;
+            overview.total_tokens = overview.total_tokens.saturating_add(total);
+            overview.record_count = overview.record_count.saturating_add(count);
+            if let (Some(current), Some(next)) = (overview.last_event_at_ms, last_event_at_ms) {
+                overview.last_event_at_ms = Some(current.max(next));
+            } else if overview.last_event_at_ms.is_none() {
+                overview.last_event_at_ms = last_event_at_ms;
+            }
+            overview.tools.push(ToolUsageOverview {
+                tool_id,
+                total_tokens: total,
+                record_count: count,
+                last_event_at_ms,
+            });
+        }
+        Ok(overview)
     }
 
     pub(super) fn usage_breakdown(

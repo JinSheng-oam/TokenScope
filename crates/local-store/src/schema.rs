@@ -191,7 +191,6 @@ CREATE TABLE empty_source_candidates (
 );
 "#;
 
-
 pub const MIGRATION_008: &str = r#"
 CREATE TABLE webdav_sync_cursors (
   remote_device_id TEXT PRIMARY KEY,

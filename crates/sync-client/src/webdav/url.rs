@@ -16,7 +16,9 @@ impl fmt::Display for WebDavUrlError {
         match self {
             Self::InvalidScheme => write!(f, "WebDAV URL 必须使用 https:// 或 http:// 协议"),
             Self::MissingHost => write!(f, "WebDAV URL 缺少主机地址"),
-            Self::UserInfoNotAllowed => write!(f, "WebDAV URL 不得包含用户名或密码，请在对应字段中输入"),
+            Self::UserInfoNotAllowed => {
+                write!(f, "WebDAV URL 不得包含用户名或密码，请在对应字段中输入")
+            }
             Self::QueryNotAllowed => write!(f, "WebDAV URL 不得包含查询参数 (?)"),
             Self::FragmentNotAllowed => write!(f, "WebDAV URL 不得包含哈希片段 (#)"),
             Self::ParseError(msg) => write!(f, "WebDAV URL 解析失败：{msg}"),
@@ -93,7 +95,9 @@ impl fmt::Display for WebDavUrl {
 
 impl fmt::Debug for WebDavUrl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("WebDavUrl").field(&self.inner.as_str()).finish()
+        f.debug_tuple("WebDavUrl")
+            .field(&self.inner.as_str())
+            .finish()
     }
 }
 

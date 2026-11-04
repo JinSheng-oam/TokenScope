@@ -53,7 +53,8 @@ pub(super) fn resolve_webdav_config(
                 return Ok(None);
             }
             let config: WebDavSyncConfigFile = serde_json::from_str(trimmed)?;
-            if !config.enabled || config.url.trim().is_empty() || config.username.trim().is_empty() {
+            if !config.enabled || config.url.trim().is_empty() || config.username.trim().is_empty()
+            {
                 return Ok(None);
             }
             Ok(Some(config))

@@ -141,7 +141,6 @@ fn invalid_remote_page_rolls_back_cache_and_cursor() {
     );
 }
 
-
 #[test]
 fn webdav_device_batch_apply_and_cursor_tracking() {
     use tokenscope_core_domain::RevisionedRecord;

@@ -275,9 +275,7 @@ pub(super) fn diagnose(db: &Path) -> DiagnosticReport {
                 })
                 .collect::<Vec<_>>()
                 .join("；");
-            let severity = if overview.record_count == 0 {
-                DiagnosticSeverity::Warning
-            } else if overview.total_tokens == 0 {
+            let severity = if overview.record_count == 0 || overview.total_tokens == 0 {
                 DiagnosticSeverity::Warning
             } else {
                 DiagnosticSeverity::Ok
@@ -556,7 +554,7 @@ fn format_number(value: u64) -> String {
     let text = value.to_string();
     let mut output = String::with_capacity(text.len() + text.len() / 3);
     for (index, ch) in text.chars().enumerate() {
-        if index > 0 && (text.len() - index) % 3 == 0 {
+        if index > 0 && (text.len() - index).is_multiple_of(3) {
             output.push(',');
         }
         output.push(ch);

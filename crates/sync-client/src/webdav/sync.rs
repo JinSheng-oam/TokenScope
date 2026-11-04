@@ -5,8 +5,7 @@ use tokenscope_local_store::LocalStore;
 use super::{
     client::{WebDavClient, WebDavClientError},
     model::{
-        WebDavBatchEntry, WebDavBatchFile, WebDavDeviceInfo, WebDavDeviceManifest,
-        WebDavSyncReport,
+        WebDavBatchEntry, WebDavBatchFile, WebDavDeviceInfo, WebDavDeviceManifest, WebDavSyncReport,
     },
 };
 use crate::sync::MAX_SYNC_BATCH;
@@ -34,7 +33,10 @@ pub fn sync_webdav_push(
     client.ensure_collection("data")?;
     let mut updated_info = device_info.clone();
     updated_info.last_seen_ms = now;
-    client.put_json(&format!("devices/{}.json", device_info.device_id), &updated_info)?;
+    client.put_json(
+        &format!("devices/{}.json", device_info.device_id),
+        &updated_info,
+    )?;
 
     if pending.is_empty() {
         return Ok((0, 0));
@@ -48,50 +50,63 @@ pub fn sync_webdav_push(
         .get_json(&manifest_path)?
         .unwrap_or_else(|| WebDavDeviceManifest::new(device_info.device_id.clone()));
 
-    let records: Vec<_> = pending.iter().map(|e| e.envelope.clone()).collect();
-    let next_seq = manifest.last_batch_seq + 1;
-    let batch_id = uuid::Uuid::new_v4().simple().to_string();
-    let file_name = format!("batch_{next_seq:06}.json");
-    let batch_file_path = format!("{dev_data_dir}/{file_name}");
+    let mut current_pending = pending;
+    let mut total_acked = 0usize;
+    let mut total_batches = 0usize;
 
-    let batch_file = WebDavBatchFile {
-        protocol_version: 1,
-        batch_id: batch_id.clone(),
-        device_id: device_info.device_id.clone(),
-        batch_seq: next_seq,
-        records,
-    };
+    // Drain pending outbox records in bounded batches (up to 150 batches = 30,000 records per push)
+    while !current_pending.is_empty() && total_batches < 150 {
+        let batch_now = now_ms();
+        let records: Vec<_> = current_pending.iter().map(|e| e.envelope.clone()).collect();
+        let next_seq = manifest.last_batch_seq + 1;
+        let batch_id = uuid::Uuid::new_v4().simple().to_string();
+        let file_name = format!("batch_{next_seq:06}.json");
+        let batch_file_path = format!("{dev_data_dir}/{file_name}");
 
-    // 1. Upload batch file
-    client.put_json(&batch_file_path, &batch_file)?;
+        let batch_file = WebDavBatchFile {
+            protocol_version: 1,
+            batch_id: batch_id.clone(),
+            device_id: device_info.device_id.clone(),
+            batch_seq: next_seq,
+            records,
+        };
 
-    // 2. Update manifest
-    manifest.batches.push(WebDavBatchEntry {
-        batch_seq: next_seq,
-        batch_id,
-        count: pending.len(),
-        file_name,
-        created_at_ms: now,
-    });
-    manifest.last_batch_seq = next_seq;
-    manifest.updated_at_ms = now;
-    client.put_json(&manifest_path, &manifest)?;
+        // 1. Upload batch file
+        client.put_json(&batch_file_path, &batch_file)?;
 
-    // 3. Acknowledge uploaded records locally
-    let mut acked = 0usize;
-    for entry in &pending {
-        if store
-            .ack_outbox_if_revision(
-                &entry.envelope.record.record_id,
-                entry.envelope.record_revision,
-            )
-            .map_err(|e| WebDavClientError::Transport(e.to_string()))?
-        {
-            acked += 1;
+        // 2. Update manifest
+        manifest.batches.push(WebDavBatchEntry {
+            batch_seq: next_seq,
+            batch_id,
+            count: current_pending.len(),
+            file_name,
+            created_at_ms: batch_now,
+        });
+        manifest.last_batch_seq = next_seq;
+        manifest.updated_at_ms = batch_now;
+        client.put_json(&manifest_path, &manifest)?;
+
+        // 3. Acknowledge uploaded records locally
+        for entry in &current_pending {
+            if store
+                .ack_outbox_if_revision(
+                    &entry.envelope.record.record_id,
+                    entry.envelope.record_revision,
+                )
+                .map_err(|e| WebDavClientError::Transport(e.to_string()))?
+            {
+                total_acked += 1;
+            }
         }
+        total_batches += 1;
+
+        // Fetch next pending batch
+        current_pending = store
+            .pending_outbox_due(MAX_SYNC_BATCH, batch_now)
+            .map_err(|e| WebDavClientError::Transport(e.to_string()))?;
     }
 
-    Ok((acked, 1))
+    Ok((total_acked, total_batches))
 }
 
 /// Pull records from all remote devices on WebDAV into local store.
@@ -140,12 +155,7 @@ pub fn sync_webdav_pull(
             let Some(batch) = batch else { continue };
 
             let applied = store
-                .apply_remote_device_records(
-                    dev_id,
-                    batch_entry.batch_seq,
-                    &batch.records,
-                    now,
-                )
+                .apply_remote_device_records(dev_id, batch_entry.batch_seq, &batch.records, now)
                 .map_err(|e| WebDavClientError::Transport(e.to_string()))?;
 
             pulled_records += applied;

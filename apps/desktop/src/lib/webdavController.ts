@@ -164,10 +164,11 @@ export function createWebDavController(
     update({ syncing: true, error: '' });
     try {
       const report = await runtime.api.syncWebDavNow();
+      const remainingMsg = report.remaining_due > 0 ? `，待上报余量 ${report.remaining_due} 条` : '';
       update({
         lastSyncReport: report,
         lastSyncAt: Date.now(),
-        success: `同步完成：上报 ${report.uploaded_records} 条记录（${report.uploaded_batches} 批次），拉取 ${report.pulled_records} 条远端记录。`,
+        success: `同步完成：上报 ${report.uploaded_records} 条记录（${report.uploaded_batches} 批次），拉取 ${report.pulled_records} 条远端记录${remainingMsg}。`,
       });
       if (runtime.refreshDashboard) {
         await runtime.refreshDashboard();

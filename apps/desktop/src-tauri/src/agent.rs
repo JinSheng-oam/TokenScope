@@ -1,7 +1,7 @@
 use crate::{
     paths::{
         agent_is_running, database_path, resolve_agent, rotate_agent_log, shutdown_path,
-        sync_config_path, webdav_config_path, validate_time_zone,
+        sync_config_path, validate_time_zone, webdav_config_path,
     },
     state::{AgentProcess, AgentStatus},
 };

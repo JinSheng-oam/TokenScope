@@ -156,7 +156,10 @@ pub(crate) fn webdav_config_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("sync-webdav.json"))
 }
 
-pub(crate) fn persist_webdav_config_file(app: &AppHandle, json_content: &str) -> Result<(), String> {
+pub(crate) fn persist_webdav_config_file(
+    app: &AppHandle,
+    json_content: &str,
+) -> Result<(), String> {
     let path = webdav_config_path(app)?;
     let mut temp = path.clone();
     temp.set_extension(format!("tmp-{}", std::process::id()));

@@ -387,13 +387,8 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         if sync_webdav_once {
             let config = sync::resolve_webdav_config(sync_webdav_config_path.as_deref())?
                 .ok_or("no WebDAV configuration found; configure WebDAV sync first")?;
-            let (report, devices) = sync::sync_webdav_device_once(
-                &mut store,
-                &config,
-                &device,
-                &display,
-                &zone,
-            )?;
+            let (report, devices) =
+                sync::sync_webdav_device_once(&mut store, &config, &device, &display, &zone)?;
             println!(
                 "webdav sync uploaded_records={} uploaded_batches={} pulled_records={} pulled_batches={} remaining_due={} remote_devices={}",
                 report.uploaded_records,

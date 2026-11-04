@@ -23,8 +23,7 @@ fn webdav_sync_cycle_roundtrip_with_mock_server() {
     let fixture = include_str!("../../../fixtures/domain/canonical-record-v1.json");
     let mut canonical: RevisionedRecord = serde_json::from_str(fixture).unwrap();
     canonical.record.owner_device_id = "dev-remote".into();
-    let valid_remote_record =
-        RevisionedRecord::from_store(canonical.record, 1).unwrap();
+    let valid_remote_record = RevisionedRecord::from_store(canonical.record, 1).unwrap();
 
     let batch_file = WebDavBatchFile {
         protocol_version: 1,
@@ -162,7 +161,9 @@ fn webdav_sync_cycle_roundtrip_with_mock_server() {
     assert_eq!(devices[0].display_name, "MacBook Pro");
 
     // Remote record should now be in local store!
-    let totals = store.remote_usage_totals(Some("dev-remote"), None, None).unwrap();
+    let totals = store
+        .remote_usage_totals(Some("dev-remote"), None, None)
+        .unwrap();
     assert_eq!(totals.record_count, 1);
     assert_eq!(totals.input_tokens, 100);
     assert_eq!(totals.output_tokens, 50);

@@ -127,7 +127,10 @@ impl WebDavSecretStore for MemoryWebDavStore {
 
     fn save(&self, key: &WebDavCredentialKey, password: &str) -> Result<(), String> {
         let mut map = self.items.lock().map_err(|_| "poisoned".to_string())?;
-        map.insert(key.account().to_string(), Zeroizing::new(password.to_string()));
+        map.insert(
+            key.account().to_string(),
+            Zeroizing::new(password.to_string()),
+        );
         Ok(())
     }
 
@@ -154,7 +157,10 @@ mod tests {
 
         store.save(&key, "secret_password_123").unwrap();
         let loaded = store.load(&key).unwrap();
-        assert_eq!(loaded.as_ref().map(|s| s.as_str()), Some("secret_password_123"));
+        assert_eq!(
+            loaded.as_ref().map(|s| s.as_str()),
+            Some("secret_password_123")
+        );
 
         let deleted = store.delete(&key).unwrap();
         assert!(deleted);

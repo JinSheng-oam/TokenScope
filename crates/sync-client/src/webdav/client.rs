@@ -24,7 +24,9 @@ impl fmt::Display for WebDavClientError {
             Self::Unauthorized => write!(f, "WebDAV 认证失败：用户名或密码错误"),
             Self::NotFound => write!(f, "WebDAV 路径不存在"),
             Self::Transport(msg) => write!(f, "WebDAV 网络传输错误：{msg}"),
-            Self::ServerRejected(status, msg) => write!(f, "WebDAV 服务端返回错误 ({status}): {msg}"),
+            Self::ServerRejected(status, msg) => {
+                write!(f, "WebDAV 服务端返回错误 ({status}): {msg}")
+            }
             Self::Serialization(msg) => write!(f, "WebDAV 数据序列化错误：{msg}"),
             Self::InvalidUrl(err) => write!(f, "WebDAV URL 错误：{err}"),
         }
@@ -46,7 +48,10 @@ pub struct WebDavClient {
 }
 
 impl WebDavClient {
-    pub fn new(base_url: WebDavUrl, credentials: WebDavCredentials) -> Result<Self, WebDavClientError> {
+    pub fn new(
+        base_url: WebDavUrl,
+        credentials: WebDavCredentials,
+    ) -> Result<Self, WebDavClientError> {
         let http = Client::builder()
             .timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(10))
@@ -66,9 +71,10 @@ impl WebDavClient {
     }
 
     fn auth_request(&self, method: Method, url: &url::Url) -> reqwest::blocking::RequestBuilder {
-        self.http
-            .request(method, url.clone())
-            .basic_auth(&self.credentials.username, Some(&*self.credentials.password))
+        self.http.request(method, url.clone()).basic_auth(
+            &self.credentials.username,
+            Some(&*self.credentials.password),
+        )
     }
 
     /// Test if WebDAV server is reachable and credentials are valid.
@@ -86,8 +92,12 @@ impl WebDavClient {
             .map_err(|e| WebDavClientError::Transport(e.to_string()))?;
 
         match resp.status() {
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(WebDavClientError::Unauthorized),
-            s if s.is_success() || s == StatusCode::MULTI_STATUS || s == StatusCode::NOT_FOUND => Ok(()),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                Err(WebDavClientError::Unauthorized)
+            }
+            s if s.is_success() || s == StatusCode::MULTI_STATUS || s == StatusCode::NOT_FOUND => {
+                Ok(())
+            }
             s => {
                 // Some servers don't support PROPFIND on root or return Method Not Allowed; fallback to OPTIONS / GET
                 let fallback = self
@@ -95,7 +105,9 @@ impl WebDavClient {
                     .send()
                     .map_err(|e| WebDavClientError::Transport(e.to_string()))?;
                 match fallback.status() {
-                    StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(WebDavClientError::Unauthorized),
+                    StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                        Err(WebDavClientError::Unauthorized)
+                    }
                     f if f.is_success() || f == StatusCode::NOT_FOUND => Ok(()),
                     _ => Err(WebDavClientError::ServerRejected(
                         s.as_u16(),
@@ -115,9 +127,8 @@ impl WebDavClient {
 
         let segments: Vec<&str> = trimmed.split('/').filter(|s| !s.is_empty()).collect();
         let mut current = String::new();
-        let mkcol_method = Method::from_bytes(b"MKCOL").map_err(|_| {
-            WebDavClientError::Transport("failed to construct MKCOL method".into())
-        })?;
+        let mkcol_method = Method::from_bytes(b"MKCOL")
+            .map_err(|_| WebDavClientError::Transport("failed to construct MKCOL method".into()))?;
 
         for segment in segments {
             if !current.is_empty() {
@@ -154,7 +165,11 @@ impl WebDavClient {
     }
 
     /// Upload a JSON document to WebDAV via PUT.
-    pub fn put_json<T: Serialize>(&self, relative_path: &str, data: &T) -> Result<(), WebDavClientError> {
+    pub fn put_json<T: Serialize>(
+        &self,
+        relative_path: &str,
+        data: &T,
+    ) -> Result<(), WebDavClientError> {
         let file_url = self.base_url.join(relative_path)?;
         let body = serde_json::to_vec(data)
             .map_err(|e| WebDavClientError::Serialization(e.to_string()))?;
@@ -167,7 +182,9 @@ impl WebDavClient {
             .map_err(|e| WebDavClientError::Transport(e.to_string()))?;
 
         match resp.status() {
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(WebDavClientError::Unauthorized),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                Err(WebDavClientError::Unauthorized)
+            }
             s if s.is_success() => Ok(()),
             s => Err(WebDavClientError::ServerRejected(
                 s.as_u16(),
@@ -177,7 +194,10 @@ impl WebDavClient {
     }
 
     /// Download and parse a JSON document from WebDAV via GET. Returns None if 404.
-    pub fn get_json<T: DeserializeOwned>(&self, relative_path: &str) -> Result<Option<T>, WebDavClientError> {
+    pub fn get_json<T: DeserializeOwned>(
+        &self,
+        relative_path: &str,
+    ) -> Result<Option<T>, WebDavClientError> {
         let file_url = self.base_url.join(relative_path)?;
         let resp = self
             .auth_request(Method::GET, &file_url)
@@ -186,7 +206,9 @@ impl WebDavClient {
 
         match resp.status() {
             StatusCode::NOT_FOUND => Ok(None),
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(WebDavClientError::Unauthorized),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                Err(WebDavClientError::Unauthorized)
+            }
             s if s.is_success() => {
                 let bytes = resp
                     .bytes()
@@ -221,9 +243,13 @@ impl WebDavClient {
 
         match resp.status() {
             StatusCode::NOT_FOUND => Ok(Vec::new()),
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(WebDavClientError::Unauthorized),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                Err(WebDavClientError::Unauthorized)
+            }
             s if s == StatusCode::MULTI_STATUS || s.is_success() => {
-                let xml = resp.text().map_err(|e| WebDavClientError::Transport(e.to_string()))?;
+                let xml = resp
+                    .text()
+                    .map_err(|e| WebDavClientError::Transport(e.to_string()))?;
                 Ok(parse_propfind_filenames(&xml))
             }
             s => Err(WebDavClientError::ServerRejected(
@@ -243,7 +269,9 @@ impl WebDavClient {
 
         match resp.status() {
             StatusCode::NOT_FOUND => Ok(false),
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(WebDavClientError::Unauthorized),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                Err(WebDavClientError::Unauthorized)
+            }
             s if s.is_success() => Ok(true),
             s => Err(WebDavClientError::ServerRejected(
                 s.as_u16(),
@@ -268,11 +296,12 @@ pub fn parse_propfind_filenames(xml: &str) -> Vec<String> {
         cursor = end_idx;
 
         // Check if this response represents a collection
-        let is_collection = if let Some(res_type) = extract_tag_content(response_block, "resourcetype") {
-            contains_tag(&res_type, "collection")
-        } else {
-            false
-        };
+        let is_collection =
+            if let Some(res_type) = extract_tag_content(response_block, "resourcetype") {
+                contains_tag(&res_type, "collection")
+            } else {
+                false
+            };
 
         if is_collection {
             continue;
@@ -304,7 +333,12 @@ fn find_tag_open(haystack: &str, tag_name: &str, from: usize) -> Option<usize> {
         if bytes[i] == b'<' {
             // Check if tag name matches (ignoring namespace prefix like <D:tag> or <tag>)
             let mut j = i + 1;
-            while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b':' || bytes[j] == b'_' || bytes[j] == b'-') {
+            while j < bytes.len()
+                && (bytes[j].is_ascii_alphanumeric()
+                    || bytes[j] == b':'
+                    || bytes[j] == b'_'
+                    || bytes[j] == b'-')
+            {
                 j += 1;
             }
             let candidate = &haystack[i + 1..j];
@@ -324,7 +358,12 @@ fn find_tag_close(haystack: &str, tag_name: &str, from: usize) -> Option<usize> 
     while i < bytes.len() {
         if bytes[i] == b'<' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
             let mut j = i + 2;
-            while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b':' || bytes[j] == b'_' || bytes[j] == b'-') {
+            while j < bytes.len()
+                && (bytes[j].is_ascii_alphanumeric()
+                    || bytes[j] == b':'
+                    || bytes[j] == b'_'
+                    || bytes[j] == b'-')
+            {
                 j += 1;
             }
             let candidate = &haystack[i + 2..j];

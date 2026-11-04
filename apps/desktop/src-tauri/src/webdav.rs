@@ -81,14 +81,21 @@ pub(crate) async fn save_webdav_config(
             username: username_trimmed.clone(),
             password: Zeroizing::new(password.clone()),
         };
-        let client = WebDavClient::new(parsed_url.clone(), credentials).map_err(|e| e.to_string())?;
-        client.test_connection().map_err(|e| format!("WebDAV 连接测试未通过：{e}"))?;
+        let client =
+            WebDavClient::new(parsed_url.clone(), credentials).map_err(|e| e.to_string())?;
+        client
+            .test_connection()
+            .map_err(|e| format!("WebDAV 连接测试未通过：{e}"))?;
 
         // Save password in system keyring
         let store = KeyringWebDavStore;
-        store.preflight().map_err(|e| format!("系统凭据库预检失败：{e}"))?;
+        store
+            .preflight()
+            .map_err(|e| format!("系统凭据库预检失败：{e}"))?;
         let key = WebDavCredentialKey::for_endpoint(parsed_url.as_str(), &username_trimmed);
-        store.save(&key, &password).map_err(|e| format!("保存 WebDAV 凭据到系统安全库失败：{e}"))?;
+        store
+            .save(&key, &password)
+            .map_err(|e| format!("保存 WebDAV 凭据到系统安全库失败：{e}"))?;
 
         // Persist config file
         let config = WebDavConfigFile {
@@ -112,9 +119,10 @@ pub(crate) fn get_webdav_config(app: AppHandle) -> Result<Option<WebDavPublicCon
     if !path.is_file() {
         return Ok(None);
     }
-    let content = fs::read_to_string(&path).map_err(|e| format!("读取 WebDAV 配置文件失败：{e}"))?;
-    let config: WebDavConfigFile = serde_json::from_str(&content)
-        .map_err(|e| format!("解析 WebDAV 配置文件失败：{e}"))?;
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("读取 WebDAV 配置文件失败：{e}"))?;
+    let config: WebDavConfigFile =
+        serde_json::from_str(&content).map_err(|e| format!("解析 WebDAV 配置文件失败：{e}"))?;
     Ok(Some(WebDavPublicConfig {
         enabled: config.enabled,
         url: config.url,
@@ -149,8 +157,8 @@ pub(crate) async fn list_webdav_devices(app: AppHandle) -> Result<DeviceListResp
             return Err("尚未配置 WebDAV 同步".into());
         }
         let content = fs::read_to_string(&path).map_err(|e| format!("读取配置文件失败：{e}"))?;
-        let config: WebDavConfigFile = serde_json::from_str(&content)
-            .map_err(|e| format!("解析配置文件失败：{e}"))?;
+        let config: WebDavConfigFile =
+            serde_json::from_str(&content).map_err(|e| format!("解析配置文件失败：{e}"))?;
 
         let parsed_url = WebDavUrl::parse(&config.url).map_err(|e| e.to_string())?;
         let key = WebDavCredentialKey::for_endpoint(&config.url, &config.username);
@@ -200,8 +208,8 @@ pub(crate) async fn sync_webdav_now(app: AppHandle) -> Result<WebDavSyncReport, 
             return Err("尚未配置 WebDAV 同步".into());
         }
         let content = fs::read_to_string(&path).map_err(|e| format!("读取配置文件失败：{e}"))?;
-        let config: WebDavConfigFile = serde_json::from_str(&content)
-            .map_err(|e| format!("解析配置文件失败：{e}"))?;
+        let config: WebDavConfigFile =
+            serde_json::from_str(&content).map_err(|e| format!("解析配置文件失败：{e}"))?;
 
         let parsed_url = WebDavUrl::parse(&config.url).map_err(|e| e.to_string())?;
         let key = WebDavCredentialKey::for_endpoint(&config.url, &config.username);

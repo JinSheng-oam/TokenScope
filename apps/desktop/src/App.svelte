@@ -393,7 +393,7 @@
     {/if}
 
     <!-- Page Content Area -->
-    <section class="page-content">
+    <section class="page-content" class:fit-viewport={activeTab === 'overview' && !!snapshot && !loading}>
       {#if errorMessage}
         <div class="notice-box" role="alert">
           {@html icons.alert}
@@ -435,7 +435,6 @@
             chartValues={dashboardView.chartValues}
             chartMax={dashboardView.chartMax}
             chartPoints={dashboardView.chartPoints}
-            chartPath={dashboardView.chartPath}
             hoveredCurvePoint={dashboardView.hoveredCurvePoint}
             heatmapCalendar={dashboardView.heatmapCalendar}
             topToolTotal={dashboardView.topToolTotal}

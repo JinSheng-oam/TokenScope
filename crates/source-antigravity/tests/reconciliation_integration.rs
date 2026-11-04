@@ -75,7 +75,7 @@ fn incomplete_metadata_does_not_advance_checkpoint_or_tombstone_usage() {
     let conn = Connection::open(&path).unwrap();
     conn.execute(
         "INSERT INTO gen_metadata(data) VALUES(?1)",
-        params![vec![0_u8; 262_145]],
+        params![vec![0_u8; 8 * 1024 * 1024 + 1]],
     )
     .unwrap();
     drop(conn);
@@ -206,7 +206,7 @@ fn too_large_blob_does_not_replace_last_good_record() {
         .unwrap()
         .execute(
             "INSERT INTO gen_metadata(data) VALUES(?1)",
-            params![vec![0u8; 300_000]],
+            params![vec![0u8; 8 * 1024 * 1024 + 1]],
         )
         .unwrap();
     let report = collect_antigravity(&f.root, &mut s, "test-device", true).unwrap();

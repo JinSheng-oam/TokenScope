@@ -5,6 +5,8 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
+    thread,
+    time::Duration,
 };
 use tauri::{AppHandle, Manager};
 use tokenscope_sync_client::HubUrl;
@@ -12,10 +14,92 @@ use tokenscope_sync_client::HubUrl;
 pub(crate) fn database_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
-        .app_data_dir()
-        .map_err(|e| format!("无法获取应用数据目录：{e}"))?;
-    fs::create_dir_all(&dir).map_err(|e| format!("无法创建应用数据目录：{e}"))?;
-    Ok(dir.join("tokenscope.db"))
+        .app_local_data_dir()
+        .map_err(|e| format!("无法获取应用本地数据目录：{e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("无法创建应用本地数据目录：{e}"))?;
+    let db = dir.join("tokenscope.db");
+    migrate_legacy_database(app, &db)?;
+    Ok(db)
+}
+
+/// One-time move out of Roaming. Roaming profiles are copied between Windows
+/// machines; a live SQLite database must not travel with them. The legacy file
+/// stays in place if any copy fails, so a failed migration never loses data.
+fn migrate_legacy_database(app: &AppHandle, target: &Path) -> Result<(), String> {
+    if target.exists() {
+        return Ok(());
+    }
+    let Ok(legacy_dir) = app.path().app_data_dir() else {
+        return Ok(());
+    };
+    if !legacy_dir.join("tokenscope.db").is_file() {
+        return Ok(());
+    }
+    let legacy = legacy_dir.join("tokenscope.db");
+    stop_legacy_agent(&legacy)?;
+    let target_dir = target.parent().ok_or("无效数据库路径")?;
+    let suffixes = ["", "-wal", "-shm", ".device-id"];
+    let mut staged = Vec::new();
+    for suffix in suffixes {
+        let source = legacy_dir.join(format!("tokenscope.db{suffix}"));
+        if !source.exists() {
+            continue;
+        }
+        let final_path = target_dir.join(format!("tokenscope.db{suffix}"));
+        let mut temporary = final_path.as_os_str().to_os_string();
+        temporary.push(".migrating");
+        let temporary = PathBuf::from(temporary);
+        let _ = fs::remove_file(&temporary);
+        if let Err(error) = fs::copy(&source, &temporary) {
+            for (temporary, _) in staged {
+                let _ = fs::remove_file(temporary);
+            }
+            let _ = fs::remove_file(&temporary);
+            return Err(format!("迁移数据库失败：{error}"));
+        }
+        staged.push((temporary, final_path));
+    }
+    if staged.is_empty() {
+        return Ok(());
+    }
+    let mut installed = Vec::new();
+    for (temporary, final_path) in staged {
+        if let Err(error) = fs::rename(&temporary, &final_path) {
+            // Roll back so the next start retries from a clean target.
+            for path in &installed {
+                let _ = fs::remove_file(path);
+            }
+            let _ = fs::remove_file(&temporary);
+            return Err(format!("安装迁移后的数据库失败：{error}"));
+        }
+        installed.push(final_path);
+    }
+    for suffix in suffixes {
+        let _ = fs::remove_file(legacy_dir.join(format!("tokenscope.db{suffix}")));
+    }
+    Ok(())
+}
+
+/// A previous build may still own the Roaming database. Copying it while that
+/// agent writes would fork the data, so ask it to stop through the existing
+/// shutdown marker and wait for the lock to be released.
+fn stop_legacy_agent(legacy_db: &Path) -> Result<(), String> {
+    if !agent_is_running(legacy_db).unwrap_or(false) {
+        return Ok(());
+    }
+    let mut name = legacy_db.as_os_str().to_os_string();
+    name.push(".shutdown");
+    let marker = PathBuf::from(name);
+    fs::write(&marker, b"").map_err(|e| format!("无法通知旧版采集器停止：{e}"))?;
+    for _ in 0..100 {
+        thread::sleep(Duration::from_millis(100));
+        if !agent_is_running(legacy_db).unwrap_or(true) {
+            let _ = fs::remove_file(&marker);
+            return Ok(());
+        }
+    }
+    let _ = fs::remove_file(&marker);
+    Err("旧版 TokenScope 采集器仍在运行，数据库迁移已中止；请先退出旧版应用后重试".into())
 }
 
 pub(crate) fn sync_config_path(app: &AppHandle) -> Result<PathBuf, String> {

@@ -12,11 +12,15 @@ use std::io;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const MODULE_ID: &str = "source-antigravity";
-pub const PARSER_VERSION: u32 = 5;
+pub const PARSER_VERSION: u32 = 6;
 pub(crate) const MAX_FILES: usize = 20_000;
 pub(crate) const MAX_TURNS_PER_DB: u64 = 50_000;
 pub(crate) const MAX_MODELS_PER_DB: usize = 512;
-pub(crate) const MAX_PROTO_BYTES: usize = 256 * 1024;
+// Antigravity writes the full generation metadata (including model and token
+// counters) into `gen_metadata`. Long conversations legitimately exceed the
+// old 256 KiB guard, and skipping one row used to discard the whole
+// conversation. Keep a bounded cap, but leave enough room for real metadata.
+pub(crate) const MAX_PROTO_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug)]
 pub enum AntigravityError {

@@ -3,10 +3,11 @@
    ========================================================================== */
 .page-content {
   flex: 1;
-  max-width: 1440px;
+  min-height: 0;
   width: 100%;
-  margin: 0 auto;
-  padding: 18px 24px 32px;
+  overflow-y: auto;
+  /* 内容区独立滚动；宽屏下通过内边距把内容收拢到 1440px 视觉宽度 */
+  padding: 18px max(24px, calc((100% - 1392px) / 2)) 32px;
 }
 
 .page-header {

@@ -4,7 +4,7 @@ use crate::{
         extract_model_name, extract_response_id, extract_usage, make_record, proto_field,
         proto_varint_field, protobuf_timestamp_ms,
     },
-    AntigravityError, Result, MAX_FILES, MAX_MODELS_PER_DB, MAX_TURNS_PER_DB,
+    AntigravityError, Result, MAX_FILES, MAX_MODELS_PER_DB, MAX_PROTO_BYTES, MAX_TURNS_PER_DB,
 };
 use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest, Sha256};
@@ -104,9 +104,9 @@ pub(super) fn read_db(
         return Err(AntigravityError::Invalid("gen_metadata table missing"));
     }
     let mut stmt = conn.prepare(
-        "SELECT rowid,CASE WHEN length(data)<=262144 THEN data ELSE NULL END FROM gen_metadata ORDER BY rowid",
+        "SELECT rowid,CASE WHEN length(data)<=?1 THEN data ELSE NULL END FROM gen_metadata ORDER BY rowid",
     )?;
-    let mut rows = stmt.query([])?;
+    let mut rows = stmt.query([MAX_PROTO_BYTES as i64])?;
     let mut counts = BTreeMap::new();
     let mut known_turns = 0u64;
     let mut unknown_turns = 0u64;

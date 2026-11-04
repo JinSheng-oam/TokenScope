@@ -2,7 +2,7 @@ use crate::{
     antigravity_rpc, codex_rpc,
     collection::{collect_once, CollectionOptions},
     daemon::{self, DaemonOptions},
-    dashboard,
+    dashboard, identity,
     lock::AgentLock,
     quota, sync,
 };
@@ -209,14 +209,52 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Lock before opening SQLite or touching local identity. OS releases this
     // lock if the process crashes or is killed.
     let _exclusive = AgentLock::acquire(&db)?;
+    let read_only_store = dashboard_json || show_antigravity;
+    // A vanished database whose identity marker survived is a replacement, not
+    // a first run. Refuse before SQLite recreates an empty file.
+    let marker = identity::marker_path(&db);
+    let marked = if read_only_store {
+        None
+    } else {
+        identity::read(&marker)?
+    };
+    if marked.is_some() && !db.is_file() {
+        return Err(format!(
+            "database {} is missing but device identity marker {} exists; refusing to create a new database (restore the file, or remove the marker to start fresh)",
+            db.display(),
+            marker.display()
+        )
+        .into());
+    }
     // Short-lived read commands must not open the write connection: doing so
     // checkpoints the WAL on every dashboard refresh and dominates latency.
-    let mut store = if dashboard_json || show_antigravity {
+    let mut store = if read_only_store {
         LocalStore::open_readonly(&db)?
     } else {
         LocalStore::open(&db)?
     };
     let prior = store.identity()?;
+    if !read_only_store {
+        if let (Some(prior), Some(marked)) = (prior.as_ref(), marked.as_ref()) {
+            if prior.device_id != *marked {
+                return Err(format!(
+                    "device identity mismatch: database={} marker={} ({}); the database may have been replaced, refusing to scan (restore the original database, or remove the marker to adopt this one)",
+                    prior.device_id,
+                    marked,
+                    marker.display()
+                )
+                .into());
+            }
+        }
+        if prior.is_none() && marked.is_some() {
+            return Err(format!(
+                "database {} has no device identity although marker {} exists; refusing to initialize over an unexpected file",
+                db.display(),
+                marker.display()
+            )
+            .into());
+        }
+    }
     // The stable device ID is generated once and persisted in SQLite on first
     // run. Existing databases always reuse their immutable stored identity.
     let device = arg(&args, "--device-id")
@@ -233,6 +271,25 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         display_name: display,
         time_zone: zone,
     })?;
+    if !read_only_store {
+        if marked.as_deref() != Some(device.as_str()) {
+            identity::write(&marker, &device)?;
+        }
+        let schema = store.schema_version()?;
+        println!(
+            "TokenScope agent db={} schema={} device={} marker={}",
+            db.display(),
+            schema,
+            device,
+            if marked.is_some() {
+                "present"
+            } else {
+                "created"
+            }
+        );
+        store.quick_integrity_check()?;
+        println!("TokenScope agent integrity=ok");
+    }
     let codex_root = match arg(&args, "--codex-home") {
         Some(p) => PathBuf::from(p),
         None => config_home("CODEX_HOME", ".codex")?,

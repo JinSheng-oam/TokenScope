@@ -17,8 +17,8 @@ pub(super) const PROJECT_LABEL_TOOL_ID: &str = "project-label";
 pub use models::{
     AntigravityActivity, AntigravityActivitySummary, AntigravityQuota, ApplyReport, CodexQuota,
     DailyUsage, DashboardQuery, DashboardSnapshot, LocalIdentity, ModelActivityBreakdown,
-    OutboxEntry, ReconcileReport, RemoteDeviceUsage, RemoteUsageBreakdown, RemoteUsageChange,
-    RemoteUsageTotals, SessionAnalysisPage, SessionFilterOption, SessionFilterOptions,
-    SessionUsage, SessionUsagePage, SourceCheckpoint, SourceHealth, SyncOutboxStatus,
-    ToolUsageOverview, UsageBreakdown, UsageOverview, UsageTotals,
+    OutboxEntry, ProjectName, ReconcileReport, RemoteDeviceUsage, RemoteUsageBreakdown,
+    RemoteUsageChange, RemoteUsageTotals, SessionAnalysisPage, SessionFilterOption,
+    SessionFilterOptions, SessionUsage, SessionUsagePage, SourceCheckpoint, SourceHealth,
+    SyncOutboxStatus, ToolUsageOverview, UsageBreakdown, UsageOverview, UsageTotals,
 };

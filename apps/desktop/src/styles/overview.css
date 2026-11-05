@@ -168,38 +168,30 @@
 
 .fit-viewport .metric-card {
   min-height: 0;
-  padding: 10px 14px;
-  justify-content: flex-start;
-  gap: 2px;
+  padding: 11px 14px 10px;
+  justify-content: space-between;
+  gap: 3px;
 }
 
 .fit-viewport .metric-head {
-  min-height: 30px;
+  min-height: 22px;
   align-items: center;
 }
 
 .fit-viewport .metric-val {
-  margin: 2px 0 4px;
+  margin: 2px 0 3px;
   font-size: clamp(19px, 1.8vw, 22px);
+}
+
+.fit-viewport .metric-split-bar {
+  margin: 2px 0 4px;
 }
 
 .fit-viewport .metric-foot {
   margin-top: auto;
-}
-
-.fit-viewport .hero-card .metric-foot {
   flex-wrap: nowrap;
   gap: 8px;
   overflow: hidden;
-}
-
-.fit-viewport .hero-card .metric-foot > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.fit-viewport .metric-split-bar {
-  margin-top: 5px;
 }
 
 .fit-viewport .integrity-banner {

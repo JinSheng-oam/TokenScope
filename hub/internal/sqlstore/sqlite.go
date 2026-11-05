@@ -24,7 +24,10 @@ var migration002 string
 //go:embed migrations/003.sql
 var migration003 string
 
-const schemaVersion = 3
+//go:embed migrations/004.sql
+var migration004 string
+
+const schemaVersion = 4
 
 type SQLiteRepository struct{ db *sql.DB }
 
@@ -140,6 +143,12 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			version int
 			sql     string
 		}{3, migration003})
+	}
+	if current < 4 {
+		migrations = append(migrations, struct {
+			version int
+			sql     string
+		}{4, migration004})
 	}
 	for _, m := range migrations {
 		for _, statement := range strings.Split(m.sql, ";") {
@@ -480,6 +489,55 @@ func (s *SQLiteRepository) PullUsageChanges(ctx context.Context, afterSeq int64,
 		return nil, 0, err
 	}
 	return out, high, nil
+}
+
+func (s *SQLiteRepository) UpsertProjectNames(ctx context.Context, deviceID string, names []hub.ProjectName, nowMS int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var revoked sql.NullInt64
+	if err = tx.QueryRowContext(ctx, `SELECT revoked_at_ms FROM devices WHERE device_id=?`, deviceID).Scan(&revoked); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return hub.ErrDeviceNotFound
+		}
+		return err
+	}
+	if revoked.Valid {
+		return hub.ErrDeviceRevoked
+	}
+	for _, name := range names {
+		_, err = tx.ExecContext(ctx, `INSERT INTO project_names(device_id,project_id,name,updated_at_ms) VALUES(?,?,?,?) ON CONFLICT(device_id,project_id) DO UPDATE SET name=excluded.name,updated_at_ms=excluded.updated_at_ms WHERE project_names.name<>excluded.name`, deviceID, name.ProjectID, name.Name, nowMS)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *SQLiteRepository) ListProjectNames(ctx context.Context, afterDeviceID, afterProjectID string, limit int) ([]hub.ProjectName, bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT device_id,project_id,name,updated_at_ms FROM project_names WHERE device_id>? OR (device_id=? AND project_id>?) ORDER BY device_id,project_id LIMIT ?`, afterDeviceID, afterDeviceID, afterProjectID, limit+1)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	names := make([]hub.ProjectName, 0, limit+1)
+	for rows.Next() {
+		var name hub.ProjectName
+		if err := rows.Scan(&name.OwnerDeviceID, &name.ProjectID, &name.Name, &name.UpdatedAtMS); err != nil {
+			return nil, false, err
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(names) > limit
+	if hasMore {
+		names = names[:limit]
+	}
+	return names, hasMore, nil
 }
 
 func (s *SQLiteRepository) Close() error { return s.db.Close() }

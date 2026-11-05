@@ -54,6 +54,8 @@ func NewHandler(repo hub.Repository, cfg Config) (http.Handler, error) {
 	mux.Handle("POST /api/v1/pair", s.requireTransport(http.HandlerFunc(s.pair)))
 	mux.Handle("POST /api/v1/usage/batch", s.requireTransport(s.requireDevice(http.HandlerFunc(s.pushUsageBatch))))
 	mux.Handle("GET /api/v1/usage/changes", s.requireTransport(s.requireDevice(http.HandlerFunc(s.pullUsageChanges))))
+	mux.Handle("PUT /api/v1/project-names", s.requireTransport(s.requireDevice(http.HandlerFunc(s.putProjectNames))))
+	mux.Handle("GET /api/v1/project-names", s.requireTransport(s.requireDevice(http.HandlerFunc(s.getProjectNames))))
 	mux.Handle("POST /api/v1/admin/pairing-codes", s.requireTransport(s.requireAdmin(http.HandlerFunc(s.createPairingCode))))
 	mux.Handle("GET /api/v1/devices", s.requireTransport(s.requireDevice(http.HandlerFunc(s.listDevices))))
 	mux.Handle("PATCH /api/v1/devices/self", s.requireTransport(s.requireDevice(http.HandlerFunc(s.renameSelf))))
@@ -328,6 +330,47 @@ func (s *Server) pullUsageChanges(w http.ResponseWriter, r *http.Request) {
 		limit = n
 	}
 	result, err := s.service.PullUsageChanges(r.Context(), cursor, limit)
+	if err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) putProjectNames(w http.ResponseWriter, r *http.Request) {
+	var req hub.ProjectNamesRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	if req.ProtocolVersion != hub.ProtocolVersion || len(req.ProjectNames) == 0 || len(req.ProjectNames) > 200 {
+		writeError(w, http.StatusBadRequest, "invalid_project_names")
+		return
+	}
+	accepted, err := s.service.UpsertProjectNames(r.Context(), deviceFromContext(r).DeviceID, req.ProjectNames)
+	if err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, hub.ProjectNamesUpsertResponse{ProtocolVersion: hub.ProtocolVersion, Accepted: accepted})
+}
+
+func (s *Server) getProjectNames(w http.ResponseWriter, r *http.Request) {
+	limit := 200
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 500 {
+			writeError(w, http.StatusBadRequest, "invalid_limit")
+			return
+		}
+		limit = n
+	}
+	result, err := s.service.ListProjectNames(
+		r.Context(),
+		r.URL.Query().Get("after_device_id"),
+		r.URL.Query().Get("after_project_id"),
+		limit,
+	)
 	if err != nil {
 		s.writeServiceError(w, err)
 		return

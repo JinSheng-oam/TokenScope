@@ -4,6 +4,8 @@
   import { listen } from '@tauri-apps/api/event';
   import {
     buildDashboardProjection,
+    formatCompactTokens,
+    type DeviceScope,
     type ModelSortBy,
     type TrendViewMode,
   } from './lib/dashboardView';
@@ -51,6 +53,8 @@
   let appliedRefreshIntervalMs = -1;
 
   let remoteSelectedDevice = 'all';
+  let deviceScope: DeviceScope = (typeof localStorage !== 'undefined' && localStorage.getItem('tokenscope.deviceScope')) || 'all';
+  let deviceMenuOpen = false;
 
   const sessionController = createSessionController({
     isRuntimeAvailable: () => runtimeAvailable,
@@ -126,6 +130,7 @@
     todayIso,
     hoveredCurveIndex,
     remoteSelectedDevice,
+    deviceScope,
     modelSortBy,
     range,
     customStart,
@@ -149,8 +154,44 @@
         map.set(d.device_id, d);
       }
     }
+    for (const r of snapshot?.remote_by_device ?? []) {
+      if (!map.has(r.owner_device_id) && r.owner_device_id !== snapshot?.identity?.device_id) {
+        map.set(r.owner_device_id, {
+          device_id: r.owner_device_id,
+          display_name: `远端设备 (${r.owner_device_id.slice(0, 6)})`,
+          os_name: 'other',
+          app_version: 'synced',
+          time_zone: snapshot?.time_zone ?? 'UTC',
+          created_at_ms: 0,
+          last_seen_ms: null,
+          revoked_at_ms: null,
+        });
+      }
+    }
     return Array.from(map.values());
   })();
+
+  $: deviceScopeLabel = (() => {
+    const localName = snapshot?.identity?.display_name ?? '本机工作站';
+    if (deviceScope === 'all') {
+      return selectableRemoteDevices.length > 0 || (snapshot?.remote.total_tokens ?? 0) > 0
+        ? `全部设备汇总 (${1 + Math.max(selectableRemoteDevices.length, snapshot?.remote_by_device.length ?? 0)}台)`
+        : `全部设备 · ${localName}`;
+    }
+    if (deviceScope === 'local') {
+      return `本机 · ${localName}`;
+    }
+    const found = selectableRemoteDevices.find((d) => d.device_id === deviceScope);
+    return found ? `远端 · ${found.display_name}` : `远端 · ${deviceScope.slice(0, 6)}`;
+  })();
+
+  function selectDeviceScope(nextScope: DeviceScope) {
+    deviceScope = nextScope;
+    deviceMenuOpen = false;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('tokenscope.deviceScope', nextScope);
+    }
+  }
 
   $: selectableRemoteDevices = allRemoteDevices.filter(
     (d) => d.device_id !== snapshot?.identity?.device_id && d.revoked_at_ms === null
@@ -307,6 +348,19 @@
   <title>TokenScope · 跨设备 AI Token 监控</title>
 </svelte:head>
 
+<svelte:window
+  onmousedown={(e) => {
+    if (deviceMenuOpen && !(e.target as Element | null)?.closest('.device-switcher-wrap')) {
+      deviceMenuOpen = false;
+    }
+  }}
+  onkeydown={(e) => {
+    if (e.key === 'Escape' && deviceMenuOpen) {
+      deviceMenuOpen = false;
+    }
+  }}
+/>
+
 <div class="app-shell">
   <!-- Sidebar -->
   <aside class="sidebar">
@@ -395,9 +449,81 @@
       </div>
 
       <div class="topbar-actions">
-        <div class="machine-capsule" title="当前连接的物理设备">
-          {@html icons.cpu}
-          <span>{snapshot?.identity?.display_name ?? '本机工作站'}</span>
+        <div class="device-switcher-wrap">
+          <button
+            type="button"
+            class="machine-capsule interactive"
+            class:active={deviceMenuOpen || deviceScope !== 'local'}
+            title="切换设备数据统计范围（可汇总全部设备或单看某台设备）"
+            aria-haspopup="listbox"
+            aria-expanded={deviceMenuOpen}
+            onclick={() => (deviceMenuOpen = !deviceMenuOpen)}
+          >
+            {@html icons.cpu}
+            <span>{deviceScopeLabel}</span>
+            <svg class="capsule-chevron" class:rotated={deviceMenuOpen} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+
+          {#if deviceMenuOpen}
+            <div class="device-scope-dropdown" role="listbox" aria-label="选择统计设备范围">
+              <button
+                type="button"
+                class="device-scope-option"
+                class:selected={deviceScope === 'all'}
+                role="option"
+                aria-selected={deviceScope === 'all'}
+                onclick={() => selectDeviceScope('all')}
+              >
+                <div class="scope-opt-main">
+                  <span class="scope-opt-title">全部设备汇总</span>
+                  <span class="scope-opt-sub">本机 + 所有已同步远端设备累加</span>
+                </div>
+                <span class="scope-opt-badge tabular">
+                  {formatCompactTokens((snapshot?.local.total_tokens ?? 0) + (snapshot?.remote.total_tokens ?? 0))}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                class="device-scope-option"
+                class:selected={deviceScope === 'local'}
+                role="option"
+                aria-selected={deviceScope === 'local'}
+                onclick={() => selectDeviceScope('local')}
+              >
+                <div class="scope-opt-main">
+                  <span class="scope-opt-title">本机 · {snapshot?.identity?.display_name ?? 'This device'}</span>
+                  <span class="scope-opt-sub">仅当前物理设备有效记录</span>
+                </div>
+                <span class="scope-opt-badge tabular">
+                  {formatCompactTokens(snapshot?.local.total_tokens ?? 0)}
+                </span>
+              </button>
+
+              {#if selectableRemoteDevices.length > 0}
+                <div class="device-scope-divider">已同步远端设备</div>
+                {#each selectableRemoteDevices as rDev}
+                  {@const rTokens = snapshot?.remote_by_device.find((x) => x.owner_device_id === rDev.device_id)?.total_tokens ?? 0}
+                  <button
+                    type="button"
+                    class="device-scope-option"
+                    class:selected={deviceScope === rDev.device_id}
+                    role="option"
+                    aria-selected={deviceScope === rDev.device_id}
+                    onclick={() => selectDeviceScope(rDev.device_id)}
+                  >
+                    <div class="scope-opt-main">
+                      <span class="scope-opt-title">{rDev.display_name}</span>
+                      <span class="scope-opt-sub">ID: …{rDev.device_id.slice(-8)}</span>
+                    </div>
+                    <span class="scope-opt-badge tabular">{formatCompactTokens(rTokens)}</span>
+                  </button>
+                {/each}
+              {/if}
+            </div>
+          {/if}
         </div>
 
         <div class="range-capsule" role="group" aria-label="时间跨度">
@@ -494,6 +620,9 @@
           <OverviewPage
             {snapshot}
             local={dashboardView.local}
+            tools={dashboardView.scopedTools}
+            {deviceScope}
+            {deviceScopeLabel}
             exactRatio={dashboardView.exactRatio}
             cacheHitRate={dashboardView.tokenShares.cacheHitRate}
             inputShareRate={dashboardView.tokenShares.inputShareRate}
@@ -555,7 +684,7 @@
           />
         <!-- TAB 3: TOOLS ANALYSIS (工具分析) -->
         {:else if activeTab === 'tools'}
-          <ToolsPage snapshot={snapshot} local={dashboardView.local} />
+          <ToolsPage snapshot={snapshot} local={dashboardView.local} tools={dashboardView.scopedTools} />
         <!-- TAB 4: MODELS ANALYSIS (模型分析) -->
         {:else if activeTab === 'models'}
           <ModelsPage
@@ -599,7 +728,7 @@
           />
         <!-- TAB 5: PROJECTS (项目分析) -->
         {:else if activeTab === 'projects'}
-          <ProjectsPage snapshot={snapshot} local={dashboardView.local} />
+          <ProjectsPage snapshot={snapshot} local={dashboardView.local} projects={dashboardView.scopedProjects} />
         <!-- PROVIDER QUOTAS AND ACTIVITY -->
         {:else if activeTab === 'quota'}
           <QuotaPage snapshot={snapshot} antigravityUsage={dashboardView.antigravityUsage} />

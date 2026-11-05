@@ -10,7 +10,8 @@ pub use credentials::{
     WebDavSecretStore,
 };
 pub use model::{
-    WebDavBatchEntry, WebDavBatchFile, WebDavDeviceInfo, WebDavDeviceManifest, WebDavSyncReport,
+    WebDavBatchEntry, WebDavBatchFile, WebDavDeviceInfo, WebDavDeviceManifest,
+    WebDavProjectNamesFile, WebDavSyncReport,
 };
 pub use sync::{sync_webdav_cycle, sync_webdav_pull, sync_webdav_push};
 pub use url::{WebDavUrl, WebDavUrlError};

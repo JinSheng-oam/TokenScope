@@ -14,5 +14,7 @@ type Repository interface {
 	RevokeDevice(ctx context.Context, deviceID string, nowMS int64) error
 	ApplyUsageBatch(ctx context.Context, deviceID string, records []UsageEnvelope, nowMS int64) ([]UsageItemResult, error)
 	PullUsageChanges(ctx context.Context, afterSeq int64, limit int) ([]UsageChange, int64, error)
+	UpsertProjectNames(ctx context.Context, deviceID string, names []ProjectName, nowMS int64) error
+	ListProjectNames(ctx context.Context, afterDeviceID, afterProjectID string, limit int) ([]ProjectName, bool, error)
 	Close() error
 }

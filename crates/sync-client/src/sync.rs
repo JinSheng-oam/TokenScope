@@ -4,9 +4,186 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use tokenscope_core_domain::RevisionedRecord;
+use tokenscope_local_store::ProjectName;
 
 pub const MAX_SYNC_BATCH: usize = 200;
 pub const MAX_SYNC_REQUEST_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_PROJECT_NAME_BATCH: usize = 200;
+
+#[derive(Serialize)]
+struct ProjectNameUpload<'a> {
+    project_id: &'a str,
+    name: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectNamesRequest<'a> {
+    protocol_version: u32,
+    project_names: Vec<ProjectNameUpload<'a>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectNamesUpsertResponse {
+    protocol_version: u32,
+    accepted: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteProjectName {
+    pub owner_device_id: String,
+    pub project_id: String,
+    pub name: String,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectNamesPage {
+    pub protocol_version: u32,
+    pub project_names: Vec<RemoteProjectName>,
+    pub next_device_id: String,
+    pub next_project_id: String,
+    pub has_more: bool,
+}
+
+impl ProjectNamesPage {
+    pub fn validate(
+        &self,
+        after_device_id: &str,
+        after_project_id: &str,
+        limit: usize,
+    ) -> Result<(), HubClientError> {
+        if self.protocol_version != 1 || self.project_names.len() > limit {
+            return Err(HubClientError::ProtocolMismatch);
+        }
+        let mut previous = (after_device_id, after_project_id);
+        for name in &self.project_names {
+            if !valid_project_device_id(&name.owner_device_id)
+                || !valid_project_id(&name.project_id)
+                || !valid_project_display_name(&name.name)
+                || name.updated_at_ms < 0
+                || (name.owner_device_id.as_str(), name.project_id.as_str()) <= previous
+            {
+                return Err(HubClientError::InvalidResponse);
+            }
+            previous = (&name.owner_device_id, &name.project_id);
+        }
+        if self.has_more {
+            let Some(last) = self.project_names.last() else {
+                return Err(HubClientError::InvalidResponse);
+            };
+            if self.next_device_id != last.owner_device_id
+                || self.next_project_id != last.project_id
+            {
+                return Err(HubClientError::InvalidResponse);
+            }
+        } else if let Some(last) = self.project_names.last() {
+            if self.next_device_id != last.owner_device_id
+                || self.next_project_id != last.project_id
+            {
+                return Err(HubClientError::InvalidResponse);
+            }
+        } else if self.next_device_id != after_device_id || self.next_project_id != after_project_id
+        {
+            return Err(HubClientError::InvalidResponse);
+        }
+        Ok(())
+    }
+}
+
+fn valid_project_id(value: &str) -> bool {
+    value.len() == 68
+        && value.starts_with("prj_")
+        && value[4..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_project_device_id(value: &str) -> bool {
+    (8..=128).contains(&value.len())
+        && value.as_bytes()[0].is_ascii_alphanumeric()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+}
+
+fn valid_project_display_name(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.trim() != "."
+        && value.trim() != ".."
+        && value.chars().count() <= 120
+        && value.len() <= 512
+        && !value.chars().any(char::is_control)
+        && !value.contains('/')
+        && !value.contains('\\')
+}
+
+impl HubClient {
+    pub fn put_project_names(
+        &self,
+        token: &DeviceToken,
+        names: &[ProjectName],
+    ) -> Result<usize, HubClientError> {
+        if names.is_empty() || names.len() > MAX_PROJECT_NAME_BATCH {
+            return Err(HubClientError::InvalidRequest("project_names"));
+        }
+        let project_names = names
+            .iter()
+            .map(|name| {
+                if !valid_project_id(&name.project_id) || !valid_project_display_name(&name.name) {
+                    return Err(HubClientError::InvalidRequest("project_name"));
+                }
+                Ok(ProjectNameUpload {
+                    project_id: &name.project_id,
+                    name: &name.name,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let request = ProjectNamesRequest {
+            protocol_version: 1,
+            project_names,
+        };
+        let response: ProjectNamesUpsertResponse = self.send_json(
+            reqwest::Method::PUT,
+            "/api/v1/project-names",
+            Some(&request),
+            Some(token),
+        )?;
+        if response.protocol_version != 1 || response.accepted != names.len() {
+            return Err(HubClientError::ProtocolMismatch);
+        }
+        Ok(response.accepted)
+    }
+
+    pub fn list_project_names(
+        &self,
+        token: &DeviceToken,
+        after_device_id: &str,
+        after_project_id: &str,
+        limit: usize,
+    ) -> Result<ProjectNamesPage, HubClientError> {
+        if limit == 0
+            || limit > 500
+            || ((after_device_id.is_empty()) != (after_project_id.is_empty()))
+            || (!after_device_id.is_empty()
+                && (!valid_project_device_id(after_device_id)
+                    || !valid_project_id(after_project_id)))
+        {
+            return Err(HubClientError::InvalidRequest("project_names_cursor"));
+        }
+        let path = format!(
+            "/api/v1/project-names?after_device_id={after_device_id}&after_project_id={after_project_id}&limit={limit}"
+        );
+        let page: ProjectNamesPage =
+            self.send_json(reqwest::Method::GET, &path, None::<&()>, Some(token))?;
+        page.validate(after_device_id, after_project_id, limit)?;
+        Ok(page)
+    }
+}
+
 #[derive(Serialize)]
 #[serde(deny_unknown_fields)]
 struct UsageBatchRequest<'a> {

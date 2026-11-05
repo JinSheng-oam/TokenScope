@@ -114,6 +114,31 @@ type UsageEnvelope struct {
 	RecordRevision uint64      `json:"record_revision"`
 	PayloadHash    string      `json:"payload_hash"`
 }
+type ProjectNameInput struct {
+	ProjectID string `json:"project_id"`
+	Name      string `json:"name"`
+}
+type ProjectName struct {
+	OwnerDeviceID string `json:"owner_device_id"`
+	ProjectID     string `json:"project_id"`
+	Name          string `json:"name"`
+	UpdatedAtMS   int64  `json:"updated_at_ms"`
+}
+type ProjectNamesRequest struct {
+	ProtocolVersion int                `json:"protocol_version"`
+	ProjectNames    []ProjectNameInput `json:"project_names"`
+}
+type ProjectNamesUpsertResponse struct {
+	ProtocolVersion int `json:"protocol_version"`
+	Accepted        int `json:"accepted"`
+}
+type ProjectNamesPage struct {
+	ProtocolVersion int           `json:"protocol_version"`
+	ProjectNames    []ProjectName `json:"project_names"`
+	NextDeviceID    string        `json:"next_device_id"`
+	NextProjectID   string        `json:"next_project_id"`
+	HasMore         bool          `json:"has_more"`
+}
 type UsageBatchRequest struct {
 	ProtocolVersion int             `json:"protocol_version"`
 	BatchID         string          `json:"batch_id"`

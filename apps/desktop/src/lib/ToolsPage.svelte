@@ -1,9 +1,11 @@
 <script lang="ts">
   import { formatCost, formatNumber, formatToolLabel, percentOf, relativeTime } from '../lib/format';
-  import type { DashboardSnapshot, UsageTotals } from '../lib/types';
+  import type { DashboardSnapshot, UsageBreakdown, UsageTotals } from '../lib/types';
 
   export let snapshot: DashboardSnapshot;
   export let local: UsageTotals | undefined;
+  export let tools: UsageBreakdown[] | undefined = undefined;
+  $: activeTools = tools ?? snapshot.by_tool;
 
   $: completeCount = snapshot.source_health.filter((s) => s.status === 'complete').length;
 </script>
@@ -21,10 +23,10 @@
       <h2>工具用量详细矩阵</h2>
       <p>按本机 AI 编程助手与命令行工具分类汇总用量与估算支出</p>
     </div>
-    <span class="panel-tag">{snapshot.by_tool.length} 个本地来源</span>
+    <span class="panel-tag">{activeTools.length} 个本地来源</span>
   </div>
 
-  {#if snapshot.by_tool.length > 0}
+  {#if activeTools.length > 0}
     <div class="table-wrap">
       <table>
         <thead>
@@ -38,7 +40,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each snapshot.by_tool as tool, idx}
+          {#each activeTools as tool, idx}
             <tr>
               <td><span class="rank-num tabular">{String(idx + 1).padStart(2, '0')}</span></td>
               <td>

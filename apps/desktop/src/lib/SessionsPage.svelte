@@ -141,12 +141,12 @@
             <th class="th-tokens tabular">Token 使用</th>
             <th class="th-precision">精度与记录</th>
             <th class="th-responses tabular">响应次数</th>
-            <th class="th-time">最近事件</th>
+            <th class="th-time tabular">最近事件</th>
           </tr>
         </thead>
         <tbody>
           {#each sessionPage.sessions as session}
-            {@const projectLabels = session.project_ids.map((id) => getSessionProjectLabel(id)).filter((p) => p && p.trim().length > 0)}
+            {@const projectLabels = session.project_ids.map((id) => getSessionProjectLabel(id)).filter((p) => p && p.trim().length > 0 && !p.startsWith('prj_') && p !== '项目名称未提供')}
             {@const isDeletingThis = pendingSessionDeleteKey === sessionActionKey(session)}
             <tr class:row-deleting={isDeletingThis}>
               <td class="session-info-cell">
@@ -251,7 +251,7 @@
 
               <td class="tabular session-response-cell">{#if session.known_response_count !== null}
                   <strong>{formatNumber(session.known_response_count)}</strong>
-                  <div class="session-precision-sub">{session.tool_id === 'antigravity' ? '来源累计' : '当前范围'}{#if session.unknown_response_count} · 未识别 {formatNumber(session.unknown_response_count)}{/if}</div>
+                  <div class="session-precision-sub" title={session.unknown_response_count ? `未识别响应 ${formatNumber(session.unknown_response_count)} 次` : undefined}>{session.tool_id === 'antigravity' ? '来源累计' : '当前范围'}{#if session.unknown_response_count} · +{formatNumber(session.unknown_response_count)}{/if}</div>
                 {:else}
                   <span class="text-muted">来源未提供</span>
                 {/if}
@@ -261,7 +261,7 @@
                   {session.last_event_at_ms === null ? '时间未知' : relativeTime(session.last_event_at_ms)}
                 </div>
                 {#if session.tool_id === 'antigravity' && session.activity_observed_at_ms !== null}
-                  <div class="session-precision-sub">来源检查 {relativeTime(session.activity_observed_at_ms)}</div>
+                  <div class="session-precision-sub" title="Antigravity 活动最近检查时间">检查 {relativeTime(session.activity_observed_at_ms)}</div>
                 {/if}
               </td>
             </tr>

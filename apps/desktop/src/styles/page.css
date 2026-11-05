@@ -125,38 +125,21 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-height: 24px;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-secondary);
 }
 
-.metric-head > span:first-child {
+.metric-head > span:first-child,
+.metric-title {
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.metric-head .metric-label-stack {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 1px;
-  line-height: 1.25;
-  white-space: normal;
-}
-
-.metric-label-stack small {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .metric-val {
-  margin: 10px 0 8px;
+  margin: 6px 0 6px;
   font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1, "zero" 1;
@@ -168,6 +151,87 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.metric-split-bar {
+  display: flex;
+  width: 100%;
+  height: 3px;
+  margin: 2px 0 6px;
+  background-color: var(--bg-secondary);
+  border-radius: 999px;
+  overflow: hidden;
+  gap: 1px;
+}
+
+.metric-split-seg {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.metric-split-seg.input {
+  background-color: var(--brand-primary);
+}
+
+.metric-split-seg.output {
+  background-color: var(--color-aggregate);
+}
+
+.metric-split-seg.cache {
+  background-color: var(--color-exact);
+}
+
+.metric-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  font-size: 11px;
+  font-weight: 450;
+  line-height: 1.35;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.metric-foot > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric-foot strong {
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-foot-sub {
+  color: var(--text-muted);
+}
+
+.overview-header-meta {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.overview-header-meta .meta-dot {
+  color: var(--border-strong);
+}
+
+.overview-header-meta .meta-scope-highlight {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--brand-primary);
+  background-color: var(--brand-subtle);
+  border: 1px solid var(--brand-border);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Top Metric Rolling Number */
@@ -265,6 +329,16 @@
   align-items: center;
   gap: 5px;
   white-space: nowrap;
+  transition: opacity 0.15s ease;
+}
+
+.integrity-item.is-zero {
+  opacity: 0.45;
+}
+
+.integrity-clean-badge {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .integrity-dot {

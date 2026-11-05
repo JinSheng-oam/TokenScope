@@ -6,7 +6,7 @@ use super::{
     client::{WebDavClient, WebDavClientError},
     model::{
         WebDavBatchEntry, WebDavBatchFile, WebDavDeviceInfo, WebDavDeviceManifest,
-        WebDavSyncReport,
+        WebDavProjectNamesFile, WebDavSyncReport,
     },
 };
 use crate::sync::MAX_SYNC_BATCH;
@@ -32,16 +32,29 @@ pub fn sync_webdav_push(
     // Always update device presence file in devices/{device_id}.json
     client.ensure_collection("devices")?;
     client.ensure_collection("data")?;
+    let dev_data_dir = format!("data/{}", device_info.device_id);
+    client.ensure_collection(&dev_data_dir)?;
     let mut updated_info = device_info.clone();
     updated_info.last_seen_ms = now;
-    client.put_json(&format!("devices/{}.json", device_info.device_id), &updated_info)?;
+    client.put_json(
+        &format!("devices/{}.json", device_info.device_id),
+        &updated_info,
+    )?;
+
+    let project_names = store
+        .project_names()
+        .map_err(|e| WebDavClientError::Transport(e.to_string()))?;
+    let names_file = WebDavProjectNamesFile {
+        protocol_version: 1,
+        device_id: device_info.device_id.clone(),
+        updated_at_ms: now,
+        project_names,
+    };
+    client.put_json(&format!("{dev_data_dir}/project_names.json"), &names_file)?;
 
     if pending.is_empty() {
         return Ok((0, 0));
     }
-
-    let dev_data_dir = format!("data/{}", device_info.device_id);
-    client.ensure_collection(&dev_data_dir)?;
 
     let manifest_path = format!("{dev_data_dir}/manifest.json");
     let mut manifest: WebDavDeviceManifest = client
@@ -118,6 +131,21 @@ pub fn sync_webdav_pull(
             continue;
         }
 
+        let project_names_path = format!("data/{dev_id}/project_names.json");
+        if let Some(names_file) = client.get_json::<WebDavProjectNamesFile>(&project_names_path)? {
+            if names_file.protocol_version != 1
+                || names_file.device_id != dev_id
+                || names_file.updated_at_ms < 0
+            {
+                return Err(WebDavClientError::Serialization(
+                    "invalid project names document".into(),
+                ));
+            }
+            store
+                .merge_project_names(&names_file.project_names)
+                .map_err(|e| WebDavClientError::Transport(e.to_string()))?;
+        }
+
         let current_cursor = store
             .webdav_cursor(dev_id)
             .map_err(|e| WebDavClientError::Transport(e.to_string()))?;
@@ -140,12 +168,7 @@ pub fn sync_webdav_pull(
             let Some(batch) = batch else { continue };
 
             let applied = store
-                .apply_remote_device_records(
-                    dev_id,
-                    batch_entry.batch_seq,
-                    &batch.records,
-                    now,
-                )
+                .apply_remote_device_records(dev_id, batch_entry.batch_seq, &batch.records, now)
                 .map_err(|e| WebDavClientError::Transport(e.to_string()))?;
 
             pulled_records += applied;

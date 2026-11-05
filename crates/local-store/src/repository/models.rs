@@ -129,6 +129,15 @@ pub struct RemoteUsageBreakdown {
     pub estimated_cost_microusd: Option<i64>,
 }
 
+/// A project display name shared between devices independently of usage records.
+/// The project ID stays opaque and the source directory path is never included.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectName {
+    pub project_id: String,
+    pub name: String,
+    pub updated_at_ms: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct OutboxEntry {
     pub envelope: RevisionedRecord,

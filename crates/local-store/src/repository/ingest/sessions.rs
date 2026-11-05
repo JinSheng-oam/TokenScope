@@ -1,7 +1,7 @@
 use super::super::records::{
     enqueue, read_record, validate_session_id, validate_tool_id, write_record,
 };
-use super::super::{LocalStore, PROJECT_LABEL_TOOL_ID};
+use super::super::{models::ProjectName, LocalStore, PROJECT_LABEL_TOOL_ID};
 use crate::error::{Result, StoreError};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use tokenscope_core_domain::{payload_hash, TokenBreakdown};
@@ -160,8 +160,7 @@ impl LocalStore {
         Ok(changed > 0)
     }
 
-    /// Caches a sanitized project name locally; the opaque project ID remains
-    /// the only project value stored in usage records or sync payloads.
+    /// Caches a project display name separately from canonical usage records.
     pub fn upsert_project_name(
         &mut self,
         project_id: &str,
@@ -188,4 +187,76 @@ impl LocalStore {
         let cache_key = format!("project:{project_id}");
         self.upsert_session_name(&cache_key, PROJECT_LABEL_TOOL_ID, name, updated_at_ms)
     }
+
+    /// Lists cached project labels for device-to-device synchronization.
+    pub fn project_names(&self) -> Result<Vec<ProjectName>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT session_id,name,updated_at_ms FROM session_names WHERE tool_id=?1 AND substr(session_id,1,8)='project:' ORDER BY session_id",
+        )?;
+        let rows = stmt.query_map([PROJECT_LABEL_TOOL_ID], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        let mut names = Vec::new();
+        for row in rows {
+            let (cache_key, name, updated_at_ms) = row?;
+            let Some(project_id) = cache_key.strip_prefix("project:") else {
+                continue;
+            };
+            if valid_project_name(project_id, &name, updated_at_ms) {
+                names.push(ProjectName {
+                    project_id: project_id.to_owned(),
+                    name,
+                    updated_at_ms,
+                });
+            }
+        }
+        Ok(names)
+    }
+
+    /// Merges labels received from another paired device without touching usage rows.
+    pub fn merge_project_names(&mut self, names: &[ProjectName]) -> Result<usize> {
+        if names.len() > 20_000 {
+            return Err(StoreError::InvalidInput("project name sync limit"));
+        }
+        for name in names {
+            if !valid_project_name(&name.project_id, &name.name, name.updated_at_ms) {
+                return Err(StoreError::InvalidInput("project display name"));
+            }
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut changed = 0usize;
+        for name in names {
+            let cache_key = format!("project:{}", name.project_id);
+            changed += tx.execute(
+                "INSERT INTO session_names(session_id,tool_id,name,updated_at_ms) VALUES(?1,?2,?3,?4) \
+                 ON CONFLICT(session_id) DO UPDATE SET tool_id=excluded.tool_id,name=excluded.name,updated_at_ms=excluded.updated_at_ms \
+                 WHERE excluded.updated_at_ms >= session_names.updated_at_ms",
+                params![cache_key, PROJECT_LABEL_TOOL_ID, name.name, name.updated_at_ms],
+            )?;
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+}
+
+fn valid_project_name(project_id: &str, name: &str, updated_at_ms: i64) -> bool {
+    project_id.len() == 68
+        && project_id.starts_with("prj_")
+        && project_id[4..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        && !name.trim().is_empty()
+        && name.trim() != "."
+        && name.trim() != ".."
+        && name.chars().count() <= 120
+        && !name.chars().any(char::is_control)
+        && !name.contains('/')
+        && !name.contains('\\')
+        && updated_at_ms >= 0
 }

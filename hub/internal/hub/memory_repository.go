@@ -18,17 +18,18 @@ type credential struct {
 // MemoryRepository is used by deterministic unit tests only. Production Hub
 // must use sqlstore.SQLiteRepository.
 type MemoryRepository struct {
-	mu          sync.Mutex
-	codes       map[string]pairingCode
-	devices     map[string]Device
-	credentials map[string]credential
-	usage       map[string]UsageEnvelope
-	feed        []UsageChange
-	nextSeq     int64
+	mu           sync.Mutex
+	codes        map[string]pairingCode
+	devices      map[string]Device
+	credentials  map[string]credential
+	usage        map[string]UsageEnvelope
+	feed         []UsageChange
+	projectNames map[string]ProjectName
+	nextSeq      int64
 }
 
 func NewMemoryRepository() *MemoryRepository {
-	return &MemoryRepository{codes: map[string]pairingCode{}, devices: map[string]Device{}, credentials: map[string]credential{}, usage: map[string]UsageEnvelope{}, nextSeq: 1}
+	return &MemoryRepository{codes: map[string]pairingCode{}, devices: map[string]Device{}, credentials: map[string]credential{}, usage: map[string]UsageEnvelope{}, projectNames: map[string]ProjectName{}, nextSeq: 1}
 }
 func (m *MemoryRepository) CreatePairingCode(_ context.Context, hash string, _, expires int64) error {
 	m.mu.Lock()
@@ -209,4 +210,51 @@ func (m *MemoryRepository) PullUsageChanges(_ context.Context, afterSeq int64, l
 		}
 	}
 	return out, high, nil
+}
+
+func (m *MemoryRepository) UpsertProjectNames(_ context.Context, deviceID string, names []ProjectName, nowMS int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.devices[deviceID]
+	if !ok {
+		return ErrDeviceNotFound
+	}
+	if d.Revoked() {
+		return ErrDeviceRevoked
+	}
+	for _, name := range names {
+		key := deviceID + "\x00" + name.ProjectID
+		old, exists := m.projectNames[key]
+		if !exists || old.Name != name.Name {
+			m.projectNames[key] = ProjectName{
+				OwnerDeviceID: deviceID,
+				ProjectID:     name.ProjectID,
+				Name:          name.Name,
+				UpdatedAtMS:   nowMS,
+			}
+		}
+	}
+	return nil
+}
+
+func (m *MemoryRepository) ListProjectNames(_ context.Context, afterDeviceID, afterProjectID string, limit int) ([]ProjectName, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	all := make([]ProjectName, 0, len(m.projectNames))
+	for _, name := range m.projectNames {
+		if name.OwnerDeviceID > afterDeviceID || (name.OwnerDeviceID == afterDeviceID && name.ProjectID > afterProjectID) {
+			all = append(all, name)
+		}
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].OwnerDeviceID == all[j].OwnerDeviceID {
+			return all[i].ProjectID < all[j].ProjectID
+		}
+		return all[i].OwnerDeviceID < all[j].OwnerDeviceID
+	})
+	hasMore := len(all) > limit
+	if hasMore {
+		all = all[:limit]
+	}
+	return all, hasMore, nil
 }

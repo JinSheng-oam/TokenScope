@@ -41,18 +41,43 @@ fn webdav_sync_cycle_roundtrip_with_mock_server() {
                 Ok(s) => s,
                 Err(_) => break,
             };
+            let mut request = Vec::new();
             let mut buf = [0u8; 4096];
-            let n = stream.read(&mut buf).unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]);
+            let header_end = loop {
+                let n = stream.read(&mut buf).unwrap();
+                assert_ne!(n, 0, "connection closed before request headers");
+                request.extend_from_slice(&buf[..n]);
+                if let Some(pos) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                    break pos + 4;
+                }
+            };
+            let content_length = String::from_utf8_lossy(&request[..header_end])
+                .lines()
+                .filter_map(|line| line.split_once(':'))
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                .map(|(_, value)| value.trim().parse::<usize>().unwrap())
+                .unwrap_or(0);
+            while request.len() < header_end + content_length {
+                let n = stream.read(&mut buf).unwrap();
+                assert_ne!(n, 0, "connection closed before request body");
+                request.extend_from_slice(&buf[..n]);
+            }
+            let req = String::from_utf8_lossy(&request[..header_end]);
 
             if req.starts_with("MKCOL") {
-                let _ = stream.write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n");
+                let _ = stream.write_all(
+                    b"HTTP/1.1 201 Created\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+                );
             } else if req.starts_with("PUT") {
-                let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
+                let _ = stream.write_all(
+                    b"HTTP/1.1 204 No Content\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+                );
             } else if req.starts_with("GET /dav/sync/devices/dev-local.json")
                 || req.starts_with("GET /dav/sync/data/dev-local/manifest.json")
             {
-                let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+                let _ = stream.write_all(
+                    b"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+                );
             } else if req.starts_with("PROPFIND /dav/sync/devices/") {
                 let xml = r#"<?xml version="1.0" encoding="utf-8"?>
 <D:multistatus xmlns:D="DAV:">
@@ -66,7 +91,7 @@ fn webdav_sync_cycle_roundtrip_with_mock_server() {
   </D:response>
 </D:multistatus>"#;
                 let resp = format!(
-                    "HTTP/1.1 207 Multi-Status\r\nContent-Type: application/xml\r\nContent-Length: {}\r\n\r\n{}",
+                    "HTTP/1.1 207 Multi-Status\r\nConnection: close\r\nContent-Type: application/xml\r\nContent-Length: {}\r\n\r\n{}",
                     xml.len(),
                     xml
                 );
@@ -82,7 +107,7 @@ fn webdav_sync_cycle_roundtrip_with_mock_server() {
   "last_seen_ms": 2000
 }"#;
                 let resp = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
                     info.len(),
                     info
                 );
@@ -104,20 +129,22 @@ fn webdav_sync_cycle_roundtrip_with_mock_server() {
   ]
 }"#;
                 let resp = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
                     manifest.len(),
                     manifest
                 );
                 let _ = stream.write_all(resp.as_bytes());
             } else if req.starts_with("GET /dav/sync/data/dev-remote/batch_000001.json") {
                 let resp = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
                     batch_json.len(),
                     batch_json
                 );
                 let _ = stream.write_all(resp.as_bytes());
             } else {
-                let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+                let _ = stream.write_all(
+                    b"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+                );
             }
 
             if rx_done.try_recv().is_ok() {

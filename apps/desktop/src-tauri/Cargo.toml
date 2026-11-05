@@ -17,6 +17,9 @@ tauri = { version = "2.0.0", features = ["tray-icon"] }
 tauri-plugin-autostart = "2.0.0"
 tokenscope-local-ipc = { path = "../../../crates/local-ipc" }
 tokenscope-local-store = { path = "../../../crates/local-store" }
+tokenscope-core-domain = { path = "../../../crates/core-domain" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+notify = "8.2"
 tokenscope-sync-client = { path = "../../../crates/sync-client" }
 fs2 = "0.4"
 serde = { version = "1", features = ["derive"] }

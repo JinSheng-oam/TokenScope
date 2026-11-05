@@ -6,12 +6,14 @@ use super::super::{LocalStore, PROJECT_LABEL_TOOL_ID};
 use crate::error::{pos_u64, Result, StoreError};
 use rusqlite::{params, OptionalExtension};
 impl LocalStore {
-    pub fn earliest_device_local_event_ms(&self, owner_device_id: &str) -> Result<Option<i64>> {
+    pub fn earliest_dashboard_event_ms(&self, owner_device_id: &str) -> Result<Option<i64>> {
         self.conn
             .query_row(
-                "SELECT MIN(event_at_ms) FROM usage_records \
-                 WHERE owner_device_id=?1 AND scope='device_local' AND is_deleted=0 \
-                 AND event_at_ms IS NOT NULL",
+                "SELECT MIN(event_at_ms) FROM (
+                    SELECT event_at_ms FROM usage_records WHERE owner_device_id=?1 AND scope='device_local' AND is_deleted=0
+                    UNION ALL SELECT json_extract(payload_json,'$.event_at_ms') FROM remote_usage_cache
+                    WHERE is_deleted=0 AND json_extract(payload_json,'$.scope')='device_local'
+                 )",
                 [owner_device_id],
                 |row| row.get(0),
             )
@@ -140,11 +142,6 @@ impl LocalStore {
         if !["tool_id", "model_id", "project_id"].contains(&column) {
             return Err(StoreError::InvalidInput("dashboard breakdown column"));
         }
-        let limit_clause = if column == "model_id" {
-            ""
-        } else {
-            " LIMIT 20"
-        };
         let sql = format!(
             "SELECT {column}, COUNT(*), \
              COALESCE(SUM(input_uncached_tokens + cache_read_tokens + cache_write_tokens + output_tokens + unclassified_tokens),0), \
@@ -157,7 +154,7 @@ impl LocalStore {
              COALESCE(SUM(CASE WHEN event_at_ms IS NULL THEN 1 ELSE 0 END),0) \
              FROM usage_records WHERE owner_device_id=?1 AND scope=?2 AND is_deleted=0 \
              AND (?3 IS NULL OR event_at_ms >= ?3) AND (?4 IS NULL OR event_at_ms < ?4) \
-             GROUP BY {column} ORDER BY 3 DESC{limit_clause}"
+             GROUP BY {column} ORDER BY 3 DESC,{column}"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![owner_device_id, scope, from_ms, to_ms], |r| {
@@ -198,7 +195,7 @@ impl LocalStore {
                     (value, label)
                 }
                 ("tool_id", None) => ("unknown-tool".into(), "未知工具".into()),
-                ("model_id", None) => ("unknown-model".into(), "未知模型".into()),
+                ("model_id", None) => ("unknown-model".into(), "来源未提供模型".into()),
                 ("project_id", None) => ("no-project".into(), "未关联项目".into()),
                 _ => return Err(StoreError::InvalidInput("dashboard breakdown column")),
             };

@@ -30,6 +30,7 @@ pub(crate) async fn get_dashboard_snapshot(
     app: AppHandle,
     range: String,
     session_offset: u64,
+    watch: Option<bool>,
     start_date: Option<String>,
     end_date: Option<String>,
 ) -> Result<DashboardResponse, String> {
@@ -40,6 +41,7 @@ pub(crate) async fn get_dashboard_snapshot(
             session_offset,
             start_date.as_deref(),
             end_date.as_deref(),
+            watch.unwrap_or(true),
         )
     })
     .await
@@ -53,6 +55,7 @@ pub(crate) async fn get_session_analysis(
     range: String,
     session_offset: u64,
     search: Option<String>,
+    session_limit: Option<u32>,
     tool_id: Option<String>,
     model_id: Option<String>,
     project_id: Option<String>,
@@ -65,6 +68,7 @@ pub(crate) async fn get_session_analysis(
             &range,
             session_offset,
             search.as_deref(),
+            session_limit,
             tool_id.as_deref(),
             model_id.as_deref(),
             project_id.as_deref(),

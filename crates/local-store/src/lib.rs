@@ -9,10 +9,11 @@ pub mod schema;
 pub use error::{Result, StoreError};
 pub use repository::{
     AntigravityActivity, AntigravityActivitySummary, AntigravityQuota, ApplyReport, CodexQuota,
-    DailyUsage, DashboardQuery, DashboardSnapshot, LocalIdentity, LocalStore,
-    ModelActivityBreakdown, OutboxEntry, ReconcileReport, RemoteDeviceUsage, RemoteUsageBreakdown,
-    RemoteUsageChange, RemoteUsageTotals, SessionAnalysisPage, SessionFilterOption,
-    SessionFilterOptions, SessionUsage, SessionUsagePage, SourceCheckpoint, SourceHealth,
-    SyncOutboxStatus, ToolUsageOverview, UsageBreakdown, UsageOverview, UsageTotals,
+    DailyUsage, DashboardObservations, DashboardQuery, DashboardSnapshot, LocalIdentity,
+    LocalStore, ModelActivityBreakdown, OutboxEntry, ProjectName, ReconcileReport,
+    RemoteDailyUsage, RemoteDeviceUsage, RemoteUsageBreakdown, RemoteUsageChange,
+    RemoteUsageTotals, SessionAnalysisPage, SessionFilterOption, SessionFilterOptions,
+    SessionUsage, SessionUsagePage, SourceCheckpoint, SourceHealth, SyncOutboxStatus,
+    ToolUsageOverview, UsageBreakdown, UsageOverview, UsageTotals,
 };
 pub const MODULE_ID: &str = "local-store";

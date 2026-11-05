@@ -1,5 +1,6 @@
 //! M0-12 Agent CLI entry point and lifecycle modules.
 mod antigravity_rpc;
+mod background_quota;
 mod cli;
 mod codex_rpc;
 mod collection;

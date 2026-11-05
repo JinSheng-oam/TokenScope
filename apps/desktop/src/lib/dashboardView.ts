@@ -1,16 +1,28 @@
 import { formatNumber } from './format';
 import { buildHeatmapCalendar, formatWeekday } from './heatmap';
-import type { DashboardRange, DashboardSnapshot, UsageBreakdown, UsageTotals } from './types';
+import type {
+  DashboardRange,
+  DashboardSnapshot,
+  RemoteUsageBreakdown,
+  SessionActivity,
+  SessionUsage,
+  UsageBreakdown,
+  UsageTotals,
+} from './types';
 
 export type TrendViewMode = 'curve' | 'heatmap';
 export type ModelSortBy = 'tokens' | 'cost';
+export type DeviceScope = 'all' | 'local' | string;
+export type SessionSortField = 'time' | 'status' | 'tokens' | 'responses' | 'records';
+export type SessionSortDirection = 'desc' | 'asc';
 
 export type DashboardProjectionOptions = {
   snapshot: DashboardSnapshot | null;
-  heatmapDaily: DashboardSnapshot['daily'] | null;
+  heatmapSnapshot: DashboardSnapshot | null;
   todayIso: string;
   hoveredCurveIndex: number | null;
   remoteSelectedDevice: string;
+  deviceScope?: DeviceScope;
   modelSortBy: ModelSortBy;
   range: DashboardRange;
   customStart: string;
@@ -24,10 +36,189 @@ export type ChartPoint = DashboardSnapshot['daily'][number] & {
   y: number;
 };
 
+export function resolveScopedTotals(
+  snapshot: DashboardSnapshot | null,
+  deviceScope: DeviceScope = 'all',
+): UsageTotals | undefined {
+  if (!snapshot) return undefined;
+  const local = snapshot.local;
+  const remote = snapshot.remote;
+
+  if (deviceScope === 'local') {
+    return local;
+  }
+
+  if (deviceScope === 'all') {
+    const hasLocalCost = local.estimated_cost_microusd !== null;
+    const hasRemoteCost = remote.estimated_cost_microusd !== null;
+    return {
+      total_tokens: local.total_tokens + remote.total_tokens,
+      input_tokens: local.input_tokens + remote.input_tokens,
+      cache_read_tokens: local.cache_read_tokens + remote.cache_read_tokens,
+      cache_write_tokens: local.cache_write_tokens + remote.cache_write_tokens,
+      output_tokens: local.output_tokens + remote.output_tokens,
+      unclassified_tokens: local.unclassified_tokens + remote.unclassified_tokens,
+      reasoning_tokens: local.reasoning_tokens + remote.reasoning_tokens,
+      reasoning_known_records: local.reasoning_known_records + remote.reasoning_known_records,
+      record_count: local.record_count + remote.record_count,
+      estimated_cost_microusd:
+        hasLocalCost || hasRemoteCost
+          ? (local.estimated_cost_microusd ?? 0) + (remote.estimated_cost_microusd ?? 0)
+          : null,
+      priced_records: local.priced_records + remote.priced_records,
+      unpriced_records: local.unpriced_records + remote.unpriced_records,
+      exact_records: local.exact_records + remote.exact_records,
+      aggregate_records: local.aggregate_records + remote.aggregate_records,
+      estimated_records: local.estimated_records + remote.estimated_records,
+      unknown_precision_records: local.unknown_precision_records + remote.unknown_precision_records,
+    };
+  }
+
+  // Specific remote device
+  const devEntry = snapshot.remote_by_device.find((d) => d.owner_device_id === deviceScope);
+  if (!devEntry) {
+    return {
+      total_tokens: 0,
+      input_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      output_tokens: 0,
+      unclassified_tokens: 0,
+      reasoning_tokens: 0,
+      reasoning_known_records: 0,
+      record_count: 0,
+      estimated_cost_microusd: null,
+      priced_records: 0,
+      unpriced_records: 0,
+      exact_records: 0,
+      aggregate_records: 0,
+      estimated_records: 0,
+      unknown_precision_records: 0,
+    };
+  }
+
+  return { ...devEntry.usage };
+}
+
+export function resolveScopedBreakdown(
+  localRows: UsageBreakdown[],
+  remoteRows: RemoteUsageBreakdown[],
+  deviceScope: DeviceScope = 'all',
+): UsageBreakdown[] {
+  if (deviceScope === 'local') {
+    return localRows;
+  }
+
+  const map = new Map<string, UsageBreakdown>();
+
+  if (deviceScope === 'all') {
+    for (const row of localRows) {
+      map.set(row.key, { ...row });
+    }
+    for (const r of remoteRows) {
+      const existing = map.get(r.key);
+      if (existing) {
+        existing.total_tokens += r.total_tokens;
+        existing.record_count += r.record_count;
+        if (r.estimated_cost_microusd !== null) {
+          existing.estimated_cost_microusd =
+            (existing.estimated_cost_microusd ?? 0) + r.estimated_cost_microusd;
+        }
+        existing.exact_records += r.exact_records;
+        existing.aggregate_records += r.aggregate_records;
+        existing.estimated_records += r.estimated_records;
+        existing.unknown_precision_records += r.unknown_precision_records;
+        existing.untimed_records += r.untimed_records;
+      } else {
+        map.set(r.key, {
+          key: r.key,
+          label: r.label,
+          total_tokens: r.total_tokens,
+          record_count: r.record_count,
+          estimated_cost_microusd: r.estimated_cost_microusd,
+          exact_records: r.exact_records,
+          aggregate_records: r.aggregate_records,
+          estimated_records: r.estimated_records,
+          unknown_precision_records: r.unknown_precision_records,
+          untimed_records: r.untimed_records,
+        });
+      }
+    }
+  } else {
+    for (const r of remoteRows) {
+      if (r.owner_device_id !== deviceScope) continue;
+      const existing = map.get(r.key);
+      if (existing) {
+        existing.total_tokens += r.total_tokens;
+        existing.record_count += r.record_count;
+        if (r.estimated_cost_microusd !== null) {
+          existing.estimated_cost_microusd =
+            (existing.estimated_cost_microusd ?? 0) + r.estimated_cost_microusd;
+        }
+        existing.exact_records += r.exact_records;
+        existing.aggregate_records += r.aggregate_records;
+        existing.estimated_records += r.estimated_records;
+        existing.unknown_precision_records += r.unknown_precision_records;
+        existing.untimed_records += r.untimed_records;
+      } else {
+        map.set(r.key, {
+          key: r.key,
+          label: r.label,
+          total_tokens: r.total_tokens,
+          record_count: r.record_count,
+          estimated_cost_microusd: r.estimated_cost_microusd,
+          exact_records: r.exact_records,
+          aggregate_records: r.aggregate_records,
+          estimated_records: r.estimated_records,
+          unknown_precision_records: r.unknown_precision_records,
+          untimed_records: r.untimed_records,
+        });
+      }
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => b.total_tokens - a.total_tokens);
+}
+
+export function resolveScopedDaily(snapshot: DashboardSnapshot | null, scope: DeviceScope) {
+  if (!snapshot) return [];
+  if (scope === 'local') return snapshot.daily;
+  const days = new Map(snapshot.daily.map((d) => [d.date, {
+    date: d.date, total_tokens: scope === 'all' ? d.total_tokens : 0,
+    input_tokens: scope === 'all' ? d.input_tokens : 0,
+    output_tokens: scope === 'all' ? d.output_tokens : 0,
+  }]));
+  for (const day of snapshot.remote_daily) {
+    if (scope !== 'all' && day.owner_device_id !== scope) continue;
+    const current = days.get(day.date) ?? {date:day.date,total_tokens:0,input_tokens:0,output_tokens:0};
+    current.total_tokens += day.total_tokens;
+    current.input_tokens += day.input_tokens;
+    current.output_tokens += day.output_tokens;
+    days.set(day.date,current);
+  }
+  return Array.from(days.values()).sort((a,b) => a.date.localeCompare(b.date));
+}
+
 export function buildDashboardProjection(options: DashboardProjectionOptions) {
   const { snapshot } = options;
-  const local = snapshot?.local;
-  const chartValues = snapshot?.daily ?? [];
+  const scope: DeviceScope = options.deviceScope ?? 'all';
+  const local = resolveScopedTotals(snapshot, scope);
+  const scopedTools = resolveScopedBreakdown(
+    snapshot?.by_tool ?? [],
+    snapshot?.remote_by_tool ?? [],
+    scope,
+  );
+  const scopedModels = resolveScopedBreakdown(
+    snapshot?.by_model ?? [],
+    snapshot?.remote_by_model ?? [],
+    scope,
+  );
+  const scopedProjects = resolveScopedBreakdown(
+    snapshot?.by_project ?? [],
+    snapshot?.remote_by_project ?? [],
+    scope,
+  );
+  const chartValues = resolveScopedDaily(snapshot, scope);
   const chartPoints = buildChartPoints(chartValues);
   const tokenShares = getTokenShares(local);
   const remoteFilter = (row: { owner_device_id: string }) =>
@@ -36,6 +227,8 @@ export function buildDashboardProjection(options: DashboardProjectionOptions) {
 
   return {
     local,
+    scopedTools,
+    scopedProjects,
     chartValues,
     chartMax: Math.max(1, ...chartValues.map((item) => item.total_tokens)),
     chartPoints,
@@ -45,15 +238,15 @@ export function buildDashboardProjection(options: DashboardProjectionOptions) {
         ? chartPoints[options.hoveredCurveIndex]
         : null,
     heatmapCalendar: buildHeatmapCalendar(
-      options.heatmapDaily ?? chartValues,
+      options.heatmapSnapshot ? resolveScopedDaily(options.heatmapSnapshot, scope) : chartValues,
       options.todayIso || chartValues[chartValues.length - 1]?.date || '',
     ),
-    topToolTotal: Math.max(1, ...(snapshot?.by_tool ?? []).map((item) => item.total_tokens)),
-    topModelTotal: Math.max(1, ...(snapshot?.by_model ?? []).map((item) => item.total_tokens)),
-    antigravityUsage: (snapshot?.by_tool ?? []).find((item) => item.key === 'antigravity'),
+    topToolTotal: Math.max(1, ...scopedTools.map((item) => item.total_tokens)),
+    topModelTotal: Math.max(1, ...scopedModels.map((item) => item.total_tokens)),
+    antigravityUsage: scopedTools.find((item) => item.key === 'antigravity'),
     remoteToolRows: (snapshot?.remote_by_tool ?? []).filter(remoteFilter),
     remoteModelRows: (snapshot?.remote_by_model ?? []).filter(remoteFilter),
-    sortedModels: sortModelsBy(snapshot?.by_model ?? [], options.modelSortBy),
+    sortedModels: sortModelsBy(scopedModels, options.modelSortBy),
     tokenShares,
     exactRatio: local?.record_count
       ? ((local.exact_records / local.record_count) * 100).toFixed(1)
@@ -156,6 +349,60 @@ export function antigravityWindowLabel(windowId: string): string {
   return '其他周期';
 }
 
+const WINDOW_SORT_ORDER: Record<string, number> = {
+  five_hour: 1,
+  daily: 2,
+  weekly: 3,
+  other: 4,
+};
+
+const POOL_SORT_ORDER: Record<string, number> = {
+  claude_gpt: 1,
+  gemini: 2,
+  gemini_4_argon: 3,
+};
+
+export function filterActiveAntigravityQuotas(
+  quotas: DashboardSnapshot['antigravity_quota'],
+  includeStale = false
+): DashboardSnapshot['antigravity_quota'] {
+  if (!quotas || quotas.length === 0) return [];
+
+  const globalMaxObserved = Math.max(0, ...quotas.map((q) => q.observed_at_ms));
+  const poolsWithStructuredWindows = new Set<string>();
+
+  for (const q of quotas) {
+    if (q.window_id === 'five_hour' || q.window_id === 'weekly' || q.window_id === 'daily') {
+      poolsWithStructuredWindows.add(`${q.source_id}::${q.pool_id}`);
+    }
+  }
+
+  return quotas
+    .filter((q) => {
+      const poolKey = `${q.source_id}::${q.pool_id}`;
+      // Always drop legacy 'other' fallback rows if the pool already has structured windows
+      if (q.window_id === 'other' && poolsWithStructuredWindows.has(poolKey)) {
+        return false;
+      }
+      if (!includeStale && globalMaxObserved > 0) {
+        // Hide obsolete pool snapshots that were not part of recent RPC observations (> 30m behind latest)
+        if (globalMaxObserved - q.observed_at_ms > 30 * 60_000) {
+          return false;
+        }
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      const pA = POOL_SORT_ORDER[a.pool_id.toLowerCase()] ?? 99;
+      const pB = POOL_SORT_ORDER[b.pool_id.toLowerCase()] ?? 99;
+      if (pA !== pB) return pA - pB;
+      if (a.pool_id !== b.pool_id) return a.pool_id.localeCompare(b.pool_id);
+      const wA = WINDOW_SORT_ORDER[a.window_id] ?? 99;
+      const wB = WINDOW_SORT_ORDER[b.window_id] ?? 99;
+      return wA - wB;
+    });
+}
+
 export function quotaIsStale(observedAtMs: number, now = Date.now()): boolean {
   return now - observedAtMs > 15 * 60_000;
 }
@@ -187,4 +434,117 @@ export function formatCountdown(resetAtMs: number | null, now = Date.now()): str
     return remHours > 0 ? `${days}天 ${remHours}小时 后重置` : `${days}天 后重置`;
   }
   return `${totalHours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')} 后重置`;
+}
+
+export function findActivityForSession(
+  session: Pick<SessionUsage, 'tool_id' | 'session_id' | 'display_name'>,
+  activity: SessionActivity[],
+): SessionActivity | undefined {
+  const exact = activity.find(
+    (item) => item.tool_id === session.tool_id && item.session_id === session.session_id,
+  );
+  if (exact || !session.display_name) return exact;
+  const sameName = activity.filter(
+    (item) =>
+      item.tool_id === session.tool_id &&
+      item.display_name?.trim() === session.display_name?.trim(),
+  );
+  return sameName.length === 1 ? sameName[0] : undefined;
+}
+
+export function resolveSessionActivityState(
+  session: Pick<
+    SessionUsage,
+    'tool_id' | 'session_id' | 'display_name' | 'last_event_at_ms' | 'activity_observed_at_ms'
+  >,
+  activity: SessionActivity[],
+  now: number,
+): 'generating' | 'recent' | null {
+  const current = findActivityForSession(session, activity);
+  if (current && now >= current.observed_at_ms) {
+    const age = now - current.observed_at_ms;
+    if (current.state === 'generating' && age <= 20 * 60_000) return 'generating';
+    if (age <= 180_000) return current.state;
+  }
+  const eventAt = session.last_event_at_ms;
+  const observedAt = session.activity_observed_at_ms;
+  if (eventAt !== null && now >= eventAt && now - eventAt <= 240_000) {
+    return 'recent';
+  }
+  if (
+    observedAt !== null &&
+    now >= observedAt &&
+    now - observedAt <= 90_000 &&
+    eventAt !== null &&
+    now - eventAt <= 10 * 60_000
+  ) {
+    return 'recent';
+  }
+  return null;
+}
+
+export function sortSessions(
+  sessions: SessionUsage[],
+  sortBy: SessionSortField,
+  sortDir: SessionSortDirection,
+  activity: SessionActivity[] = [],
+  now = Date.now(),
+): SessionUsage[] {
+  const dir = sortDir === 'asc' ? 1 : -1;
+  const stateRank = (s: SessionUsage): number => {
+    const st = resolveSessionActivityState(s, activity, now);
+    if (st === 'generating') return 2;
+    if (st === 'recent') return 1;
+    return 0;
+  };
+  const eventTime = (s: SessionUsage): number =>
+    s.last_event_at_ms ?? s.activity_observed_at_ms ?? -1;
+
+  return [...sessions].sort((a, b) => {
+    if (sortBy === 'status') {
+      const rankA = stateRank(a);
+      const rankB = stateRank(b);
+      if (rankA !== rankB) return (rankA - rankB) * dir;
+      const timeDiff = eventTime(b) - eventTime(a);
+      if (timeDiff !== 0) return timeDiff;
+      return b.total_tokens - a.total_tokens;
+    }
+
+    if (sortBy === 'tokens') {
+      if (a.total_tokens !== b.total_tokens) {
+        return (a.total_tokens - b.total_tokens) * dir;
+      }
+      return eventTime(b) - eventTime(a);
+    }
+
+    if (sortBy === 'records') {
+      if (a.usage_record_count !== b.usage_record_count) {
+        return (a.usage_record_count - b.usage_record_count) * dir;
+      }
+      return b.total_tokens - a.total_tokens;
+    }
+
+    if (sortBy === 'responses') {
+      const aHas = a.known_response_count !== null;
+      const bHas = b.known_response_count !== null;
+      if (aHas !== bHas) return aHas ? -1 : 1;
+      const aResp = a.known_response_count ?? 0;
+      const bResp = b.known_response_count ?? 0;
+      if (aResp !== bResp) {
+        return (aResp - bResp) * dir;
+      }
+      return b.total_tokens - a.total_tokens;
+    }
+
+    // Default: 'time'
+    const aHasTime = eventTime(a) >= 0;
+    const bHasTime = eventTime(b) >= 0;
+    if (aHasTime !== bHasTime) return aHasTime ? -1 : 1;
+    const tA = eventTime(a);
+    const tB = eventTime(b);
+    if (tA !== tB) {
+      return (tA - tB) * dir;
+    }
+    return b.total_tokens - a.total_tokens;
+  });
 }

@@ -82,6 +82,67 @@ func (s *Service) ListDevices(ctx context.Context) ([]Device, error) {
 	return s.repo.ListDevices(ctx)
 }
 
+func (s *Service) UpsertProjectNames(ctx context.Context, deviceID string, inputs []ProjectNameInput) (int, error) {
+	if !deviceIDPattern.MatchString(deviceID) || len(inputs) == 0 || len(inputs) > 200 {
+		return 0, ErrInvalidInput
+	}
+	names := make([]ProjectName, 0, len(inputs))
+	seen := make(map[string]struct{}, len(inputs))
+	nowMS := s.now().UTC().UnixMilli()
+	for _, input := range inputs {
+		name := strings.TrimSpace(input.Name)
+		if !validOpaque(input.ProjectID, "prj_") || !validProjectDisplayName(name) {
+			return 0, ErrInvalidInput
+		}
+		if _, ok := seen[input.ProjectID]; ok {
+			return 0, ErrInvalidInput
+		}
+		seen[input.ProjectID] = struct{}{}
+		names = append(names, ProjectName{
+			OwnerDeviceID: deviceID,
+			ProjectID:     input.ProjectID,
+			Name:          name,
+			UpdatedAtMS:   nowMS,
+		})
+	}
+	if err := s.repo.UpsertProjectNames(ctx, deviceID, names, nowMS); err != nil {
+		return 0, err
+	}
+	return len(names), nil
+}
+
+func (s *Service) ListProjectNames(ctx context.Context, afterDeviceID, afterProjectID string, limit int) (ProjectNamesPage, error) {
+	if limit < 1 || limit > 500 {
+		return ProjectNamesPage{}, ErrInvalidInput
+	}
+	if (afterDeviceID == "") != (afterProjectID == "") ||
+		(afterDeviceID != "" && (!deviceIDPattern.MatchString(afterDeviceID) || !validOpaque(afterProjectID, "prj_"))) {
+		return ProjectNamesPage{}, ErrInvalidInput
+	}
+	names, hasMore, err := s.repo.ListProjectNames(ctx, afterDeviceID, afterProjectID, limit)
+	if err != nil {
+		return ProjectNamesPage{}, err
+	}
+	page := ProjectNamesPage{
+		ProtocolVersion: ProtocolVersion,
+		ProjectNames:    names,
+		NextDeviceID:    afterDeviceID,
+		NextProjectID:   afterProjectID,
+		HasMore:         hasMore,
+	}
+	if len(names) > 0 {
+		last := names[len(names)-1]
+		page.NextDeviceID = last.OwnerDeviceID
+		page.NextProjectID = last.ProjectID
+	}
+	return page, nil
+}
+
+func validProjectDisplayName(name string) bool {
+	return name != "." && name != ".." && !strings.ContainsAny(name, "/\\") &&
+		utf8.RuneCountInString(name) <= 120 && validUsageText(name, 512)
+}
+
 func (s *Service) RenameDevice(ctx context.Context, id, name string) error {
 	if !deviceIDPattern.MatchString(id) || !validDisplayName(name) {
 		return ErrInvalidInput

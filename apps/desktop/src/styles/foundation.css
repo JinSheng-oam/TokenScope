@@ -1,228 +1,229 @@
-/* ==========================================================================
-   TokenScope Desktop — Linear Craft · Obsidian Studio (Dark & Light)
-   Precision AI Token & Multi-Device Analytics
-   ========================================================================== */
-
-:root {
-  /* Font Stacks */
-  --font-sans: 'Inter', 'Segoe UI Variable Display', 'Segoe UI Variable Text', 'PingFang SC', 'Microsoft YaHei UI', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Cascadia Mono', 'SF Mono', Consolas, monospace;
-
-  /* Universal Constants */
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-pill: 9999px;
-  --transition-fast: 140ms cubic-bezier(0.16, 1, 0.3, 1);
-  --transition-base: 200ms cubic-bezier(0.16, 1, 0.3, 1);
-
-  /* Linear Indigo Brand Core */
-  --brand-primary: #5E6AD2;
-  --brand-primary-hover: #4E5AC0;
-  --brand-strong: #535FC4;
-  --brand-strong-hover: #4551B5;
-  --brand-subtle: rgba(94, 106, 210, 0.11);
-  --brand-border: rgba(94, 106, 210, 0.28);
-
-  /* Semantic Data Colors */
-  --color-exact: #059669;
-  --color-exact-bg: rgba(16, 185, 129, 0.10);
-  --color-exact-border: rgba(16, 185, 129, 0.25);
-
-  --color-aggregate: #7C3AED;
-  --color-aggregate-bg: rgba(139, 92, 246, 0.10);
-  --color-aggregate-border: rgba(139, 92, 246, 0.25);
-
-  --color-estimated: #B45309;
-  --color-estimated-bg: rgba(245, 158, 11, 0.10);
-  --color-estimated-border: rgba(245, 158, 11, 0.25);
-
-  --color-quota: #0284C7;
-  --color-quota-bg: rgba(14, 165, 233, 0.10);
-  --color-quota-border: rgba(14, 165, 233, 0.25);
-
-  --color-danger: #DC2626;
-  --color-danger-bg: rgba(239, 68, 68, 0.10);
-  --color-danger-border: rgba(239, 68, 68, 0.25);
-
-  --text-warning: #D97706;
-}
-
-/* ==========================================================================
-   Dark Theme (Default Obsidian Studio)
-   ========================================================================== */
-:root,
-[data-theme="dark"] {
-  color-scheme: dark;
-  --bg-canvas: #0B0D11;
-  --bg-sidebar: #101319;
-  --bg-card: #151921;
-  --bg-card-hover: #1B202B;
-  --bg-elevated: #212734;
-  --bg-input: #0F1218;
-  --bg-secondary: rgba(255, 255, 255, 0.045);
-
-  --border-subtle: rgba(255, 255, 255, 0.075);
-  --border-strong: rgba(255, 255, 255, 0.15);
-  --border-input: rgba(255, 255, 255, 0.13);
-
-  --text-primary: #F3F5F8;
-  --text-secondary: #A2ABB8;
-  --text-muted: #7C8795;
-  --text-inverse: #0B0D11;
-  --text-warning: #F5B851;
-
-  --brand-primary: #8E99F3;
-  --brand-primary-hover: #A5AEFF;
-  --brand-strong: #5E6AD2;
-  --brand-strong-hover: #6E79DF;
-  --brand-subtle: rgba(117, 129, 245, 0.14);
-  --brand-border: rgba(117, 129, 245, 0.32);
-
-  --color-exact: #34D399;
-  --color-aggregate: #A78BFA;
-  --color-estimated: #FBBF24;
-  --color-quota: #38BDF8;
-  --color-danger: #F87171;
-
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.36);
-  --shadow-elevated: 0 8px 24px -4px rgba(0, 0, 0, 0.55);
-
-  --chart-grid: rgba(255, 255, 255, 0.06);
-  --chart-fill-start: rgba(94, 106, 210, 0.30);
-  --chart-fill-end: rgba(94, 106, 210, 0.00);
-
-  --heatmap-0: rgba(255, 255, 255, 0.05);
-  --heatmap-1: rgba(16, 185, 129, 0.24);
-  --heatmap-2: rgba(16, 185, 129, 0.48);
-  --heatmap-3: rgba(52, 211, 153, 0.74);
-  --heatmap-4: #34D399;
-}
-
-/* ==========================================================================
-   Light Theme (Soft Zinc / Crisp Alabaster)
-   ========================================================================== */
-[data-theme="light"] {
-  color-scheme: light;
-  --bg-canvas: #F6F7F9;
-  --bg-sidebar: #EFF1F5;
-  --bg-card: #FFFFFF;
-  --bg-card-hover: #FAFBFD;
-  --bg-elevated: #FFFFFF;
-  --bg-input: #FFFFFF;
-  --bg-secondary: #E7EBF0;
-
-  --border-subtle: #E1E5EC;
-  --border-strong: #C6CEDB;
-  --border-input: #CBD3DF;
-
-  --text-primary: #111827;
-  --text-secondary: #4B5563;
-  --text-muted: #6B7280;
-  --text-inverse: #FFFFFF;
-  --text-warning: #92400E;
-
-  --brand-primary: #4F5BD5;
-  --brand-primary-hover: #404BC2;
-  --brand-strong: #4F5BD5;
-  --brand-strong-hover: #424EC0;
-  --brand-subtle: rgba(79, 91, 213, 0.09);
-  --brand-border: rgba(79, 91, 213, 0.26);
-
-  --color-exact: #047857;
-  --color-aggregate: #6D28D9;
-  --color-estimated: #B45309;
-  --color-quota: #0369A1;
-  --color-danger: #B91C1C;
-
-  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-elevated: 0 8px 20px -4px rgba(15, 23, 42, 0.08);
-
-  --chart-grid: #E8ECF2;
-  --chart-fill-start: rgba(79, 91, 213, 0.16);
-  --chart-fill-end: rgba(79, 91, 213, 0.00);
-
-  --heatmap-0: #EBEDF0;
-  --heatmap-1: #9BE9A8;
-  --heatmap-2: #40C463;
-  --heatmap-3: #30A14E;
-  --heatmap-4: #216E39;
-}
-
-/* ==========================================================================
-   Global Reset & Surfaces
-   ========================================================================== */
-*, *::before, *::after {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  min-width: 760px;
-  min-height: 100vh;
-  font-family: var(--font-sans);
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-primary);
-  background-color: var(--bg-canvas);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-  transition: background-color var(--transition-base), color var(--transition-base);
-}
-
-::selection {
-  background-color: var(--brand-strong);
-  color: #FFFFFF;
-}
-
-/* Themed scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: var(--radius-pill);
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
-}
-
-button {
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  border: none;
-  background: transparent;
-  padding: 0;
-  outline: none;
-  -webkit-tap-highlight-color: transparent;
-}
-
-button:focus {
-  outline: none;
-}
-
-button:focus-visible,
-input:focus-visible,
-select:focus-visible {
-  outline: 2px solid var(--brand-primary);
-  outline-offset: 2px;
-}
-
-button:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-/* Tabular Numerals for Jitter-Free Figures */
-.tabular {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1, "zero" 1;
-  letter-spacing: -0.02em;
-}
+/* ==========================================================================
+   TokenScope Desktop — Linear Craft · Obsidian Studio (Dark & Light)
+   Precision AI Token & Multi-Device Analytics
+   ========================================================================== */
+
+:root {
+  /* Font Stacks */
+  --font-sans: 'Inter', 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei UI', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Segoe UI Variable Text', 'SF Mono', Consolas, monospace;
+
+  /* Universal Constants */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 9999px;
+  --transition-fast: 140ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-base: 200ms cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Linear Indigo Brand Core */
+  --brand-primary: #5E6AD2;
+  --brand-primary-hover: #4E5AC0;
+  --brand-strong: #535FC4;
+  --brand-strong-hover: #4551B5;
+  --brand-subtle: rgba(94, 106, 210, 0.11);
+  --brand-border: rgba(94, 106, 210, 0.28);
+
+  /* Semantic Data Colors */
+  --color-exact: #059669;
+  --color-exact-bg: rgba(16, 185, 129, 0.10);
+  --color-exact-border: rgba(16, 185, 129, 0.25);
+
+  --color-aggregate: #7C3AED;
+  --color-aggregate-bg: rgba(139, 92, 246, 0.10);
+  --color-aggregate-border: rgba(139, 92, 246, 0.25);
+
+  --color-estimated: #B45309;
+  --color-estimated-bg: rgba(245, 158, 11, 0.10);
+  --color-estimated-border: rgba(245, 158, 11, 0.25);
+
+  --color-quota: #0284C7;
+  --color-quota-bg: rgba(14, 165, 233, 0.10);
+  --color-quota-border: rgba(14, 165, 233, 0.25);
+
+  --color-danger: #DC2626;
+  --color-danger-bg: rgba(239, 68, 68, 0.10);
+  --color-danger-border: rgba(239, 68, 68, 0.25);
+
+  --text-warning: #D97706;
+}
+
+/* ==========================================================================
+   Dark Theme (Default Obsidian Studio)
+   ========================================================================== */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-canvas: #0B0D11;
+  --bg-sidebar: #101319;
+  --bg-card: #151921;
+  --bg-card-hover: #1B202B;
+  --bg-elevated: #212734;
+  --bg-input: #0F1218;
+  --bg-secondary: rgba(255, 255, 255, 0.045);
+
+  --border-subtle: rgba(255, 255, 255, 0.075);
+  --border-strong: rgba(255, 255, 255, 0.15);
+  --border-input: rgba(255, 255, 255, 0.13);
+
+  --text-primary: #F3F5F8;
+  --text-secondary: #A2ABB8;
+  --text-muted: #7C8795;
+  --text-inverse: #0B0D11;
+  --text-warning: #F5B851;
+
+  --brand-primary: #8E99F3;
+  --brand-primary-hover: #A5AEFF;
+  --brand-strong: #5E6AD2;
+  --brand-strong-hover: #6E79DF;
+  --brand-subtle: rgba(117, 129, 245, 0.14);
+  --brand-border: rgba(117, 129, 245, 0.32);
+
+  --color-exact: #34D399;
+  --color-aggregate: #A78BFA;
+  --color-estimated: #FBBF24;
+  --color-quota: #38BDF8;
+  --color-danger: #F87171;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.36);
+  --shadow-elevated: 0 8px 24px -4px rgba(0, 0, 0, 0.55);
+
+  --chart-grid: rgba(255, 255, 255, 0.06);
+  --chart-fill-start: rgba(94, 106, 210, 0.30);
+  --chart-fill-end: rgba(94, 106, 210, 0.00);
+
+  --heatmap-0: rgba(255, 255, 255, 0.05);
+  --heatmap-1: rgba(16, 185, 129, 0.24);
+  --heatmap-2: rgba(16, 185, 129, 0.48);
+  --heatmap-3: rgba(52, 211, 153, 0.74);
+  --heatmap-4: #34D399;
+}
+
+/* ==========================================================================
+   Light Theme (Soft Zinc / Crisp Alabaster)
+   ========================================================================== */
+[data-theme="light"] {
+  color-scheme: light;
+  -webkit-font-smoothing: subpixel-antialiased;
+  --bg-canvas: #F6F7F9;
+  --bg-sidebar: #EFF1F5;
+  --bg-card: #FFFFFF;
+  --bg-card-hover: #FAFBFD;
+  --bg-elevated: #FFFFFF;
+  --bg-input: #FFFFFF;
+  --bg-secondary: #E7EBF0;
+
+  --border-subtle: #E1E5EC;
+  --border-strong: #C6CEDB;
+  --border-input: #CBD3DF;
+
+  --text-primary: #0F172A;
+  --text-secondary: #334155;
+  --text-muted: #526071;
+  --text-inverse: #FFFFFF;
+  --text-warning: #92400E;
+
+  --brand-primary: #4F5BD5;
+  --brand-primary-hover: #404BC2;
+  --brand-strong: #4F5BD5;
+  --brand-strong-hover: #424EC0;
+  --brand-subtle: rgba(79, 91, 213, 0.09);
+  --brand-border: rgba(79, 91, 213, 0.26);
+
+  --color-exact: #047857;
+  --color-aggregate: #6D28D9;
+  --color-estimated: #B45309;
+  --color-quota: #0369A1;
+  --color-danger: #B91C1C;
+
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-elevated: 0 8px 20px -4px rgba(15, 23, 42, 0.08);
+
+  --chart-grid: #E8ECF2;
+  --chart-fill-start: rgba(79, 91, 213, 0.16);
+  --chart-fill-end: rgba(79, 91, 213, 0.00);
+
+  --heatmap-0: #EBEDF0;
+  --heatmap-1: #9BE9A8;
+  --heatmap-2: #40C463;
+  --heatmap-3: #30A14E;
+  --heatmap-4: #216E39;
+}
+
+/* ==========================================================================
+   Global Reset & Surfaces
+   ========================================================================== */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 760px;
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background-color: var(--bg-canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  transition: background-color var(--transition-base), color var(--transition-base);
+}
+
+::selection {
+  background-color: var(--brand-strong);
+  color: #FFFFFF;
+}
+
+/* Themed scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-pill);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  padding: 0;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus {
+  outline: none;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Tabular Numerals for Jitter-Free Figures */
+.tabular {
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "cv05" 1;
+  letter-spacing: -0.01em;
+}

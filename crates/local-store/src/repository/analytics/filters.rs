@@ -60,7 +60,7 @@ impl LocalStore {
                 },
                 "model" => SessionFilterOption {
                     label: if key == "unknown-model" {
-                        "未识别模型".into()
+                        "来源未提供模型".into()
                     } else {
                         key.clone()
                     },

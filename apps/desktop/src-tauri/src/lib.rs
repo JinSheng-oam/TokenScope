@@ -6,6 +6,7 @@ mod diagnostics;
 mod hub;
 mod lifecycle;
 mod paths;
+mod session_activity;
 mod settings;
 mod state;
 mod webdav;
@@ -74,6 +75,8 @@ pub fn run() {
             agent::start_agent,
             agent::stop_agent,
             agent::get_agent_status,
+            agent::refresh_codex_quota_now,
+            session_activity::recent_session_activity,
             dashboard::get_dashboard_snapshot,
             dashboard::get_session_analysis,
             dashboard::delete_session,

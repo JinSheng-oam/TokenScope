@@ -6,7 +6,10 @@ use tokenscope_local_store::{LocalStore, StoreError};
 #[test]
 fn migration_and_one_time_identity() {
     let mut db = setup();
-    assert_eq!(db.schema_version().unwrap(), 8);
+    assert_eq!(
+        db.schema_version().unwrap(),
+        tokenscope_local_store::schema::VERSION
+    );
     db.init_identity(&identity()).unwrap();
     assert_eq!(db.identity().unwrap(), Some(identity()));
     let mut changed = identity();

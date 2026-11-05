@@ -2,7 +2,10 @@ use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
     process::Child,
-    sync::{atomic::AtomicBool, Mutex},
+    sync::{
+        atomic::{AtomicBool, AtomicU64},
+        Mutex,
+    },
     time::Instant,
 };
 use tokenscope_local_ipc::DashboardResponse;
@@ -40,6 +43,7 @@ pub(crate) struct DashboardRequest {
 
 #[derive(Default)]
 pub(crate) struct DashboardWatch {
+    pub(crate) revision: AtomicU64,
     pub(crate) request: Mutex<DashboardRequest>,
     pub(crate) cache: Mutex<HashMap<String, (DashboardResponse, Instant)>>,
     pub(crate) refreshing: Mutex<HashSet<String>>,

@@ -24,7 +24,7 @@ function controller(loadPage: MockSessionLoader) {
 type MockSessionLoader = (
   range: DashboardRange,
   offset: number,
-  filters: { search: string; toolId: string; modelId: string; projectId: string },
+  filters: { search: string; toolId: string; modelId: string; projectId: string; pageSize?: number },
   startDate?: string,
   endDate?: string,
 ) => Promise<SessionAnalysisPage>;
@@ -54,7 +54,7 @@ describe('session controller', () => {
     expect(loadPage).toHaveBeenLastCalledWith(
       '7d',
       0,
-      { search: 'current', toolId: '', modelId: '', projectId: '' },
+      { search: 'current', toolId: '', modelId: '', projectId: '', pageSize: 50 },
       undefined,
       undefined,
     );

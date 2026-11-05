@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     antigravityWindowLabel,
+    filterActiveAntigravityQuotas,
     formatCountdown,
     formatQuotaPoolName,
     quotaIsStale,
@@ -9,10 +10,26 @@
   import { formatNumber, formatPercent, relativeTime } from '../lib/format';
   import { icons } from '../lib/icons';
   import { liveNow } from '../lib/liveClock';
-  import type { DashboardSnapshot, UsageBreakdown } from '../lib/types';
+  import type { CodexQuota, DashboardSnapshot, UsageBreakdown } from '../lib/types';
 
   export let snapshot: DashboardSnapshot;
   export let antigravityUsage: UsageBreakdown | undefined;
+  export let codexQuotaOverride: CodexQuota[] | null = null;
+  export let codexQuotaRefreshing = false;
+  export let codexQuotaError = '';
+  export let onRefreshCodexQuota: () => void = () => {};
+
+  let showStaleAntigravity = false;
+
+  $: codexQuotas = [...(codexQuotaOverride ?? snapshot.codex_quota)].sort(
+    (a, b) => a.window_duration_minutes - b.window_duration_minutes
+  );
+  $: activeAntigravityQuotas = filterActiveAntigravityQuotas(snapshot.antigravity_quota, false);
+  $: allDedupedAntigravityQuotas = filterActiveAntigravityQuotas(snapshot.antigravity_quota, true);
+  $: hiddenStaleCount = Math.max(0, allDedupedAntigravityQuotas.length - activeAntigravityQuotas.length);
+  $: displayedAntigravityQuotas = showStaleAntigravity
+    ? allDedupedAntigravityQuotas
+    : activeAntigravityQuotas;
 
   $: quotaPrecision = !antigravityUsage
     ? null
@@ -34,20 +51,37 @@
   <div class="panel-head">
     <div>
       <h2>Codex 可用额度</h2>
-      <p>由 Codex 本地 app-server 返回的计划限额窗口</p>
+      <p>由 Codex 本地 app-server 返回；查看本页时按需自动更新</p>
     </div>
-    <span class="precision-chip quota">CODEX APP-SERVER</span>
+    <div class="quota-header-actions">
+      <span class="precision-chip quota">CODEX APP-SERVER</span>
+      <button
+        type="button"
+        class="btn-secondary"
+        disabled={codexQuotaRefreshing}
+        onclick={onRefreshCodexQuota}
+      >
+        <span class:spin={codexQuotaRefreshing}>{@html icons.refresh}</span>
+        {codexQuotaRefreshing ? '正在刷新' : '刷新额度'}
+      </button>
+    </div>
   </div>
-  {#if snapshot.codex_quota.length > 0}
+  {#if codexQuotaError}
+    <div class="notice-box quota-refresh-error" role="alert"><p>{codexQuotaError}</p></div>
+  {/if}
+  {#if codexQuotas.length > 0}
     <div class="quota-grid">
-      {#each snapshot.codex_quota as q}
-        <article class="quota-item-card" class:exhausted={q.remaining_basis_points === 0}>
+      {#each codexQuotas as q}
+        {@const isExhausted = q.remaining_basis_points === 0}
+        {@const isWarning = q.remaining_basis_points !== null && q.remaining_basis_points > 0 && q.remaining_basis_points < 2000}
+        {@const isStale = quotaIsStale(q.observed_at_ms, $liveNow)}
+        <article class="quota-item-card" class:exhausted={isExhausted} class:warning={isWarning}>
           <div class="quota-item-head">
             <span class="quota-pool-name">Codex</span>
             <div class="quota-head-badges">
-              {#if q.remaining_basis_points === 0}
+              {#if isExhausted}
                 <span class="quota-status-pill exhausted">已耗尽</span>
-              {:else if q.remaining_basis_points !== null && q.remaining_basis_points < 2000}
+              {:else if isWarning}
                 <span class="quota-status-pill warning">即将用尽</span>
               {/if}
               <span class="panel-tag">{quotaWindowLabel(q.window_duration_minutes)}</span>
@@ -55,8 +89,8 @@
           </div>
           <div
             class="quota-gauge-val"
-            class:exhausted={q.remaining_basis_points === 0}
-            class:warning={q.remaining_basis_points !== null && q.remaining_basis_points > 0 && q.remaining_basis_points < 2000}
+            class:exhausted={isExhausted}
+            class:warning={isWarning}
           >
             {formatPercent(q.remaining_basis_points)}
           </div>
@@ -72,28 +106,31 @@
             {#if q.remaining_basis_points !== null}
               <div
                 class="rank-fill"
-                class:exhausted={q.remaining_basis_points === 0}
-                class:warning={q.remaining_basis_points > 0 && q.remaining_basis_points < 2000}
+                class:exhausted={isExhausted}
+                class:warning={isWarning}
                 style={`width: ${q.remaining_basis_points / 100}%;`}
               ></div>
             {/if}
           </div>
-          <div class="quota-reset-countdown">
-            {@html icons.quota}
-            <span>{formatCountdown(q.reset_at_ms, $liveNow)}</span>
-          </div>
-          <div class="quota-observed" class:stale={quotaIsStale(q.observed_at_ms, $liveNow)}>
-            {#if quotaIsStale(q.observed_at_ms, $liveNow)}
-              <span class="stale-dot"></span>可能已过期 · {relativeTime(q.observed_at_ms, $liveNow)}
-            {:else}
-              最近观测 · {relativeTime(q.observed_at_ms, $liveNow)}
-            {/if}
+          <div class="quota-card-foot">
+            <div class="quota-reset-countdown">
+              {@html icons.quota}
+              <span>{formatCountdown(q.reset_at_ms, $liveNow)}</span>
+            </div>
+            <div class="quota-observed" class:stale={isStale}>
+              <span class="obs-dot" class:stale={isStale}></span>
+              {#if isStale}
+                可能已过期 · {relativeTime(q.observed_at_ms, $liveNow)}
+              {:else}
+                观测于 {relativeTime(q.observed_at_ms, $liveNow)}
+              {/if}
+            </div>
           </div>
         </article>
       {/each}
     </div>
   {:else}
-    <div class="empty-box">尚无 Codex 额度快照。请确认本机 Codex CLI 已安装并登录，然后刷新。</div>
+    <div class="empty-box">尚无 Codex 额度快照。请确认本机 Codex CLI 已安装并登录，然后点击“刷新额度”。</div>
   {/if}
 </section>
 
@@ -103,18 +140,34 @@
       <h2>Antigravity 可用额度</h2>
       <p>来自本机 127.0.0.1 RPC；未知值保留为“未知”，不按 0 处理</p>
     </div>
-    <span class="precision-chip quota">LOOPBACK RPC</span>
+    <div class="quota-header-actions">
+      {#if hiddenStaleCount > 0}
+        <button
+          type="button"
+          class="panel-tag quota-stale-toggle"
+          class:active={showStaleAntigravity}
+          onclick={() => (showStaleAntigravity = !showStaleAntigravity)}
+          title="切换是否显示未在最近一次 RPC 快照中出现的历史模型池"
+        >
+          {showStaleAntigravity ? `隐藏历史快照 (${hiddenStaleCount})` : `已过滤 ${hiddenStaleCount} 项过期快照`}
+        </button>
+      {/if}
+      <span class="precision-chip quota">LOOPBACK RPC</span>
+    </div>
   </div>
-  {#if snapshot.antigravity_quota.length > 0}
+  {#if displayedAntigravityQuotas.length > 0}
     <div class="quota-grid">
-      {#each snapshot.antigravity_quota as q}
-        <article class="quota-item-card" class:exhausted={q.remaining_basis_points === 0}>
+      {#each displayedAntigravityQuotas as q}
+        {@const isExhausted = q.remaining_basis_points === 0}
+        {@const isWarning = q.remaining_basis_points !== null && q.remaining_basis_points > 0 && q.remaining_basis_points < 2000}
+        {@const isStale = quotaIsStale(q.observed_at_ms, $liveNow)}
+        <article class="quota-item-card" class:exhausted={isExhausted} class:warning={isWarning}>
           <div class="quota-item-head">
             <span class="quota-pool-name">{formatQuotaPoolName(q.pool_id)}</span>
             <div class="quota-head-badges">
-              {#if q.remaining_basis_points === 0}
+              {#if isExhausted}
                 <span class="quota-status-pill exhausted">已耗尽</span>
-              {:else if q.remaining_basis_points !== null && q.remaining_basis_points < 2000}
+              {:else if isWarning}
                 <span class="quota-status-pill warning">即将用尽</span>
               {/if}
               <span class="panel-tag">{antigravityWindowLabel(q.window_id)}</span>
@@ -122,8 +175,8 @@
           </div>
           <div
             class="quota-gauge-val"
-            class:exhausted={q.remaining_basis_points === 0}
-            class:warning={q.remaining_basis_points !== null && q.remaining_basis_points > 0 && q.remaining_basis_points < 2000}
+            class:exhausted={isExhausted}
+            class:warning={isWarning}
           >
             {formatPercent(q.remaining_basis_points)}
           </div>
@@ -139,22 +192,25 @@
             {#if q.remaining_basis_points !== null}
               <div
                 class="rank-fill"
-                class:exhausted={q.remaining_basis_points === 0}
-                class:warning={q.remaining_basis_points > 0 && q.remaining_basis_points < 2000}
+                class:exhausted={isExhausted}
+                class:warning={isWarning}
                 style={`width: ${q.remaining_basis_points / 100}%;`}
               ></div>
             {/if}
           </div>
-          <div class="quota-reset-countdown">
-            {@html icons.quota}
-            <span>{formatCountdown(q.reset_at_ms, $liveNow)}</span>
-          </div>
-          <div class="quota-observed" class:stale={quotaIsStale(q.observed_at_ms, $liveNow)}>
-            {#if quotaIsStale(q.observed_at_ms, $liveNow)}
-              <span class="stale-dot"></span>可能已过期 · {relativeTime(q.observed_at_ms, $liveNow)}
-            {:else}
-              最近观测 · {relativeTime(q.observed_at_ms, $liveNow)}
-            {/if}
+          <div class="quota-card-foot">
+            <div class="quota-reset-countdown">
+              {@html icons.quota}
+              <span>{formatCountdown(q.reset_at_ms, $liveNow)}</span>
+            </div>
+            <div class="quota-observed" class:stale={isStale}>
+              <span class="obs-dot" class:stale={isStale}></span>
+              {#if isStale}
+                可能已过期 · {relativeTime(q.observed_at_ms, $liveNow)}
+              {:else}
+                观测于 {relativeTime(q.observed_at_ms, $liveNow)}
+              {/if}
+            </div>
           </div>
         </article>
       {/each}

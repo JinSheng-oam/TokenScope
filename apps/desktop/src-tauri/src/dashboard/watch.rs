@@ -1,76 +1,97 @@
 use super::query::{dashboard_key, query_agent_fresh};
 use crate::{paths::database_path, state::DashboardWatch};
 use std::{
-    fs,
-    path::{Path, PathBuf},
+    sync::atomic::Ordering,
     thread,
-    time::{Duration, Instant, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager};
-fn dashboard_signature(db: &Path) -> Option<(u64, u64)> {
-    let wal = PathBuf::from(format!("{}-wal", db.display()));
-    let meta = fs::metadata(&wal).or_else(|_| fs::metadata(db)).ok()?;
-    let modified = meta
-        .modified()
-        .ok()?
-        .duration_since(UNIX_EPOCH)
-        .ok()?
-        .as_millis() as u64;
-    Some((meta.len(), modified))
-}
+use tokenscope_local_store::LocalStore;
 
-/// One long-lived reader: after the first snapshot, watch the Agent's WAL and
-/// push a fresh projection only when new usage actually landed. This replaces
-/// the previous timer that spawned a full query every 30 seconds.
+/// Poll only two revision counters. Checkpoint/quota writes push observations;
+/// only usage, names or activity changes rebuild the full projection.
 pub(crate) fn spawn_dashboard_watch(app: AppHandle) {
     thread::spawn(move || {
-        let mut last = None;
+        let mut reader: Option<LocalStore> = None;
+        let mut last_full = None;
+        let mut last_observations = None;
         loop {
             thread::sleep(Duration::from_millis(1_200));
-            let Ok(db) = database_path(&app) else {
+            if reader.is_none() {
+                reader = database_path(&app)
+                    .ok()
+                    .and_then(|db| LocalStore::open_readonly(&db).ok());
+            }
+            let Some(store) = reader.as_ref() else {
                 continue;
             };
-            if !db.is_file() {
-                continue;
-            }
-            let signature = dashboard_signature(&db);
-            if signature.is_none() || signature == last {
-                continue;
-            }
-            last = signature;
-            // Scans commit in bursts; let the burst settle before reading.
-            thread::sleep(Duration::from_millis(800));
-            let request = app
-                .state::<DashboardWatch>()
-                .request
-                .lock()
-                .map(|value| value.clone())
-                .unwrap_or_default();
-            if request.range.is_empty() {
-                continue;
-            }
-            match query_agent_fresh(
-                &app,
-                &request.range,
-                0,
-                request.start_date.as_deref(),
-                request.end_date.as_deref(),
-            ) {
-                Ok(response) => {
-                    let key = dashboard_key(
-                        &request.range,
-                        request.start_date.as_deref(),
-                        request.end_date.as_deref(),
-                        0,
-                    );
-                    if let Ok(mut cache) = app.state::<DashboardWatch>().cache.lock() {
-                        cache.insert(key, (response.clone(), Instant::now()));
-                    }
-                    if let Err(error) = app.emit("dashboard-updated", response) {
-                        eprintln!("TokenScope dashboard push warning: {error}");
-                    }
+            let (full, observations) = match store.dashboard_revisions() {
+                Ok(revisions) => revisions,
+                Err(error) => {
+                    eprintln!("TokenScope revision watch warning: {error}");
+                    reader = None;
+                    continue;
                 }
-                Err(error) => eprintln!("TokenScope dashboard push warning: {error}"),
+            };
+            let watch = app.state::<DashboardWatch>();
+            watch.revision.store(full, Ordering::Release);
+            if last_full != Some(full) {
+                if let Ok(mut cache) = watch.cache.lock() {
+                    cache.clear();
+                }
+                let request = watch.request.lock().map(|r| r.clone()).unwrap_or_default();
+                if request.range.is_empty() {
+                    continue;
+                }
+                let key = dashboard_key(
+                    &request.range,
+                    request.start_date.as_deref(),
+                    request.end_date.as_deref(),
+                    0,
+                );
+                let claimed = watch
+                    .refreshing
+                    .lock()
+                    .map(|mut r| r.insert(key.clone()))
+                    .unwrap_or(false);
+                if !claimed {
+                    continue;
+                }
+                // Let a burst of source transactions settle before aggregating.
+                thread::sleep(Duration::from_millis(800));
+                let response = query_agent_fresh(
+                    &app,
+                    &request.range,
+                    0,
+                    request.start_date.as_deref(),
+                    request.end_date.as_deref(),
+                );
+                if let Ok(mut r) = watch.refreshing.lock() {
+                    r.remove(&key);
+                }
+                match response {
+                    Ok(response) => {
+                        last_full = Some(response.snapshot.data_revision);
+                        if let Ok(mut cache) = watch.cache.lock() {
+                            cache.insert(key, (response.clone(), Instant::now()));
+                        }
+                        if let Err(error) = app.emit("dashboard-updated", response) {
+                            eprintln!("TokenScope dashboard push warning: {error}");
+                        }
+                    }
+                    Err(error) => eprintln!("TokenScope dashboard push warning: {error}"),
+                }
+                // Failed queries keep their old revision and retry on the next tick.
+            }
+            if last_observations != Some(observations) {
+                match store.dashboard_observations(chrono::Utc::now().timestamp_millis()) {
+                    Ok(update) => {
+                        if app.emit("dashboard-observations-updated", update).is_ok() {
+                            last_observations = Some(observations);
+                        }
+                    }
+                    Err(error) => eprintln!("TokenScope observation push warning: {error}"),
+                }
             }
         }
     });

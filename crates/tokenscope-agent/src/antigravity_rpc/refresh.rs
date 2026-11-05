@@ -6,7 +6,7 @@ use serde_json::json;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokenscope_local_store::{AntigravityQuota, LocalStore};
 
-fn fetch_quota() -> Result<Vec<AntigravityQuota>, RpcError> {
+pub(super) fn fetch_quota() -> Result<Vec<AntigravityQuota>, RpcError> {
     let endpoints = discover_endpoints()?;
     let client = build_client()?;
     let observed = SystemTime::now()

@@ -125,9 +125,15 @@
     const range = p.getRange();
     draftStart = range.start;
     draftEnd = range.end;
+    isPickingEnd = false;
     const endDateObj = parseIsoDate(range.end);
     viewYear = endDateObj.getFullYear();
     viewMonth = endDateObj.getMonth();
+  }
+
+  function isPresetMatched(p: Preset, s: string, e: string): boolean {
+    const r = p.getRange();
+    return r.start === s && r.end === e;
   }
 
   // Day cell calculation
@@ -256,7 +262,12 @@
       <span class="presets-title">快捷预设</span>
       <div class="presets-list">
         {#each presets as preset}
-          <button type="button" class="preset-btn" onclick={() => applyPreset(preset)}>
+          <button
+            type="button"
+            class="preset-btn"
+            class:active={isPresetMatched(preset, draftStart, draftEnd)}
+            onclick={() => applyPreset(preset)}
+          >
             {preset.label}
           </button>
         {/each}
@@ -366,12 +377,13 @@
 
   .picker-inner {
     display: flex;
-    min-width: 480px;
+    width: 448px;
   }
 
   /* Presets Sidebar */
   .picker-presets {
-    width: 130px;
+    width: 114px;
+    flex-shrink: 0;
     padding: 12px 8px;
     background-color: var(--bg-secondary);
     border-right: 1px solid var(--border-subtle);
@@ -385,8 +397,7 @@
     font-weight: 600;
     color: var(--text-muted);
     padding: 0 6px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.02em;
   }
 
   .presets-list {
@@ -399,25 +410,33 @@
     width: 100%;
     padding: 6px 8px;
     background: transparent;
-    border: none;
+    border: 1px solid transparent;
     border-radius: var(--radius-xs);
     font: inherit;
     font-size: 11.5px;
     color: var(--text-secondary);
     text-align: left;
+    white-space: nowrap;
     cursor: pointer;
     transition: all var(--transition-fast);
   }
 
   .preset-btn:hover {
     background-color: var(--bg-card);
+    color: var(--text-primary);
+  }
+
+  .preset-btn.active {
+    background-color: var(--brand-subtle);
+    border-color: var(--brand-border);
     color: var(--brand-primary);
-    font-weight: 500;
+    font-weight: 600;
   }
 
   /* Calendar Panel */
   .picker-calendar {
     flex: 1;
+    min-width: 0;
     padding: 14px 16px;
     display: flex;
     flex-direction: column;
@@ -475,11 +494,11 @@
   .days-grid {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
-    row-gap: 2px;
+    row-gap: 3px;
   }
 
   .day-cell {
-    height: 32px;
+    height: 30px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -488,6 +507,7 @@
     cursor: pointer;
     font: inherit;
     font-size: 12px;
+    font-variant-numeric: tabular-nums;
     color: var(--text-primary);
     position: relative;
     padding: 0;
@@ -495,8 +515,8 @@
   }
 
   .day-num {
-    width: 28px;
-    height: 28px;
+    width: 30px;
+    height: 30px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -510,17 +530,22 @@
     font-weight: 600;
   }
 
-  .day-cell.not-current {
+  .day-cell.not-current .day-num {
     color: var(--text-muted);
     opacity: 0.45;
   }
 
-  .day-cell.is-today .day-num {
+  .day-cell.is-today:not(.is-start):not(.is-end) .day-num {
     border: 1px solid var(--brand-primary);
+    color: var(--brand-primary);
+    font-weight: 600;
+  }
+
+  .day-cell.is-disabled .day-num {
+    opacity: 0.25;
   }
 
   .day-cell.is-disabled {
-    opacity: 0.25;
     cursor: not-allowed;
   }
 
@@ -529,12 +554,32 @@
     background-color: var(--brand-subtle);
   }
 
+  .day-cell.in-range:nth-child(7n + 1) {
+    border-top-left-radius: 999px;
+    border-bottom-left-radius: 999px;
+  }
+
+  .day-cell.in-range:nth-child(7n) {
+    border-top-right-radius: 999px;
+    border-bottom-right-radius: 999px;
+  }
+
   .day-cell.is-start {
     background: linear-gradient(to right, transparent 50%, var(--brand-subtle) 50%);
   }
+
+  .day-cell.is-start:nth-child(7n) {
+    background: transparent;
+  }
+
   .day-cell.is-end {
     background: linear-gradient(to left, transparent 50%, var(--brand-subtle) 50%);
   }
+
+  .day-cell.is-end:nth-child(7n + 1) {
+    background: transparent;
+  }
+
   .day-cell.is-start.is-end {
     background: transparent;
   }
@@ -544,7 +589,8 @@
     background-color: var(--brand-strong);
     color: #fff;
     font-weight: 600;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    opacity: 1;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.18);
   }
 
   /* Footer Actions */
@@ -552,22 +598,23 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: 8px;
     padding-top: 10px;
-    margin-top: 4px;
+    margin-top: 2px;
     border-top: 1px solid var(--border-subtle);
   }
 
   .range-display {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
+    min-width: 0;
   }
 
   .date-input {
-    width: 90px;
+    width: 82px;
     height: 28px;
-    padding: 0 6px;
+    padding: 0 4px;
     font: inherit;
     font-family: var(--font-mono);
     font-size: 11px;
@@ -586,23 +633,27 @@
   .range-arrow {
     font-size: 11px;
     color: var(--text-muted);
+    flex-shrink: 0;
   }
 
   .footer-actions {
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-shrink: 0;
   }
 
   .btn-ghost {
     height: 28px;
-    padding: 0 10px;
+    padding: 0 9px;
     background: transparent;
-    border: 1px solid transparent;
+    border: 1px solid var(--border-subtle);
     border-radius: var(--radius-xs);
     color: var(--text-secondary);
     font: inherit;
     font-size: 11.5px;
+    white-space: nowrap;
+    flex-shrink: 0;
     cursor: pointer;
     transition: all var(--transition-fast);
   }
@@ -610,11 +661,12 @@
   .btn-ghost:hover {
     color: var(--text-primary);
     background-color: var(--bg-secondary);
+    border-color: var(--border-strong);
   }
 
   .btn-apply {
     height: 28px;
-    padding: 0 12px;
+    padding: 0 11px;
     background-color: var(--brand-strong);
     border: none;
     border-radius: var(--radius-xs);
@@ -622,6 +674,8 @@
     font: inherit;
     font-size: 11.5px;
     font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
     cursor: pointer;
     transition: background-color var(--transition-fast);
   }

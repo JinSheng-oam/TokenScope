@@ -39,6 +39,21 @@ export type CodexQuota = {
   observed_at_ms: number;
 };
 
+export type CodexQuotaRefreshResult = {
+  snapshots: CodexQuota[];
+  persisted: boolean;
+  warning: string | null;
+};
+
+export type SessionActivity = {
+  tool_id: string;
+  session_id: string;
+  state: 'generating' | 'recent';
+  observed_at_ms: number;
+  display_name: string | null;
+  model_id: string | null;
+};
+
 export type ModelActivityBreakdown = {
   tool_id: string;
   model_id: string;
@@ -101,16 +116,18 @@ export type SessionAnalysisResponse = {
   analysis: SessionAnalysisPage;
 };
 
-export type RemoteUsageBreakdown = {
+export type RemoteUsageBreakdown = UsageBreakdown & { owner_device_id: string };
+export type RemoteUsageTotals = UsageTotals;
+export type RemoteDeviceUsage = {
   owner_device_id: string;
-  key: string;
-  label: string;
   total_tokens: number;
   record_count: number;
   estimated_cost_microusd: number | null;
+  usage: RemoteUsageTotals;
 };
 
 export type DashboardSnapshot = {
+  data_revision: number;
   schema_version: number;
   generated_at_ms: number;
   range: 'today' | '7d' | '30d' | 'all' | 'custom';
@@ -120,12 +137,8 @@ export type DashboardSnapshot = {
   time_zone_valid: boolean;
   identity: { device_id: string; display_name: string; time_zone: string } | null;
   local: UsageTotals;
-  remote: {
-    total_tokens: number; input_tokens: number; cache_read_tokens: number; cache_write_tokens: number;
-    output_tokens: number; unclassified_tokens: number; record_count: number; priced_records: number; unpriced_records: number;
-    exact_records: number; aggregate_records: number; estimated_records: number; unknown_precision_records: number; estimated_cost_microusd: number | null;
-  };
-  remote_by_device: { owner_device_id: string; total_tokens: number; record_count: number; estimated_cost_microusd: number | null }[];
+  remote: RemoteUsageTotals;
+  remote_by_device: RemoteDeviceUsage[];
   remote_by_tool: RemoteUsageBreakdown[];
   remote_by_model: RemoteUsageBreakdown[];
   remote_by_project: RemoteUsageBreakdown[];
@@ -142,6 +155,7 @@ export type DashboardSnapshot = {
     limit: number;
   };
   daily: { date: string; total_tokens: number; input_tokens: number; output_tokens: number }[];
+  remote_daily: (DashboardSnapshot['daily'][number] & { owner_device_id: string })[];
   source_health: {
     tool_id: string;
     last_scan_ms: number | null;
@@ -239,6 +253,7 @@ export type DiagnosticReport = {
 export type DashboardRange = 'today' | '7d' | '30d' | 'all' | 'custom';
 
 export type DashboardResponse = {
+  request_key: string;
   protocol_version: number;
   snapshot: DashboardSnapshot;
 };
@@ -264,4 +279,8 @@ export type PairHubResult = {
   hubOrigin: string;
   deviceId: string;
   createdAtMs: number;
+};
+
+export type DashboardObservations = Pick<DashboardSnapshot, 'source_health' | 'codex_quota' | 'antigravity_quota' | 'sync_status'> & {
+  observed_at_ms: number;
 };

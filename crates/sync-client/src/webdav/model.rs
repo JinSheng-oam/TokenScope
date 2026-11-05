@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use tokenscope_core_domain::RevisionedRecord;
+use tokenscope_local_store::ProjectName;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WebDavDeviceInfo {
@@ -49,6 +50,14 @@ pub struct WebDavBatchFile {
     pub device_id: String,
     pub batch_seq: u64,
     pub records: Vec<RevisionedRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WebDavProjectNamesFile {
+    pub protocol_version: u32,
+    pub device_id: String,
+    pub updated_at_ms: i64,
+    pub project_names: Vec<ProjectName>,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

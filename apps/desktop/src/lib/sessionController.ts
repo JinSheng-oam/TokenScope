@@ -13,6 +13,7 @@ export type SessionControllerState = {
   toolFilter: string;
   modelFilter: string;
   projectFilter: string;
+  pageSize: number;
   loading: boolean;
   error: string;
   offset: number;
@@ -33,12 +34,26 @@ type SessionControllerDependencies = {
   deleteUsage?: typeof deleteSession;
 };
 
+export const SESSION_PAGE_SIZES = [5, 6, 8, 10, 15, 20, 50, 100] as const;
+const DEFAULT_PAGE_SIZE = 50;
+const PAGE_SIZE_STORAGE_KEY = 'tokenscope.sessionPageSize';
+
+function restorePageSize(): number {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? Number(localStorage.getItem(PAGE_SIZE_STORAGE_KEY)) : NaN;
+    return (SESSION_PAGE_SIZES as readonly number[]).includes(raw) ? raw : DEFAULT_PAGE_SIZE;
+  } catch {
+    return DEFAULT_PAGE_SIZE;
+  }
+}
+
 const INITIAL_STATE: SessionControllerState = {
   analysis: null,
   search: '',
   toolFilter: '',
   modelFilter: '',
   projectFilter: '',
+  pageSize: DEFAULT_PAGE_SIZE,
   loading: false,
   error: '',
   offset: 0,
@@ -49,7 +64,7 @@ const INITIAL_STATE: SessionControllerState = {
 };
 
 export function createSessionController(dependencies: SessionControllerDependencies) {
-  const state = writable<SessionControllerState>({ ...INITIAL_STATE });
+  const state = writable<SessionControllerState>({ ...INITIAL_STATE, pageSize: restorePageSize() });
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let requestSequence = 0;
 
@@ -90,6 +105,20 @@ export function createSessionController(dependencies: SessionControllerDependenc
     void load();
   }
 
+  function setPageSize(size: number) {
+    if (!(SESSION_PAGE_SIZES as readonly number[]).includes(size)) return;
+    if (get(state).pageSize === size) return;
+    try {
+      localStorage.setItem(PAGE_SIZE_STORAGE_KEY, String(size));
+    } catch {
+      // Persisting the preference is best-effort.
+    }
+    requestSequence += 1;
+    clearDebounce();
+    update({ pageSize: size, offset: 0 });
+    void load();
+  }
+
   async function load() {
     if (!dependencies.isRuntimeAvailable() || !dependencies.isActive()) return;
     const sequence = ++requestSequence;
@@ -100,6 +129,7 @@ export function createSessionController(dependencies: SessionControllerDependenc
       toolId: current.toolFilter,
       modelId: current.modelFilter,
       projectId: current.projectFilter,
+      pageSize: current.pageSize,
     };
     const range = dependencies.range();
     const fetchPage = dependencies.loadPage ?? getSessionAnalysis;
@@ -193,6 +223,7 @@ export function createSessionController(dependencies: SessionControllerDependenc
     schedule,
     clearFilters,
     setPage,
+    setPageSize,
     load,
     actionKey,
     projectLabel,

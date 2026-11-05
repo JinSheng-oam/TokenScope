@@ -15,6 +15,8 @@ pub const SUPPORTED_DB_SCHEMA_VERSION: i64 = tokenscope_local_store::schema::VER
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DashboardResponse {
+    #[serde(default)]
+    pub request_key: String,
     pub protocol_version: u32,
     pub snapshot: DashboardSnapshot,
 }
@@ -160,6 +162,7 @@ impl DiagnosticReport {
 impl DashboardResponse {
     pub fn new(snapshot: DashboardSnapshot) -> Self {
         Self {
+            request_key: String::new(),
             protocol_version: PROTOCOL_VERSION,
             snapshot,
         }
@@ -205,6 +208,7 @@ mod tests {
 
     fn snapshot() -> DashboardSnapshot {
         DashboardSnapshot {
+            data_revision: 0,
             schema_version: SUPPORTED_DB_SCHEMA_VERSION,
             generated_at_ms: 1,
             range: "7d".into(),
@@ -225,6 +229,7 @@ mod tests {
             by_model: vec![],
             by_project: vec![],
             daily: vec![],
+            remote_daily: vec![],
             model_activity: Vec::<ModelActivityBreakdown>::new(),
             session_usage: SessionUsagePage {
                 sessions: vec![],

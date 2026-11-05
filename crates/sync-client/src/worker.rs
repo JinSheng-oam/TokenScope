@@ -3,9 +3,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::{
     client::{HubClient, HubClientError},
     pairing::DeviceToken,
-    sync::{UsageAckStatus, MAX_SYNC_BATCH},
+    sync::{UsageAckStatus, MAX_PROJECT_NAME_BATCH, MAX_SYNC_BATCH},
 };
-use tokenscope_local_store::LocalStore;
+use tokenscope_local_store::{LocalStore, ProjectName};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct SyncReport {
@@ -174,6 +174,26 @@ pub fn sync_outbox_once(
     Ok(report)
 }
 
+/// Push local display names independently of usage outbox revisions.
+pub fn push_project_names_once(
+    client: &HubClient,
+    store: &LocalStore,
+    token: &DeviceToken,
+) -> Result<usize, SyncWorkerError> {
+    let names = store
+        .project_names()
+        .map_err(|e| SyncWorkerError::Store(e.to_string()))?;
+    let mut uploaded = 0usize;
+    for batch in names.chunks(MAX_PROJECT_NAME_BATCH) {
+        match client.put_project_names(token, batch) {
+            Ok(count) => uploaded += count,
+            Err(HubClientError::NotFound) => return Ok(0),
+            Err(error) => return Err(SyncWorkerError::Hub(error)),
+        }
+    }
+    Ok(uploaded)
+}
+
 /// Pull one bounded remote change-feed page. Cache rows and cursor are committed
 /// in one SQLite transaction so a crash cannot advance the cursor past unapplied data.
 pub fn pull_usage_changes_once(
@@ -197,6 +217,43 @@ pub fn pull_usage_changes_once(
         .collect::<Vec<_>>();
     store
         .apply_remote_changes(&changes, page.next_cursor)
+        .map_err(|e| SyncWorkerError::Store(e.to_string()))
+}
+
+/// Pull all paired-device project names, even when the usage cursor has no new events.
+pub fn pull_project_names_once(
+    client: &HubClient,
+    store: &mut LocalStore,
+    token: &DeviceToken,
+) -> Result<usize, SyncWorkerError> {
+    let mut after_device_id = String::new();
+    let mut after_project_id = String::new();
+    let mut names = Vec::new();
+    loop {
+        let page = match client.list_project_names(token, &after_device_id, &after_project_id, 200)
+        {
+            Ok(page) => page,
+            Err(HubClientError::NotFound) => return Ok(0),
+            Err(error) => return Err(SyncWorkerError::Hub(error)),
+        };
+        names.extend(page.project_names.into_iter().map(|remote| ProjectName {
+            project_id: remote.project_id,
+            name: remote.name,
+            updated_at_ms: remote.updated_at_ms,
+        }));
+        if !page.has_more {
+            break;
+        }
+        if page.next_device_id == after_device_id && page.next_project_id == after_project_id {
+            return Err(SyncWorkerError::Store(
+                "project name cursor did not advance".into(),
+            ));
+        }
+        after_device_id = page.next_device_id;
+        after_project_id = page.next_project_id;
+    }
+    store
+        .merge_project_names(&names)
         .map_err(|e| SyncWorkerError::Store(e.to_string()))
 }
 

@@ -1,14 +1,16 @@
 <script lang="ts">
-import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
+import { formatCompactTokens, resolveSessionActivityState, findActivityForSession, type TrendViewMode } from '../lib/dashboardView';
   import { nextChartIndex } from '../lib/chartInteraction';
   import { formatCost, formatNumber, formatToolLabel, percentOf, relativeTime } from '../lib/format';
   import type { ChartPoint } from '../lib/dashboardView';
   import type { HeatmapCalendar, HeatmapCell } from '../lib/heatmap';
   import { icons } from '../lib/icons';
   import RollingNumber from './RollingNumber.svelte';
-  import type { DashboardSnapshot, UsageBreakdown, UsageTotals } from '../lib/types';
+  import { liveNow } from '../lib/liveClock';
+  import type { DashboardSnapshot, SessionActivity, SessionUsage, UsageBreakdown, UsageTotals } from '../lib/types';
 
   export let snapshot: DashboardSnapshot;
+  export let sessionActivity: SessionActivity[] = [];
   export let local: UsageTotals | undefined;
   export let tools: UsageBreakdown[] | undefined = undefined;
   export let deviceScope: string = 'all';
@@ -35,6 +37,8 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
   export let rollingNumbersEnabled = true;
 
   $: recentSessions = snapshot.session_usage.sessions.slice(0, 4);
+  $: pendingActivity = sessionActivity.filter((item) => Boolean(item.display_name?.trim()) && $liveNow >= item.observed_at_ms && $liveNow - item.observed_at_ms <= 120_000 && !recentSessions.some((session) => findActivityForSession(session, sessionActivity)?.session_id === item.session_id)).slice(0, 4);
+  $: visibleRecentSessions = recentSessions.slice(0, Math.max(0, 4 - pendingActivity.length));
   $: activeTools = tools ?? snapshot.by_tool;
   $: untimedRecordCount = activeTools.reduce((sum, tool) => sum + tool.untimed_records, 0);
   $: heatmapRangeLabel = `${heatmapCalendar.rangeStartDate} 至 ${heatmapCalendar.rangeEndDate}`;
@@ -627,22 +631,59 @@ import { formatCompactTokens, type TrendViewMode } from '../lib/dashboardView';
                 <button class="panel-tag" onclick={onNavigateSessions}>查看全部 →</button>
               </div>
 
-              {#if recentSessions.length > 0}
+              {#if pendingActivity.length > 0 || visibleRecentSessions.length > 0}
                 <div class="recent-session-list">
-                  {#each recentSessions as session, index}
+                  {#each pendingActivity as activity, index (`${activity.tool_id}:${activity.session_id}`)}
                     <div class="recent-session-row">
                       <span class="recent-session-rank tabular">{String(index + 1).padStart(2, '0')}</span>
+                      <span class="recent-session-main">
+                        <strong title={activity.display_name ?? '未命名会话'}>{activity.display_name || '未命名会话'}</strong>
+                        <small>{[formatToolLabel(activity.tool_id), activity.model_id, relativeTime(activity.observed_at_ms)].filter(Boolean).join(' · ')}</small>
+                      </span>
+                      <span class="recent-session-right">
+                        {#if activity.state === 'generating'}
+                          <span class="recent-session-status generating" title="任务日志仍在更新，等待结束事件">
+                            <span class="recent-session-spinner" aria-hidden="true"></span>进行中
+                          </span>
+                        {:else}
+                          <span class="recent-session-status recent" title="最近检测到会话活动">
+                            <span class="recent-session-live-dot" aria-hidden="true"></span>近期活跃
+                          </span>
+                        {/if}
+                        <span class="recent-session-pending-value">用量待更新</span>
+                      </span>
+                    </div>
+                  {/each}
+                  {#each visibleRecentSessions as session, index}
+                    {@const actState = resolveSessionActivityState(session, sessionActivity, $liveNow)}
+                    <div class="recent-session-row">
+                      <span class="recent-session-rank tabular">{String(index + pendingActivity.length + 1).padStart(2, '0')}</span>
                       <span class="recent-session-main">
                         <strong title={session.display_name ?? session.session_id}>
                           {session.display_name ?? '未命名会话'}
                         </strong>
                         <small>
-                          {formatToolLabel(session.tool_id)}
-                          {#if session.models[0]?.model_id} · {session.models[0].model_id}{/if}
-                          · {relativeTime(session.last_event_at_ms ?? session.activity_observed_at_ms)}
+                          {[
+                            formatToolLabel(session.tool_id),
+                            session.models[0]?.model_id,
+                            relativeTime(session.last_event_at_ms ?? session.activity_observed_at_ms),
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
                         </small>
                       </span>
-                      <span class="recent-session-value tabular">{formatNumber(session.total_tokens)}</span>
+                      <span class="recent-session-right">
+                        {#if actState === 'generating'}
+                          <span class="recent-session-status generating" title="任务日志仍在更新，等待结束事件">
+                            <span class="recent-session-spinner" aria-hidden="true"></span>进行中
+                          </span>
+                        {:else if actState === 'recent'}
+                          <span class="recent-session-status recent" title="最近检测到会话活动">
+                            <span class="recent-session-live-dot" aria-hidden="true"></span>近期活跃
+                          </span>
+                        {/if}
+                        <span class="recent-session-value tabular">{formatNumber(session.total_tokens)}</span>
+                      </span>
                     </div>
                   {/each}
                 </div>

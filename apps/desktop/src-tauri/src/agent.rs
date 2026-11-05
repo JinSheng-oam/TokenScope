@@ -1,7 +1,7 @@
 use crate::{
     paths::{
         agent_is_running, database_path, resolve_agent, rotate_agent_log, shutdown_path,
-        sync_config_path, webdav_config_path, validate_time_zone,
+        sync_config_path, validate_time_zone, webdav_config_path,
     },
     state::{AgentProcess, AgentStatus},
 };
@@ -13,6 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Manager};
+use tokenscope_local_store::CodexQuota;
 
 pub(crate) fn start_agent_inner(
     app: &AppHandle,
@@ -141,6 +142,57 @@ pub(crate) fn start_agent_inner(
         database_ready: db.is_file(),
         message: "Agent 已创建但尚未取得运行锁，请检查应用数据目录 logs/agent.log".into(),
     })
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct CodexQuotaRefreshResult {
+    snapshots: Vec<CodexQuota>,
+    persisted: bool,
+    warning: Option<String>,
+}
+
+fn refresh_codex_quota_inner(app: &AppHandle) -> Result<CodexQuotaRefreshResult, String> {
+    let agent =
+        resolve_agent(app).ok_or_else(|| "未找到 tokenscope-agent 可执行文件".to_string())?;
+    let mut command = Command::new(agent);
+    command
+        .arg("--query-codex-quota-json")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let output = command
+        .output()
+        .map_err(|e| format!("启动 Codex 额度查询失败：{e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Codex 额度查询失败：{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let snapshots: Vec<CodexQuota> = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("解析 Codex 额度数据失败：{e}"))?;
+    if snapshots.is_empty() {
+        return Err("Codex 未返回额度窗口".into());
+    }
+    Ok(CodexQuotaRefreshResult {
+        snapshots,
+        persisted: false,
+        warning: None,
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn refresh_codex_quota_now(
+    app: AppHandle,
+) -> Result<CodexQuotaRefreshResult, String> {
+    tauri::async_runtime::spawn_blocking(move || refresh_codex_quota_inner(&app))
+        .await
+        .map_err(|error| format!("Codex 额度刷新任务失败：{error}"))?
 }
 
 pub(crate) fn stop_agent_inner(app: &AppHandle, process: &AgentProcess) -> Result<String, String> {

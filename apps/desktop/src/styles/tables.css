@@ -18,10 +18,10 @@ table {
 
 th {
   padding: 9px 14px;
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--text-muted);
+  letter-spacing: 0;
+  color: var(--text-secondary);
   background-color: var(--bg-secondary);
   border-bottom: 1px solid var(--border-subtle);
   white-space: nowrap;
@@ -88,43 +88,44 @@ tbody tr:hover {
 /* Balanced 7-column layout that fits 1024px+ windows without horizontal clipping */
 .th-session,
 .session-info-cell {
-  width: 27%;
+  width: 26%;
 }
 
 .th-source,
 .session-source-cell {
-  width: 104px;
+  width: 124px;
   white-space: nowrap;
+  overflow: hidden;
 }
 
 .th-models,
 .session-models-cell {
-  width: 28%;
+  width: 27%;
 }
 
 .th-tokens,
 .session-token-cell {
-  width: 90px;
+  width: 96px;
   text-align: right;
   white-space: nowrap;
 }
 
 .th-precision,
 .session-precision-cell {
-  width: 70px;
+  width: 76px;
   white-space: nowrap;
 }
 
 .th-responses,
 .session-response-cell {
-  width: 76px;
+  width: 88px;
   text-align: right;
   white-space: nowrap;
 }
 
 .th-time,
 .session-time-cell {
-  width: 86px;
+  width: 90px;
   text-align: right;
   white-space: nowrap;
 }
@@ -189,26 +190,30 @@ tr:hover .session-inline-delete-btn {
 }
 
 .session-id-pill {
-  font-size: 10px;
-  color: var(--text-muted);
-  background: var(--bg-card);
-  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  padding: 1px 5px;
   border-radius: var(--radius-xs);
   border: 1px solid var(--border-subtle);
-  font-family: var(--font-mono);
-  line-height: 1.45;
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  line-height: 1.4;
 }
 
 .session-facet-chip {
   max-width: 16ch;
   overflow: hidden;
-  padding: 0 5px;
+  padding: 1px 6px;
   border: 1px solid var(--brand-border);
   border-radius: var(--radius-xs);
   background: var(--brand-subtle);
   color: var(--brand-strong);
-  font-size: 10px;
-  line-height: 1.45;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -248,11 +253,15 @@ tr:hover .session-inline-delete-btn {
 
 .session-source-badge {
   display: inline-block;
-  font-size: 10.5px;
-  font-weight: 500;
-  padding: 1px 6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 1px 7px;
   border-radius: var(--radius-xs);
-  background-color: var(--bg-card);
+  background-color: var(--bg-secondary);
   border: 1px solid var(--border-subtle);
   color: var(--text-primary);
   white-space: nowrap;
@@ -261,7 +270,7 @@ tr:hover .session-inline-delete-btn {
 .session-models-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   width: 100%;
   min-width: 0;
 }
@@ -273,8 +282,8 @@ tr:hover .session-inline-delete-btn {
   gap: 8px;
   width: 100%;
   min-width: 0;
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: 11.5px;
+  line-height: 1.45;
 }
 
 .session-model-name {
@@ -283,22 +292,28 @@ tr:hover .session-inline-delete-btn {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 11px;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
 }
 
 .session-model-num {
   flex-shrink: 0;
-  color: var(--text-muted);
-  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  font-weight: 500;
 }
 
 .session-precision-sub {
-  font-size: 10px;
-  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 450;
+  color: var(--text-secondary);
   margin-top: 2px;
-  line-height: 1.25;
+  line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -307,6 +322,7 @@ tr:hover .session-inline-delete-btn {
 .session-record-main,
 .session-time-main {
   font-size: 12px;
+  font-weight: 500;
   line-height: 1.35;
   color: var(--text-primary);
   white-space: nowrap;
@@ -316,15 +332,15 @@ tr:hover .session-inline-delete-btn {
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
 .precision-tag {
-  font-size: 10px;
-  padding: 0 4px;
+  font-size: 11px;
+  padding: 1px 5px;
   border-radius: var(--radius-xs);
-  line-height: 1.4;
-  font-weight: 500;
+  line-height: 1.35;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -510,15 +526,63 @@ tr:hover .session-inline-delete-btn {
    Project Table Refinements
    ========================================================================== */
 .project-table {
+  width: 100%;
+  min-width: 520px;
   table-layout: fixed;
-  min-width: 680px;
+}
+
+.project-table th,
+.project-table td {
+  padding: 9px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-table th:first-child,
+.project-table td:first-child {
+  padding-left: 12px;
+}
+
+.project-table th:last-child,
+.project-table td:last-child {
+  padding-right: 12px;
+}
+
+.project-table .col-prj-rank { width: 5%; }
+.project-table .col-prj-name { width: 32%; }
+.project-table .col-prj-status { width: 13%; }
+.project-table .col-prj-tokens { width: 16%; }
+.project-table .col-prj-records { width: 9%; }
+.project-table .col-prj-avg { width: 11%; }
+.project-table .col-prj-share { width: 14%; }
+
+.project-table .table-track-cell {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  width: 100%;
+}
+
+.project-table .table-track-cell .rank-track {
+  flex: 1 1 28px;
+  min-width: 24px;
+  max-width: 68px;
+}
+
+.project-table .table-track-cell .rank-share {
+  min-width: 38px;
+  flex-shrink: 0;
 }
 
 .project-identity-cell {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
+  width: 100%;
+  overflow: hidden;
 }
 
 .project-title {
@@ -528,6 +592,7 @@ tr:hover .session-inline-delete-btn {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .project-title.anon {
@@ -584,4 +649,154 @@ tr:hover .session-inline-delete-btn {
 
 .project-row-anon td {
   background-color: color-mix(in srgb, var(--bg-secondary) 35%, transparent);
+}
+
+/* Session sorting & live status */
+.session-sort-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.session-sort-label {
+  margin-right: 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.session-sort-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+.session-sort-chip:hover {
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+
+.session-sort-chip.selected {
+  color: var(--brand-strong);
+  background: var(--brand-subtle);
+  border-color: var(--brand-border);
+  font-weight: 600;
+}
+
+.sort-arrow {
+  margin-left: 3px;
+  font-size: 11px;
+  opacity: 0.55;
+}
+
+.session-sort-chip .sort-arrow,
+.th-sort.active .sort-arrow {
+  opacity: 1;
+}
+
+.session-sort-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.session-sort-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-exact);
+  font-weight: 600;
+}
+
+.session-sort-live i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.th-sort:hover,
+.th-sort.active {
+  color: var(--text-primary);
+}
+
+.session-state-pill {
+  flex-shrink: 0;
+}
+
+.session-models-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  align-self: flex-start;
+  margin-top: 1px;
+  padding: 0 6px;
+  height: 18px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.session-models-toggle:hover {
+  color: var(--brand-strong);
+  border-color: var(--brand-border);
+}
+
+.session-models-toggle .toggle-chevron {
+  display: inline-block;
+  font-size: 10px;
+  transition: transform var(--transition-fast);
+}
+
+.session-models-toggle.open .toggle-chevron {
+  transform: rotate(180deg);
+}
+
+.session-page-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 128px;
+}
+
+.session-page-size-label {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }

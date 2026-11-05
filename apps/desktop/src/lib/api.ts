@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AgentStatus, DashboardRange, DashboardResponse, DashboardSnapshot, DiagnosticReport, PairHubResult, RemoteDeviceList, SessionAnalysisPage, SessionAnalysisResponse } from './types';
+import type { AgentStatus, CodexQuotaRefreshResult, DashboardRange, DashboardResponse, DashboardSnapshot, DiagnosticReport, PairHubResult, RemoteDeviceList, SessionActivity, SessionAnalysisPage, SessionAnalysisResponse } from './types';
 
 export function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -13,6 +13,14 @@ export async function getAgentStatus(): Promise<AgentStatus> {
   return invoke<AgentStatus>('get_agent_status');
 }
 
+export async function refreshCodexQuotaNow(): Promise<CodexQuotaRefreshResult> {
+  return invoke<CodexQuotaRefreshResult>('refresh_codex_quota_now');
+}
+
+export async function getRecentSessionActivity(): Promise<SessionActivity[]> {
+  return invoke<SessionActivity[]>('recent_session_activity');
+}
+
 export async function runDiagnostics(): Promise<DiagnosticReport> {
   return invoke<DiagnosticReport>('run_diagnostics');
 }
@@ -21,11 +29,13 @@ export async function getDashboardSnapshot(
   range: DashboardRange,
   sessionOffset = 0,
   startDate?: string,
-  endDate?: string
+  endDate?: string,
+  watch = true
 ): Promise<DashboardSnapshot> {
   const response = await invoke<DashboardResponse>('get_dashboard_snapshot', {
     range,
     sessionOffset,
+    watch,
     startDate: startDate ?? null,
     endDate: endDate ?? null,
   });
@@ -36,7 +46,7 @@ export async function getDashboardSnapshot(
 export async function getSessionAnalysis(
   range: DashboardRange,
   sessionOffset: number,
-  filters: { search: string; toolId: string; modelId: string; projectId: string },
+  filters: { search: string; toolId: string; modelId: string; projectId: string; pageSize?: number },
   startDate?: string,
   endDate?: string
 ): Promise<SessionAnalysisPage> {
@@ -44,6 +54,7 @@ export async function getSessionAnalysis(
     range,
     sessionOffset,
     search: filters.search.trim() || null,
+    sessionLimit: filters.pageSize ?? null,
     toolId: filters.toolId || null,
     modelId: filters.modelId || null,
     projectId: filters.projectId || null,

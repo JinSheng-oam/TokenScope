@@ -34,7 +34,7 @@ impl LocalStore {
             return Err(StoreError::UnsupportedSchema(version));
         }
         let migration_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7,8)",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7,8,9)",
             [],
             |r| r.get(0),
         )?;
@@ -43,7 +43,7 @@ impl LocalStore {
             [],
             |r| r.get(0),
         )?;
-        if migration_count != 8 || highest != schema::VERSION {
+        if migration_count != schema::VERSION || highest != schema::VERSION {
             return Err(StoreError::DatabaseInconsistent(
                 "schema_migrations disagrees with user_version",
             ));
@@ -235,8 +235,25 @@ impl LocalStore {
             tx.execute_batch("PRAGMA user_version=8;")?;
             tx.commit()?;
         }
+        if version <= 8 {
+            let (count, highest): (i64, i64) = conn.query_row(
+                "SELECT COUNT(*),MAX(version) FROM schema_migrations",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            if count != 8 || highest != 8 {
+                return Err(StoreError::DatabaseInconsistent(
+                    "legacy migration metadata invalid before v9",
+                ));
+            }
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(schema::MIGRATION_009)?;
+            tx.execute("INSERT INTO schema_migrations(version,applied_at_ms) VALUES(9,CAST(strftime('%s','now') AS INTEGER)*1000)",[])?;
+            tx.execute_batch("PRAGMA user_version=9;")?;
+            tx.commit()?;
+        }
         let count: i64 = conn.query_row(
-            "SELECT count(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7,8)",
+            "SELECT count(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7,8,9)",
             [],
             |r| r.get(0),
         )?;
@@ -245,7 +262,7 @@ impl LocalStore {
             [],
             |r| r.get(0),
         )?;
-        if count != 8 || future != schema::VERSION {
+        if count != schema::VERSION || future != schema::VERSION {
             return Err(StoreError::DatabaseInconsistent(
                 "schema_migrations disagrees with user_version",
             ));
@@ -356,6 +373,56 @@ mod readonly_tests {
     use super::*;
     use crate::repository::models::AntigravityQuota;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn v8_upgrade_preserves_existing_usage_and_adds_revision_tracking() {
+        let conn = Connection::open_in_memory().unwrap();
+        for (i, migration) in [
+            schema::MIGRATION_001,
+            schema::MIGRATION_002,
+            schema::MIGRATION_003,
+            schema::MIGRATION_004,
+            schema::MIGRATION_005,
+            schema::MIGRATION_006,
+            schema::MIGRATION_007,
+            schema::MIGRATION_008,
+        ]
+        .iter()
+        .enumerate()
+        {
+            conn.execute_batch(migration).unwrap();
+            conn.execute(
+                "INSERT INTO schema_migrations(version,applied_at_ms) VALUES(?1,0)",
+                [i as i64 + 1],
+            )
+            .unwrap();
+        }
+        conn.execute_batch("PRAGMA user_version=8;
+            INSERT INTO usage_records(record_id,owner_device_id,tool_id,scope,input_uncached_tokens,precision,record_revision,payload_hash,observed_at_ms,updated_at_ms)
+            VALUES('existing','device','codex','device_local',123,'exact',1,'hash',0,0);").unwrap();
+        let store = LocalStore::migrate(conn).unwrap();
+        assert_eq!(store.schema_version().unwrap(), schema::VERSION);
+        assert_eq!(
+            store
+                .conn
+                .query_row(
+                    "SELECT input_uncached_tokens FROM usage_records WHERE record_id='existing'",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            123
+        );
+        assert_eq!(store.dashboard_revisions().unwrap(), (0, 0));
+        store
+            .conn
+            .execute(
+                "UPDATE usage_records SET payload_hash='changed' WHERE record_id='existing'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(store.dashboard_revisions().unwrap().0, 1);
+    }
 
     #[test]
     fn readonly_open_does_not_migrate_and_rejects_mutations() {

@@ -14,7 +14,7 @@
 <div class="page-header">
   <div>
     <h1>模型排行与用量分析</h1>
-    <p>严格遵循 Unicode NFC 规范化；真实来源未提供之模型不进行主观猜测</p>
+    <p>来源未提供模型标识的 Token 会单独列出并计入总量；不猜测具体模型</p>
   </div>
   <div class="range-capsule" role="group" aria-label="模型列表排序模式">
     <button
@@ -42,7 +42,7 @@
       <h2>模型消耗总榜</h2>
       <p>按{modelSortBy === 'tokens' ? 'Token 用量' : '估算支出'}降序排列；支持全模型用量追踪</p>
     </div>
-    <span class="panel-tag">{sortedModels.length} 个已记录模型</span>
+    <span class="panel-tag">{sortedModels.length} 个模型分组</span>
   </div>
 
   {#if sortedModels.length > 0}
@@ -120,8 +120,12 @@
                 </span>
               </td>
               <td>
-                <strong title={activity.model_id}>
-                  {activity.model_id === 'unknown-model' ? '未识别模型' : activity.model_id}
+                <strong
+                  title={activity.model_id === 'unknown-model'
+                    ? '来源会话没有提供模型标识；响应已计入统计'
+                    : activity.model_id}
+                >
+                  {activity.model_id === 'unknown-model' ? '来源未提供模型' : activity.model_id}
                 </strong>
               </td>
               <td class="tabular"><strong>{formatNumber(activity.response_count)}</strong></td>

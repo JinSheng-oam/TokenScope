@@ -6,20 +6,71 @@ use super::LocalStore;
 use crate::error::{db_int, pos_u64, Result, StoreError};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
-struct RemoteUsageTotalsRow {
-    total: i64,
-    input: i64,
-    cache_read: i64,
-    cache_write: i64,
-    output: i64,
-    unclassified: i64,
-    count: i64,
-    priced: i64,
-    exact: i64,
-    aggregate: i64,
-    estimated: i64,
-    unknown: i64,
-    cost: Option<i64>,
+// One aggregate definition is shared by all-remote and per-device totals.
+const REMOTE_TOTAL_COLUMNS: &str = "
+ COALESCE(SUM(json_extract(payload_json,'$.usage.input_uncached_tokens')),0),
+ COALESCE(SUM(json_extract(payload_json,'$.usage.cache_read_tokens')),0),
+ COALESCE(SUM(json_extract(payload_json,'$.usage.cache_write_tokens')),0),
+ COALESCE(SUM(json_extract(payload_json,'$.usage.output_tokens')),0),
+ COALESCE(SUM(json_extract(payload_json,'$.usage.unclassified_tokens')),0),
+ COALESCE(SUM(json_extract(payload_json,'$.usage.reasoning_tokens')),0),
+ COUNT(json_extract(payload_json,'$.usage.reasoning_tokens')), COUNT(*),
+ COUNT(json_extract(payload_json,'$.estimated_cost_microusd')),
+ SUM(json_extract(payload_json,'$.precision')='exact'),
+ SUM(json_extract(payload_json,'$.precision')='aggregate'),
+ SUM(json_extract(payload_json,'$.precision')='estimated'),
+ SUM(json_extract(payload_json,'$.precision')='unknown'),
+ SUM(json_extract(payload_json,'$.estimated_cost_microusd'))";
+
+fn read_remote_totals(
+    row: &rusqlite::Row<'_>,
+    offset: usize,
+) -> rusqlite::Result<RemoteUsageTotals> {
+    let n = |i| -> rusqlite::Result<u64> {
+        let value = row.get::<_, Option<i64>>(offset + i)?.unwrap_or(0);
+        u64::try_from(value).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                offset + i,
+                rusqlite::types::Type::Integer,
+                Box::new(e),
+            )
+        })
+    };
+    let input_tokens = n(0)?;
+    let cache_read_tokens = n(1)?;
+    let cache_write_tokens = n(2)?;
+    let output_tokens = n(3)?;
+    let unclassified_tokens = n(4)?;
+    let total_tokens = [
+        input_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
+        output_tokens,
+        unclassified_tokens,
+    ]
+    .into_iter()
+    .try_fold(0u64, u64::checked_add)
+    .ok_or(rusqlite::Error::IntegralValueOutOfRange(offset, i64::MAX))?;
+    let record_count = n(7)?;
+    let priced_records = n(8)?;
+    Ok(RemoteUsageTotals {
+        total_tokens,
+        input_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
+        output_tokens,
+        unclassified_tokens,
+        reasoning_tokens: n(5)?,
+        reasoning_known_records: n(6)?,
+        record_count,
+        priced_records,
+        unpriced_records: record_count.saturating_sub(priced_records),
+        exact_records: n(9)?,
+        aggregate_records: n(10)?,
+        estimated_records: n(11)?,
+        unknown_precision_records: n(12)?,
+        estimated_cost_microusd: row.get(offset + 13)?,
+    })
 }
 impl LocalStore {
     /// Apply a bounded Hub change-feed page and advance its cursor atomically.
@@ -113,48 +164,18 @@ impl LocalStore {
         start_ms: Option<i64>,
         end_ms: Option<i64>,
     ) -> Result<RemoteUsageTotals> {
-        let row = self.conn.query_row(
-            "SELECT COALESCE(SUM(CAST(json_extract(payload_json,'$.usage.input_uncached_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.cache_read_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.cache_write_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.output_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.unclassified_tokens') AS INTEGER)),0),COALESCE(SUM(CAST(json_extract(payload_json,'$.usage.input_uncached_tokens') AS INTEGER)),0),COALESCE(SUM(CAST(json_extract(payload_json,'$.usage.cache_read_tokens') AS INTEGER)),0),COALESCE(SUM(CAST(json_extract(payload_json,'$.usage.cache_write_tokens') AS INTEGER)),0),COALESCE(SUM(CAST(json_extract(payload_json,'$.usage.output_tokens') AS INTEGER)),0),COALESCE(SUM(CAST(json_extract(payload_json,'$.usage.unclassified_tokens') AS INTEGER)),0),COUNT(*),COALESCE(SUM(CASE WHEN json_extract(payload_json,'$.estimated_cost_microusd') IS NOT NULL THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN json_extract(payload_json,'$.precision')='exact' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN json_extract(payload_json,'$.precision')='aggregate' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN json_extract(payload_json,'$.precision')='estimated' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN json_extract(payload_json,'$.precision')='unknown' THEN 1 ELSE 0 END),0),SUM(json_extract(payload_json,'$.estimated_cost_microusd')) FROM remote_usage_cache WHERE is_deleted=0 AND json_extract(payload_json,'$.scope')='device_local' AND (?1 IS NULL OR owner_device_id=?1) AND (?2 IS NULL OR json_extract(payload_json,'$.event_at_ms')>=?2) AND (?3 IS NULL OR json_extract(payload_json,'$.event_at_ms')<?3)",
-            params![owner_device_id,start_ms,end_ms], |r| Ok(RemoteUsageTotalsRow {
-                total: r.get(0)?, input: r.get(1)?, cache_read: r.get(2)?, cache_write: r.get(3)?,
-                output: r.get(4)?, unclassified: r.get(5)?, count: r.get(6)?, priced: r.get(7)?,
-                exact: r.get(8)?, aggregate: r.get(9)?, estimated: r.get(10)?, unknown: r.get(11)?,
-                cost: r.get(12)?,
-            })
-        )?;
-        let RemoteUsageTotalsRow {
-            total,
-            input,
-            cache_read,
-            cache_write,
-            output,
-            unclassified,
-            count,
-            priced,
-            exact,
-            aggregate,
-            estimated,
-            unknown,
-            cost,
-        } = row;
-        let record_count = pos_u64(count)?;
-        let priced_records = pos_u64(priced)?;
-        Ok(RemoteUsageTotals {
-            total_tokens: pos_u64(total)?,
-            input_tokens: pos_u64(input)?,
-            cache_read_tokens: pos_u64(cache_read)?,
-            cache_write_tokens: pos_u64(cache_write)?,
-            output_tokens: pos_u64(output)?,
-            unclassified_tokens: pos_u64(unclassified)?,
-            record_count,
-            priced_records,
-            unpriced_records: record_count.saturating_sub(priced_records),
-            exact_records: pos_u64(exact)?,
-            aggregate_records: pos_u64(aggregate)?,
-            estimated_records: pos_u64(estimated)?,
-            unknown_precision_records: pos_u64(unknown)?,
-            estimated_cost_microusd: cost,
-        })
+        let sql = format!(
+            "SELECT {REMOTE_TOTAL_COLUMNS} FROM remote_usage_cache
+            WHERE is_deleted=0 AND json_extract(payload_json,'$.scope')='device_local'
+            AND (?1 IS NULL OR owner_device_id=?1)
+            AND (?2 IS NULL OR json_extract(payload_json,'$.event_at_ms')>=?2)
+            AND (?3 IS NULL OR json_extract(payload_json,'$.event_at_ms')<?3)"
+        );
+        Ok(self
+            .conn
+            .query_row(&sql, params![owner_device_id, start_ms, end_ms], |r| {
+                read_remote_totals(r, 0)
+            })?)
     }
 
     pub fn remote_usage_by_device(
@@ -162,26 +183,25 @@ impl LocalStore {
         start_ms: Option<i64>,
         end_ms: Option<i64>,
     ) -> Result<Vec<RemoteDeviceUsage>> {
-        let mut stmt=self.conn.prepare("SELECT owner_device_id,COALESCE(SUM(CAST(json_extract(payload_json,'$.usage.input_uncached_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.cache_read_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.cache_write_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.output_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.unclassified_tokens') AS INTEGER)),0),COUNT(*),SUM(json_extract(payload_json,'$.estimated_cost_microusd')) FROM remote_usage_cache WHERE is_deleted=0 AND json_extract(payload_json,'$.scope')='device_local' AND (?1 IS NULL OR json_extract(payload_json,'$.event_at_ms')>=?1) AND (?2 IS NULL OR json_extract(payload_json,'$.event_at_ms')<?2) GROUP BY owner_device_id ORDER BY owner_device_id")?;
+        let sql = format!(
+            "SELECT owner_device_id,{REMOTE_TOTAL_COLUMNS} FROM remote_usage_cache
+            WHERE is_deleted=0 AND json_extract(payload_json,'$.scope')='device_local'
+            AND (?1 IS NULL OR json_extract(payload_json,'$.event_at_ms')>=?1)
+            AND (?2 IS NULL OR json_extract(payload_json,'$.event_at_ms')<?2)
+            GROUP BY owner_device_id ORDER BY owner_device_id"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![start_ms, end_ms], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, i64>(1)?,
-                r.get::<_, i64>(2)?,
-                r.get::<_, Option<i64>>(3)?,
-            ))
+            let usage = read_remote_totals(r, 1)?;
+            Ok(RemoteDeviceUsage {
+                owner_device_id: r.get(0)?,
+                total_tokens: usage.total_tokens,
+                record_count: usage.record_count,
+                estimated_cost_microusd: usage.estimated_cost_microusd,
+                usage,
+            })
         })?;
-        let mut out = Vec::new();
-        for row in rows {
-            let (id, total, count, cost) = row?;
-            out.push(RemoteDeviceUsage {
-                owner_device_id: id,
-                total_tokens: pos_u64(total)?,
-                record_count: pos_u64(count)?,
-                estimated_cost_microusd: cost,
-            });
-        }
-        Ok(out)
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// Remote breakdowns preserve device ownership. Only device-local usage is
@@ -201,7 +221,12 @@ impl LocalStore {
         let sql = format!(
             "SELECT owner_device_id, json_extract(payload_json,'{json_path}'), COUNT(*), \
              COALESCE(SUM(CAST(json_extract(payload_json,'$.usage.input_uncached_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.cache_read_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.cache_write_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.output_tokens') AS INTEGER)+CAST(json_extract(payload_json,'$.usage.unclassified_tokens') AS INTEGER)),0), \
-             SUM(json_extract(payload_json,'$.estimated_cost_microusd')) \
+             SUM(json_extract(payload_json,'$.estimated_cost_microusd')), \
+             SUM(json_extract(payload_json,'$.precision')='exact'), \
+             SUM(json_extract(payload_json,'$.precision')='aggregate'), \
+             SUM(json_extract(payload_json,'$.precision')='estimated'), \
+             SUM(json_extract(payload_json,'$.precision')='unknown'), \
+             SUM(json_extract(payload_json,'$.event_at_ms') IS NULL) \
              FROM remote_usage_cache WHERE is_deleted=0 AND json_extract(payload_json,'$.scope')='device_local' \
              AND (?1 IS NULL OR json_extract(payload_json,'$.event_at_ms')>=?1) \
              AND (?2 IS NULL OR json_extract(payload_json,'$.event_at_ms')<?2) \
@@ -216,6 +241,11 @@ impl LocalStore {
                     r.get::<_, i64>(2)?,
                     r.get::<_, i64>(3)?,
                     r.get::<_, Option<i64>>(4)?,
+                    r.get::<_, i64>(5)?,
+                    r.get::<_, i64>(6)?,
+                    r.get::<_, i64>(7)?,
+                    r.get::<_, i64>(8)?,
+                    r.get::<_, i64>(9)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -225,7 +255,9 @@ impl LocalStore {
             ));
         }
         let mut out = Vec::with_capacity(rows.len());
-        for (owner, raw_key, count, total, cost) in rows {
+        for (owner, raw_key, count, total, cost, exact, aggregate, estimated, unknown, untimed) in
+            rows
+        {
             let key = raw_key.unwrap_or_else(|| match dimension {
                 "tool_id" => "unknown-tool".into(),
                 "model_id" => "unknown-model".into(),
@@ -236,6 +268,7 @@ impl LocalStore {
                     .project_display_name(&key)?
                     .unwrap_or_else(|| "项目名称未提供".into()),
                 "tool_id" => tool_display_name(&key),
+                "model_id" if key == "unknown-model" => "来源未提供模型".into(),
                 _ => key.clone(),
             };
             out.push(RemoteUsageBreakdown {
@@ -245,6 +278,11 @@ impl LocalStore {
                 total_tokens: pos_u64(total)?,
                 record_count: pos_u64(count)?,
                 estimated_cost_microusd: cost,
+                exact_records: pos_u64(exact)?,
+                aggregate_records: pos_u64(aggregate)?,
+                estimated_records: pos_u64(estimated)?,
+                unknown_precision_records: pos_u64(unknown)?,
+                untimed_records: pos_u64(untimed)?,
             });
         }
         Ok(out)

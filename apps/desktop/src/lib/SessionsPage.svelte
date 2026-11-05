@@ -2,8 +2,17 @@
   import CustomSelect from './CustomSelect.svelte';
   import { formatNumber, formatToolLabel, relativeTime } from '../lib/format';
   import { icons } from '../lib/icons';
+  import {
+    resolveSessionActivityState,
+    sortSessions,
+    type SessionSortDirection,
+    type SessionSortField,
+  } from '../lib/dashboardView';
+  import { liveNow } from '../lib/liveClock';
+  import { SESSION_PAGE_SIZES } from '../lib/sessionController';
   import type {
     DashboardRange,
+    SessionActivity,
     SessionAnalysisPage,
     SessionFilterOptions,
     SessionUsage,
@@ -23,6 +32,14 @@
   export let sessionLoading: boolean;
   export let sessionError: string;
   export let sessionOffset: number;
+  export let sessionPageSize: number = 50;
+  export let onSetSessionPageSize: (size: number) => void = () => {};
+
+  const pageSizeOptions = SESSION_PAGE_SIZES.map((n) => ({
+    key: String(n),
+    label: `${n} 条 / 页`,
+    subtext: n === 6 ? '单屏' : undefined,
+  }));
   export let pendingSessionDeleteKey: string;
   export let deletingSessionKey: string;
   export let sessionActionMessage: string;
@@ -40,6 +57,49 @@
   export let onConfirmSessionDelete: (session: SessionUsage) => Promise<void>;
   export let onSelectRange: (range: DashboardRange) => void;
   export let onLoadSessionAnalysis: () => Promise<void>;
+
+  export let sessionActivity: SessionActivity[] = [];
+
+  let sortBy: SessionSortField = 'time';
+  let sortDir: SessionSortDirection = 'desc';
+
+  const MODEL_COLLAPSE_THRESHOLD = 2;
+  let expandedModelKeys = new Set<string>();
+
+  function toggleModels(key: string) {
+    const next = new Set(expandedModelKeys);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    expandedModelKeys = next;
+  }
+
+  const sortOptions: { key: SessionSortField; label: string }[] = [
+    { key: 'time', label: '最近事件' },
+    { key: 'status', label: '当前状态' },
+    { key: 'tokens', label: 'Token' },
+    { key: 'responses', label: '响应次数' },
+    { key: 'records', label: '记录数' },
+  ];
+
+  function selectSort(field: SessionSortField) {
+    if (sortBy === field) {
+      sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+    } else {
+      sortBy = field;
+      sortDir = 'desc';
+    }
+  }
+
+  function ariaSort(field: SessionSortField): 'ascending' | 'descending' | 'none' {
+    return sortBy === field ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none';
+  }
+
+  $: sortedSessions = sessionPage
+    ? sortSessions(sessionPage.sessions, sortBy, sortDir, sessionActivity, $liveNow)
+    : [];
+  $: activeCount = sortedSessions.filter(
+    (s) => resolveSessionActivityState(s, sessionActivity, $liveNow) !== null,
+  ).length;
 
   $: cleanProjectOptions = [
     { key: '', label: '全部项目' },
@@ -60,7 +120,15 @@
       <h2>会话 Token 使用</h2>
       <p>{#if sessionPage}显示 {formatNumber(sessionPageStart)}–{formatNumber(sessionPageEnd)} / {formatNumber(sessionPage.total)} 个匹配会话{:else if sessionLoading}正在查询会话…{:else}当前范围：{rangeLabel}{/if}</p>
     </div>
-    <span class="panel-tag">每页 {sessionPage?.limit ?? 50}</span>
+    <div class="session-page-size">
+      <span class="session-page-size-label">每页</span>
+      <CustomSelect
+        value={String(sessionPageSize)}
+        options={pageSizeOptions}
+        ariaLabel="设置每页会话数量"
+        onChange={(val) => onSetSessionPageSize(Number(val))}
+      />
+    </div>
   </div>
 
   <div class="session-filter-panel">
@@ -131,6 +199,25 @@
   {/if}
 
   {#if sessionPage && sessionPage.sessions.length > 0}
+    <div class="session-sort-bar" role="group" aria-label="会话排序">
+      <span class="session-sort-label">排序</span>
+      {#each sortOptions as opt}
+        <button
+          type="button"
+          class="session-sort-chip"
+          class:selected={sortBy === opt.key}
+          aria-pressed={sortBy === opt.key}
+          onclick={() => selectSort(opt.key)}
+        >
+          {opt.label}
+          {#if sortBy === opt.key}<span class="sort-arrow" aria-hidden="true">{sortDir === 'desc' ? '↓' : '↑'}</span>{/if}
+        </button>
+      {/each}
+      <span class="session-sort-hint">
+        {#if activeCount > 0}<span class="session-sort-live"><i></i>{activeCount} 个活跃</span>{/if}
+        仅对本页 {sortedSessions.length} 条排序
+      </span>
+    </div>
     <div class="table-wrap">
       <table class="session-table">
         <thead>
@@ -138,14 +225,23 @@
             <th class="th-session">会话</th>
             <th class="th-source">来源</th>
             <th class="th-models">模型使用</th>
-            <th class="th-tokens tabular">Token 使用</th>
-            <th class="th-precision">精度与记录</th>
-            <th class="th-responses tabular">响应次数</th>
-            <th class="th-time tabular">最近事件</th>
+            <th class="th-tokens tabular" aria-sort={ariaSort('tokens')}>
+              <button type="button" class="th-sort" class:active={sortBy === 'tokens'} onclick={() => selectSort('tokens')}>Token 使用<span class="sort-arrow">{sortBy === 'tokens' ? (sortDir === 'desc' ? '↓' : '↑') : '↕'}</span></button>
+            </th>
+            <th class="th-precision" aria-sort={ariaSort('records')}>
+              <button type="button" class="th-sort" class:active={sortBy === 'records'} onclick={() => selectSort('records')}>精度与记录<span class="sort-arrow">{sortBy === 'records' ? (sortDir === 'desc' ? '↓' : '↑') : '↕'}</span></button>
+            </th>
+            <th class="th-responses tabular" aria-sort={ariaSort('responses')}>
+              <button type="button" class="th-sort" class:active={sortBy === 'responses'} onclick={() => selectSort('responses')}>响应次数<span class="sort-arrow">{sortBy === 'responses' ? (sortDir === 'desc' ? '↓' : '↑') : '↕'}</span></button>
+            </th>
+            <th class="th-time tabular" aria-sort={ariaSort('time')}>
+              <button type="button" class="th-sort" class:active={sortBy === 'time'} onclick={() => selectSort('time')}>最近事件<span class="sort-arrow">{sortBy === 'time' ? (sortDir === 'desc' ? '↓' : '↑') : '↕'}</span></button>
+            </th>
           </tr>
         </thead>
         <tbody>
-          {#each sessionPage.sessions as session}
+          {#each sortedSessions as session (`${session.tool_id}:${session.session_id}`)}
+            {@const actState = resolveSessionActivityState(session, sessionActivity, $liveNow)}
             {@const projectLabels = session.project_ids.map((id) => getSessionProjectLabel(id)).filter((p) => p && p.trim().length > 0 && !p.startsWith('prj_') && p !== '项目名称未提供')}
             {@const isDeletingThis = pendingSessionDeleteKey === sessionActionKey(session)}
             <tr class:row-deleting={isDeletingThis}>
@@ -154,6 +250,15 @@
                   <span class="session-name" title={session.display_name ?? undefined}>
                     {session.display_name ?? '未命名会话'}
                   </span>
+                  {#if actState === 'generating'}
+                    <span class="recent-session-status generating session-state-pill" title="任务日志仍在更新，等待结束事件">
+                      <span class="recent-session-spinner" aria-hidden="true"></span>进行中
+                    </span>
+                  {:else if actState === 'recent'}
+                    <span class="recent-session-status recent session-state-pill" title="最近检测到会话活动">
+                      <span class="recent-session-live-dot" aria-hidden="true"></span>近期活跃
+                    </span>
+                  {/if}
                   <button
                     class="session-inline-delete-btn"
                     aria-label={`从本机统计删除会话 ${session.display_name ?? session.session_id}`}
@@ -198,22 +303,38 @@
                 {/if}
               </td>
 
-              <td class="session-source-cell"><span class="session-source-badge">{formatToolLabel(session.tool_id)}</span>
+              <td class="session-source-cell"><span class="session-source-badge" title={formatToolLabel(session.tool_id)}>{formatToolLabel(session.tool_id)}</span>
               </td>
 
               <td class="session-models-cell">
                 {#if session.models.length > 0}
+                  {@const rowKey = sessionActionKey(session)}
+                  {@const collapsible = session.models.length > MODEL_COLLAPSE_THRESHOLD}
+                  {@const expanded = expandedModelKeys.has(rowKey)}
+                  {@const visibleModels = collapsible && !expanded ? session.models.slice(0, 1) : session.models}
                   <div class="session-models-list">
-                    {#each session.models.slice(0, 4) as model}
+                    {#each visibleModels as model}
                       <div class="session-model-row">
-                        <span class="session-model-name" title={model.model_id ?? '未识别模型'}>
-                          {model.model_id ?? '未识别模型'}
+                        <span
+                          class="session-model-name"
+                          title={model.model_id ?? '来源没有提供模型标识；Token 已计入会话总用量'}
+                        >
+                          {model.model_id ?? '来源未提供模型'}
                         </span>
                         <span class="tabular session-model-num">{formatNumber(model.total_tokens)}</span>
                       </div>
                     {/each}
-                    {#if session.models.length > 4}
-                      <div class="session-precision-sub">另有 {session.models.length - 4} 个模型</div>
+                    {#if collapsible}
+                      <button
+                        type="button"
+                        class="session-models-toggle"
+                        class:open={expanded}
+                        aria-expanded={expanded}
+                        onclick={() => toggleModels(rowKey)}
+                      >
+                        <span class="toggle-chevron" aria-hidden="true">▾</span>
+                        {expanded ? '收起' : `另 ${session.models.length - 1} 个模型`}
+                      </button>
                     {/if}
                   </div>
                 {:else}

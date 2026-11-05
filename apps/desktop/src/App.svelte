@@ -1,9 +1,11 @@
 <script lang="ts">
   import DateRangePicker from './lib/DateRangePicker.svelte';
+  import { createRequestGate, dashboardRequestKey } from './lib/dashboardRequests';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import {
     buildDashboardProjection,
+    filterActiveAntigravityQuotas,
     formatCompactTokens,
     type DeviceScope,
     type ModelSortBy,
@@ -12,7 +14,9 @@
   import {
     getAgentStatus,
     getDashboardSnapshot,
+    getRecentSessionActivity,
     isTauriRuntime,
+    refreshCodexQuotaNow,
     runDiagnostics,
     startAgent,
   } from './lib/api';
@@ -23,7 +27,7 @@
   import { createSessionController } from './lib/sessionController';
   import { createSettingsController } from './lib/settingsController';
   import { BOOTSTRAP_STAGE } from './lib/status';
-  import type { AgentStatus, DashboardRange, DashboardSnapshot, RemoteDevice } from './lib/types';
+  import type { AgentStatus, CodexQuota, DashboardObservations, DashboardRange, DashboardSnapshot, RemoteDevice, SessionActivity } from './lib/types';
   import DevicesPage from './lib/DevicesPage.svelte';
   import ModelsPage from './lib/ModelsPage.svelte';
   import OverviewPage from './lib/OverviewPage.svelte';
@@ -45,12 +49,26 @@
   let agent: AgentStatus | null = null;
   let loading = true;
   let refreshing = false;
+  let codexQuotaRefreshing = false;
+  let codexQuotaError = '';
+  let codexQuotaOverride: CodexQuota[] | null = null;
+  let sessionActivity: SessionActivity[] = [];
+  let activityPolling = false;
+  let activityTimer: number | undefined;
+  let quotaTimer: number | undefined;
+  let lastQuotaAttemptAt = 0;
   let errorMessage = '';
   let runtimeAvailable = isTauriRuntime();
   let agentStarted = false;
+  let latestObservations: DashboardObservations | null = null;
+  let unlistenObservations: (() => void) | undefined;
+  let disposed = false;
   let unlistenDashboard: (() => void) | undefined;
   let refreshTimer: number | undefined;
   let appliedRefreshIntervalMs = -1;
+  const dashboardRequests = createRequestGate();
+  let appliedSnapshotKey = '';
+  let heatmapRequest = 0;
 
   let remoteSelectedDevice = 'all';
   let deviceScope: DeviceScope = (typeof localStorage !== 'undefined' && localStorage.getItem('tokenscope.deviceScope')) || 'all';
@@ -76,27 +94,29 @@
   let modelSortBy: ModelSortBy = 'tokens';
   let trendViewMode: TrendViewMode = 'curve';
   let hoveredCurveIndex: number | null = null;
-  let heatmapAllDaily: DashboardSnapshot['daily'] | null = null;
+  let heatmapSnapshot: DashboardSnapshot | null = null;
   let hoveredHeatmapCell: HeatmapCell | null = null;
 
+  $: activeAntigravityQuotas = filterActiveAntigravityQuotas(snapshot?.antigravity_quota ?? []);
   $: exhaustedQuotaCount = (
-    (snapshot?.codex_quota.filter((q) => q.remaining_basis_points !== null && q.remaining_basis_points === 0).length ?? 0) +
-    (snapshot?.antigravity_quota.filter((q) => q.remaining_basis_points !== null && q.remaining_basis_points === 0).length ?? 0)
+    ((codexQuotaOverride ?? snapshot?.codex_quota ?? []).filter((q) => q.remaining_basis_points === 0).length) +
+    activeAntigravityQuotas.filter((q) => q.remaining_basis_points !== null && q.remaining_basis_points === 0).length
   );
   $: warningQuotaCount = (
-    (snapshot?.codex_quota.filter((q) => q.remaining_basis_points !== null && q.remaining_basis_points > 0 && q.remaining_basis_points < 2000).length ?? 0) +
-    (snapshot?.antigravity_quota.filter((q) => q.remaining_basis_points !== null && q.remaining_basis_points > 0 && q.remaining_basis_points < 2000).length ?? 0)
+    ((codexQuotaOverride ?? snapshot?.codex_quota ?? []).filter((q) => q.remaining_basis_points !== null && q.remaining_basis_points > 0 && q.remaining_basis_points < 2000).length) +
+    activeAntigravityQuotas.filter((q) => q.remaining_basis_points !== null && q.remaining_basis_points > 0 && q.remaining_basis_points < 2000).length
   );
 
   async function ensureHeatmapAllDaily() {
     if (!runtimeAvailable) return;
     if (range === 'all' && snapshot?.daily) {
-      heatmapAllDaily = snapshot.daily;
+      heatmapSnapshot = snapshot;
       return;
     }
+    const request = ++heatmapRequest;
     try {
-      const fullSnap = await getDashboardSnapshot('all', 0);
-      heatmapAllDaily = fullSnap.daily;
+      const fullSnap = await getDashboardSnapshot('all', 0, undefined, undefined, false);
+      if (request === heatmapRequest && (!heatmapSnapshot || fullSnap.generated_at_ms >= heatmapSnapshot.generated_at_ms)) heatmapSnapshot = fullSnap;
     } catch {
       // Fallback to current snapshot.daily silently
     }
@@ -126,7 +146,7 @@
   // All dashboard-specific projection rules live behind this pure view module.
   $: dashboardView = buildDashboardProjection({
     snapshot,
-    heatmapDaily: heatmapAllDaily,
+    heatmapSnapshot,
     todayIso,
     hoveredCurveIndex,
     remoteSelectedDevice,
@@ -197,20 +217,52 @@
     (d) => d.device_id !== snapshot?.identity?.device_id && d.revoked_at_ms === null
   );
 
-  function snapshotStartIso(ms: number): string {
-    return toIsoDate(new Date(ms));
-  }
-
-  function fetchSnapshot() {
+  function fetchSnapshot(selectedRange: DashboardRange, start: string, end: string) {
     return getDashboardSnapshot(
-      range,
+      selectedRange,
       0,
-      range === 'custom' ? customStart : undefined,
-      range === 'custom' ? customEnd : undefined
+      selectedRange === 'custom' ? start : undefined,
+      selectedRange === 'custom' ? end : undefined
     );
   }
 
+  function quotaCovers(stored: CodexQuota[], candidate: CodexQuota[]) {
+    return candidate.length > 0 && candidate.every((q) => stored.some((s) =>
+      s.source_id === q.source_id && s.pool_id === q.pool_id &&
+      s.window_duration_minutes === q.window_duration_minutes && s.observed_at_ms >= q.observed_at_ms
+    ));
+  }
+
+  function applySnapshot(next: DashboardSnapshot, key: string) {
+    if (key !== dashboardRequestKey(range, customStart, customEnd)) return;
+    if (appliedSnapshotKey === key && snapshot && snapshot.generated_at_ms > next.generated_at_ms) return;
+    appliedSnapshotKey = key;
+    if (latestObservations && latestObservations.observed_at_ms > next.generated_at_ms) {
+      const { observed_at_ms, ...update } = latestObservations;
+      next = { ...next, ...update };
+    }
+    snapshot = next;
+    if (next.range === 'all') heatmapSnapshot = next;
+    else if (trendViewMode === 'heatmap') void ensureHeatmapAllDaily();
+    if (codexQuotaOverride && quotaCovers(next.codex_quota, codexQuotaOverride)) codexQuotaOverride = null;
+  }
+
+  async function pollSessionActivity() {
+    if (!runtimeAvailable || (activeTab !== 'overview' && activeTab !== 'sessions') || document.visibilityState !== 'visible' || activityPolling) return;
+    activityPolling = true;
+    try {
+      sessionActivity = await getRecentSessionActivity();
+    } catch {
+      sessionActivity = [];
+    } finally {
+      activityPolling = false;
+    }
+  }
+
   async function loadDashboard(showSpinner = true) {
+    const request = dashboardRequests.begin();
+    const selectedRange = range, start = customStart, end = customEnd;
+    const key = dashboardRequestKey(selectedRange, start, end);
     if (!runtimeAvailable) {
       errorMessage = '请在 TokenScope 桌面端运行环境查看实时统计。';
       loading = false;
@@ -230,6 +282,7 @@
           currentAgent = await startAgent(timeZone);
         }
       }
+      if (!dashboardRequests.isCurrent(request)) return;
       agent = currentAgent;
       if (!currentAgent.running) {
         errorMessage = currentAgent.message;
@@ -238,23 +291,45 @@
         errorMessage = 'Agent 已启动，正在初始化本地 SQLite WAL 数据库…';
         snapshot = null;
       } else {
-        snapshot = await fetchSnapshot();
-        if (range === 'all') {
-          heatmapAllDaily = snapshot.daily;
-        } else if (trendViewMode === 'heatmap') {
-          void ensureHeatmapAllDaily();
-        }
-        if (!$hubState.displayName && snapshot.identity?.display_name) {
-          hubController.setDisplayName(snapshot.identity.display_name);
+        const nextSnapshot = await fetchSnapshot(selectedRange, start, end);
+        if (!dashboardRequests.isCurrent(request)) return;
+        applySnapshot(nextSnapshot, key);
+        if (!$hubState.displayName && nextSnapshot.identity?.display_name) {
+          hubController.setDisplayName(nextSnapshot.identity.display_name);
         }
         if (activeTab === 'sessions') void sessionController.load();
       }
     } catch (error) {
-      errorMessage = error instanceof Error ? error.message : String(error);
+      if (dashboardRequests.isCurrent(request)) errorMessage = error instanceof Error ? error.message : String(error);
     } finally {
-      loading = false;
-      refreshing = false;
+      if (dashboardRequests.isCurrent(request)) { loading = false; refreshing = false; }
     }
+  }
+
+  async function handleRefreshCodexQuota() {
+    if (!runtimeAvailable || codexQuotaRefreshing) return;
+    lastQuotaAttemptAt = Date.now();
+    codexQuotaRefreshing = true;
+    codexQuotaError = '';
+    try {
+      const result = await refreshCodexQuotaNow();
+      const storedIsNewer = quotaCovers(snapshot?.codex_quota ?? [], result.snapshots);
+      codexQuotaOverride = storedIsNewer ? null : result.snapshots;
+      codexQuotaError = result.warning ?? '';
+      if (result.persisted && snapshot && !storedIsNewer) {
+        snapshot = { ...snapshot, codex_quota: result.snapshots };
+      }
+    } catch (error) {
+      codexQuotaError = error instanceof Error ? error.message : String(error);
+    } finally {
+      codexQuotaRefreshing = false;
+    }
+  }
+
+  function pollVisibleCodexQuota() {
+    if (!runtimeAvailable || activeTab !== 'quota' || document.visibilityState !== 'visible' || codexQuotaRefreshing) return;
+    const newest = Math.max(0, ...(codexQuotaOverride ?? snapshot?.codex_quota ?? []).map((q) => q.observed_at_ms));
+    if (Date.now() - newest >= 60_000 && Date.now() - lastQuotaAttemptAt >= 60_000) void handleRefreshCodexQuota();
   }
 
   function handleSelectRange(next: DashboardRange) {
@@ -286,7 +361,12 @@
   function handleSelectTab(nextTab: Tab) {
     if (activeTab === nextTab) return;
     activeTab = nextTab;
-    if (nextTab === 'sessions') void sessionController.load();
+    if (nextTab === 'overview') void pollSessionActivity();
+    if (nextTab === 'quota') pollVisibleCodexQuota();
+    if (nextTab === 'sessions') {
+      void pollSessionActivity();
+      void sessionController.load();
+    }
     if (nextTab === 'devices' && $webdavState.enabled) void webdavController.refreshDevices();
   }
 
@@ -314,17 +394,32 @@
 
     if (runtimeAvailable) {
       hubController.restoreOrigin();
-      void listen<{ protocol_version: number; snapshot: DashboardSnapshot }>('dashboard-updated', (event) => {
+      void listen<{ protocol_version: number; request_key: string; snapshot: DashboardSnapshot }>('dashboard-updated', (event) => {
         const next = event.payload?.snapshot;
-        if (!next || next.range !== range) return;
-        if (range === 'custom' && next.range_start_ms !== null && snapshotStartIso(next.range_start_ms) !== customStart) return;
-        snapshot = next;
+        if (!next || event.payload.request_key !== dashboardRequestKey(range, customStart, customEnd)) return;
+        applySnapshot(next, event.payload.request_key);
         errorMessage = '';
         if (activeTab === 'sessions') void sessionController.load();
       }).then((unlisten) => {
-        unlistenDashboard = unlisten;
+        if (disposed) unlisten(); else unlistenDashboard = unlisten;
       });
     }
+
+    if (runtimeAvailable) {
+      void listen<DashboardObservations>('dashboard-observations-updated', ({payload}) => {
+        if (latestObservations && payload.observed_at_ms < latestObservations.observed_at_ms) return;
+        latestObservations = payload;
+        if (snapshot && payload.observed_at_ms >= snapshot.generated_at_ms) {
+          const { observed_at_ms, ...update } = payload;
+          snapshot = { ...snapshot, ...update };
+          if (codexQuotaOverride && quotaCovers(update.codex_quota,codexQuotaOverride)) codexQuotaOverride = null;
+        }
+      }).then((unlisten) => { if (disposed) unlisten(); else unlistenObservations = unlisten; });
+    }
+
+    void pollSessionActivity();
+    activityTimer = window.setInterval(() => void pollSessionActivity(), 10_000);
+    quotaTimer = window.setInterval(pollVisibleCodexQuota, 30_000);
 
     void loadDashboard().then(() => {
       if ($hubState.hubUrl) void hubController.refreshDevices();
@@ -332,13 +427,19 @@
     });
 
     return () => {
+      disposed = true;
+      dashboardRequests.invalidate();
+      heatmapRequest += 1;
       unsubscribeRefreshInterval();
+      if (activityTimer !== undefined) window.clearInterval(activityTimer);
+      if (quotaTimer !== undefined) window.clearInterval(quotaTimer);
       if (refreshTimer !== undefined) {
         window.clearInterval(refreshTimer);
         refreshTimer = undefined;
       }
       sessionController.dispose();
       unlistenDashboard?.();
+      unlistenObservations?.();
       cleanSettingsListener();
     };
   });
@@ -591,7 +692,7 @@
     </header>
 
     <!-- Page Content Area -->
-    <section class="page-content" class:fit-viewport={activeTab === 'overview' && !!snapshot && !loading}>
+    <section class="page-content" class:fit-viewport={(activeTab === 'overview' && !!snapshot) || loading}>
       {#if errorMessage}
         <div class="notice-box" role="alert">
           {@html icons.alert}
@@ -602,23 +703,133 @@
 
       {#if loading}
         <div class="loading-state" role="status" aria-live="polite">
-          <div class="loading-message">
-            <span class="loading-indicator" aria-hidden="true"></span>
-            <p>正在连接本地守护进程并读取 SQLite 快照…</p>
+          <div class="loading-status-bar">
+            <div class="loading-message">
+              <span class="loading-spinner-ring" aria-hidden="true">
+                <span class="loading-spinner-core"></span>
+              </span>
+              <p>正在连接本地守护进程并读取 SQLite 快照…</p>
+            </div>
+            <span class="loading-stage-pill" aria-hidden="true">WAL 并发只读通道</span>
           </div>
+
           <div class="loading-skeleton-grid" aria-hidden="true">
-            <span class="loading-skeleton"></span>
-            <span class="loading-skeleton"></span>
-            <span class="loading-skeleton"></span>
-            <span class="loading-skeleton"></span>
+            {#each [
+              { titleW: '38%', valW: '72%', subW: '44%', hero: true },
+              { titleW: '42%', valW: '62%', subW: '36%', hero: false },
+              { titleW: '40%', valW: '56%', subW: '40%', hero: false },
+              { titleW: '44%', valW: '68%', subW: '48%', hero: false },
+            ] as card, i}
+              <div class="loading-skeleton-card" class:hero={card.hero} style={`--delay: ${i * 90}ms`}>
+                <div class="sk-row-between">
+                  <span class="sk-bone sk-title" style={`width: ${card.titleW}`}></span>
+                  <span class="sk-bone sk-pill"></span>
+                </div>
+                <span class="sk-bone sk-value" style={`width: ${card.valW}`}></span>
+                <span class="sk-bone sk-bar"></span>
+                <div class="sk-row-between">
+                  <span class="sk-bone sk-foot" style={`width: ${card.subW}`}></span>
+                  <span class="sk-bone sk-foot" style="width: 24%"></span>
+                </div>
+              </div>
+            {/each}
           </div>
-          <div class="loading-skeleton loading-skeleton-panel" aria-hidden="true"></div>
+
+          <div class="loading-integrity-skeleton" aria-hidden="true">
+            <div class="sk-inline-group">
+              <span class="sk-bone sk-tag" style="width: 96px"></span>
+              <span class="sk-bone sk-tag" style="width: 104px"></span>
+              <span class="sk-bone sk-tag" style="width: 84px"></span>
+            </div>
+            <span class="sk-bone sk-tag" style="width: 160px"></span>
+          </div>
+
+          <div class="loading-panels-grid" aria-hidden="true">
+            <div class="loading-skeleton-panel" style="--delay: 120ms">
+              <div class="sk-panel-head">
+                <div class="sk-stack">
+                  <span class="sk-bone sk-h2" style="width: 128px"></span>
+                  <span class="sk-bone sk-sub" style="width: 220px"></span>
+                </div>
+                <span class="sk-bone sk-switch"></span>
+              </div>
+              <div class="sk-chart-bars">
+                {#each [38, 56, 44, 74, 62, 88, 52, 68, 92, 60, 78, 84, 48, 70] as h, idx}
+                  <span class="sk-chart-col" style={`height: ${h}%; --bar-delay: ${idx * 45}ms`}></span>
+                {/each}
+              </div>
+            </div>
+
+            <div class="loading-skeleton-panel" style="--delay: 220ms">
+              <div class="sk-panel-head">
+                <div class="sk-stack">
+                  <span class="sk-bone sk-h2" style="width: 108px"></span>
+                  <span class="sk-bone sk-sub" style="width: 156px"></span>
+                </div>
+                <span class="sk-bone sk-pill"></span>
+              </div>
+              <div class="sk-rank-list">
+                {#each ['86%', '62%', '38%', '22%'] as w}
+                  <div class="sk-rank-item">
+                    <div class="sk-row-between">
+                      <span class="sk-bone sk-title" style="width: 36%"></span>
+                      <span class="sk-bone sk-title" style="width: 28%"></span>
+                    </div>
+                    <span class="sk-bone sk-bar" style={`width: ${w}`}></span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          </div>
+
+          <div class="loading-support-grid" aria-hidden="true">
+            <div class="loading-skeleton-panel" style="--delay: 280ms">
+              <div class="sk-panel-head">
+                <div class="sk-stack">
+                  <span class="sk-bone sk-h2" style="width: 92px"></span>
+                  <span class="sk-bone sk-sub" style="width: 196px"></span>
+                </div>
+                <span class="sk-bone sk-pill"></span>
+              </div>
+              <div class="sk-session-list">
+                {#each ['46%', '58%', '40%', '52%'] as titleW}
+                  <div class="sk-session-row">
+                    <div class="sk-stack" style="flex: 1; min-width: 0;">
+                      <span class="sk-bone sk-title" style={`width: ${titleW}`}></span>
+                      <span class="sk-bone sk-foot" style="width: 32%"></span>
+                    </div>
+                    <span class="sk-bone sk-title" style="width: 72px"></span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+
+            <div class="loading-skeleton-panel" style="--delay: 340ms">
+              <div class="sk-panel-head">
+                <div class="sk-stack">
+                  <span class="sk-bone sk-h2" style="width: 96px"></span>
+                  <span class="sk-bone sk-sub" style="width: 148px"></span>
+                </div>
+                <span class="sk-bone sk-pill"></span>
+              </div>
+              <div class="sk-session-list">
+                {#each ['34%', '28%', '30%', '42%'] as nameW}
+                  <div class="sk-session-row">
+                    <span class="sk-bone sk-title" style={`width: ${nameW}`}></span>
+                    <span class="sk-bone sk-foot" style="width: 76px"></span>
+                    <span class="sk-bone sk-pill" style="width: 40px; height: 16px;"></span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          </div>
         </div>
       {:else if snapshot}
         <!-- TAB 1: OVERVIEW (DASHBOARD) -->
         {#if activeTab === 'overview'}
           <OverviewPage
             {snapshot}
+            {sessionActivity}
             local={dashboardView.local}
             tools={dashboardView.scopedTools}
             {deviceScope}
@@ -696,6 +907,7 @@
         {:else if activeTab === 'sessions'}
           <SessionsPage
             sessionAnalysis={$sessionState.analysis}
+            {sessionActivity}
             {sessionPage}
             {sessionPageStart}
             {sessionPageEnd}
@@ -708,6 +920,8 @@
             sessionLoading={$sessionState.loading}
             sessionError={$sessionState.error}
             sessionOffset={$sessionState.offset}
+            sessionPageSize={$sessionState.pageSize}
+            onSetSessionPageSize={sessionController.setPageSize}
             pendingSessionDeleteKey={$sessionState.pendingDeleteKey}
             deletingSessionKey={$sessionState.deletingKey}
             sessionActionMessage={$sessionState.actionMessage}
@@ -731,7 +945,14 @@
           <ProjectsPage snapshot={snapshot} local={dashboardView.local} projects={dashboardView.scopedProjects} />
         <!-- PROVIDER QUOTAS AND ACTIVITY -->
         {:else if activeTab === 'quota'}
-          <QuotaPage snapshot={snapshot} antigravityUsage={dashboardView.antigravityUsage} />
+          <QuotaPage
+            snapshot={snapshot}
+            antigravityUsage={dashboardView.antigravityUsage}
+            {codexQuotaOverride}
+            {codexQuotaRefreshing}
+            {codexQuotaError}
+            onRefreshCodexQuota={handleRefreshCodexQuota}
+          />
         <!-- TAB 7: SETTINGS (系统设置) -->
         {:else if activeTab === 'settings'}
           <SettingsPage

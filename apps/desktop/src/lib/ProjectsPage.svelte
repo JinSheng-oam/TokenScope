@@ -193,7 +193,31 @@
       <h2>项目用量矩阵</h2>
       <p>自动合并同名多路径项目；名称会同步到已配对设备，不包含完整目录路径</p>
     </div>
-    <span class="panel-tag">{displayProjects.length} 个项目条目</span>
+    <div class="panel-head-actions">
+      <span class="panel-tag">{displayProjects.length} 个项目条目</span>
+      {#if workspaceProjects.length > 0}
+        <div class="trend-mode-switch" role="group" aria-label="项目展示聚合方式">
+          <button
+            type="button"
+            class="trend-mode-btn"
+            class:selected={groupMode === 'merged'}
+            aria-pressed={groupMode === 'merged'}
+            onclick={() => (groupMode = 'merged')}
+          >
+            智能归并
+          </button>
+          <button
+            type="button"
+            class="trend-mode-btn"
+            class:selected={groupMode === 'raw'}
+            aria-pressed={groupMode === 'raw'}
+            onclick={() => (groupMode = 'raw')}
+          >
+            按工作区 ({workspaceProjects.length})
+          </button>
+        </div>
+      {/if}
+    </div>
   </div>
 
   {#if displayProjects.length > 0}
@@ -201,13 +225,13 @@
       <table class="project-table">
         <thead>
           <tr>
-            <th style="width: 46px;">#</th>
-            <th>项目名称 / 工作区标识</th>
-            <th style="width: 150px;">来源与状态</th>
-            <th class="tabular" style="width: 140px;">Token 消耗量</th>
-            <th class="tabular" style="width: 100px;">记录数</th>
-            <th class="tabular" style="width: 110px;">单笔均值</th>
-            <th class="tabular" style="width: 185px;">份额占比</th>
+            <th class="col-prj-rank">#</th>
+            <th class="col-prj-name">项目名称 / 工作区标识</th>
+            <th class="col-prj-status">来源状态</th>
+            <th class="col-prj-tokens tabular">Token 消耗量</th>
+            <th class="col-prj-records tabular">记录数</th>
+            <th class="col-prj-avg tabular">单笔均值</th>
+            <th class="col-prj-share tabular">份额占比</th>
           </tr>
         </thead>
         <tbody>

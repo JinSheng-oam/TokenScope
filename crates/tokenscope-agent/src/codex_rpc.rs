@@ -160,8 +160,21 @@ fn wait_for_response(
 #[cfg(windows)]
 fn codex_command() -> Command {
     use std::os::windows::process::CommandExt;
-    let executable =
-        std::env::var_os("TOKENSCOPE_CODEX_CLI_PATH").unwrap_or_else(|| "codex.exe".into());
+    let executable = std::env::var_os("TOKENSCOPE_CODEX_CLI_PATH").unwrap_or_else(|| {
+        std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .map(|p| p.join("OpenAI").join("Codex").join("bin"))
+            .and_then(|p| std::fs::read_dir(p).ok())
+            .and_then(|entries| {
+                entries
+                    .flatten()
+                    .map(|e| e.path().join("codex.exe"))
+                    .filter(|p| p.is_file())
+                    .max_by_key(|p| p.metadata().and_then(|m| m.modified()).ok())
+            })
+            .map(|p| p.into_os_string())
+            .unwrap_or_else(|| "codex.exe".into())
+    });
     let mut command = Command::new(executable);
     command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     command
@@ -174,7 +187,7 @@ fn codex_command() -> Command {
     Command::new(executable)
 }
 
-fn fetch_rate_limits() -> Result<Vec<CodexQuota>, &'static str> {
+pub fn fetch_rate_limits() -> Result<Vec<CodexQuota>, &'static str> {
     let mut child = codex_command()
         .args(["app-server", "--listen", "stdio://"])
         .stdin(Stdio::piped())

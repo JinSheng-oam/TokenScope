@@ -15,6 +15,23 @@ use std::path::Path;
 use tokenscope_core_domain::session_key;
 use tokenscope_local_store::SourceCheckpoint;
 
+fn explicit_response_model(payload: &Value) -> Option<String> {
+    let usage = payload.get("usage");
+    [
+        payload.get("model"),
+        payload.get("model_id"),
+        usage.and_then(|value| value.get("model")),
+        usage.and_then(|value| value.get("model_id")),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_str)
+    .find(|model| {
+        !model.trim().is_empty() && model.len() <= 256 && !model.chars().any(char::is_control)
+    })
+    .map(str::to_owned)
+}
+
 pub fn scan_precise(
     path: &Path,
     device_id: &str,
@@ -271,11 +288,12 @@ fn scan_precise_mode(
                 Some(id) if !id.is_empty() && id.len() <= 512 => format!("response:{id}"),
                 _ => format!("response-offset:{start}"),
             };
+            let response_model = explicit_response_model(p).or_else(|| model.clone());
             let r = record(
                 &session,
                 device_id,
                 native.as_bytes(),
-                model.clone(),
+                response_model,
                 project_id.clone(),
                 ts,
                 token,

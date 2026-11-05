@@ -36,6 +36,7 @@ pub(super) fn query_agent(
     session_offset: u64,
     start_date: Option<&str>,
     end_date: Option<&str>,
+    watch_changes: bool,
 ) -> Result<DashboardResponse, String> {
     if !["today", "7d", "30d", "all", "custom"].contains(&range) {
         return Err("不支持的统计范围".into());
@@ -44,12 +45,14 @@ pub(super) fn query_agent(
         return Err("自定义范围需要开始和结束日期".into());
     }
     let watch = app.state::<DashboardWatch>();
-    if let Ok(mut request) = watch.request.lock() {
-        *request = DashboardRequest {
-            range: range.to_owned(),
-            start_date: start_date.map(str::to_owned),
-            end_date: end_date.map(str::to_owned),
-        };
+    if watch_changes {
+        if let Ok(mut request) = watch.request.lock() {
+            *request = DashboardRequest {
+                range: range.to_owned(),
+                start_date: start_date.map(str::to_owned),
+                end_date: end_date.map(str::to_owned),
+            };
+        }
     }
     let key = dashboard_key(range, start_date, end_date, session_offset);
     if session_offset == 0 {
@@ -59,7 +62,9 @@ pub(super) fn query_agent(
             .ok()
             .and_then(|cache| cache.get(&key).cloned());
         if let Some((cached, at)) = hit {
-            if at.elapsed() > Duration::from_secs(10) {
+            if at.elapsed() > Duration::from_secs(10)
+                || cached.snapshot.data_revision < watch.revision.load(Ordering::Acquire)
+            {
                 spawn_dashboard_refresh(app, range, start_date, end_date);
             }
             return Ok(cached);
@@ -157,7 +162,7 @@ pub(crate) fn query_agent_fresh(
 
     let stdout_pipe = child.stdout.take().ok_or("Agent stdout pipe unavailable")?;
     let stderr_pipe = child.stderr.take().ok_or("Agent stderr pipe unavailable")?;
-    let stdout_reader = thread::spawn(move || read_pipe_bounded(stdout_pipe, 1_048_576));
+    let stdout_reader = thread::spawn(move || read_pipe_bounded(stdout_pipe, 16_777_216));
     let stderr_reader = thread::spawn(move || read_pipe_bounded(stderr_pipe, 65_536));
     // A cold `全部` aggregate over a large local history can exceed five
     // seconds on slower disks; background pushes keep the UI responsive while
@@ -193,9 +198,10 @@ pub(crate) fn query_agent_fresh(
             String::from_utf8_lossy(&stderr).trim()
         ));
     }
-    let response: DashboardResponse =
+    let mut response: DashboardResponse =
         serde_json::from_slice(&stdout).map_err(|e| format!("Agent 返回的数据格式无效：{e}"))?;
     response.validate().map_err(|e| e.to_string())?;
+    response.request_key = dashboard_key(range, start_date, end_date, session_offset);
     Ok(response)
 }
 
@@ -205,6 +211,7 @@ pub(super) fn query_agent_session_analysis(
     range: &str,
     session_offset: u64,
     search: Option<&str>,
+    session_limit: Option<u32>,
     tool_id: Option<&str>,
     model_id: Option<&str>,
     project_id: Option<&str>,
@@ -232,6 +239,11 @@ pub(super) fn query_agent_session_analysis(
         .arg(session_offset.to_string())
         .arg("--db")
         .arg(&db);
+    let session_limit = session_limit.unwrap_or(50);
+    if !(1..=200).contains(&session_limit) {
+        return Err("每页会话数必须在 1 到 200 之间".into());
+    }
+    let limit_text = session_limit.to_string();
     for (name, value) in [
         ("--start-date", start_date),
         ("--end-date", end_date),
@@ -239,6 +251,7 @@ pub(super) fn query_agent_session_analysis(
         ("--session-tool", tool_id),
         ("--session-model", model_id),
         ("--session-project", project_id),
+        ("--session-limit", Some(limit_text.as_str())),
     ] {
         if let Some(value) = value.filter(|value| !value.is_empty()) {
             command.arg(name).arg(value);

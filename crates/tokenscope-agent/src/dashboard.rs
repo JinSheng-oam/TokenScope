@@ -19,6 +19,7 @@ struct ResolvedRange {
 pub struct SessionAnalysisOptions<'a> {
     pub range: &'a str,
     pub session_offset: u64,
+    pub session_limit: u32,
     pub search: Option<&'a str>,
     pub tool_id: Option<&'a str>,
     pub model_id: Option<&'a str>,
@@ -142,7 +143,7 @@ pub fn read_snapshot(
     let zone = parsed_zone.unwrap_or(chrono_tz::UTC);
     let now = now_ms()?;
     let earliest_event_ms = match (range, identity.as_ref()) {
-        ("all", Some(identity)) => store.earliest_device_local_event_ms(&identity.device_id)?,
+        ("all", Some(identity)) => store.earliest_dashboard_event_ms(&identity.device_id)?,
         _ => None,
     };
     let resolved = resolve_range(range, start_date, end_date, zone, now, earliest_event_ms)?;
@@ -209,7 +210,7 @@ pub fn read_session_analysis(
         resolved.from_ms,
         resolved.to_ms,
         options.session_offset,
-        50,
+        options.session_limit,
         options.search,
         options.tool_id,
         options.model_id,

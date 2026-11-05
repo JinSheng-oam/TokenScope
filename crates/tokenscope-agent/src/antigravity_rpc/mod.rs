@@ -24,3 +24,7 @@ pub(crate) fn refresh_and_store(
 ) -> Result<usize, RpcError> {
     refresh::refresh_and_store(store)
 }
+
+pub(crate) fn fetch_quota() -> Result<Vec<tokenscope_local_store::AntigravityQuota>, RpcError> {
+    refresh::fetch_quota()
+}

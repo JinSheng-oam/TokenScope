@@ -30,6 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "useLocalToolsDir": true,
     "publisher": "TokenScope",
     "category": "Utility",
     "shortDescription": "本地优先的 AI Token 用量监控",
@@ -39,11 +40,12 @@
       "resources/agent-build.json"
     ],
     "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/icon.png",
-      "icons/icon.ico",
-      "icons/icon.icns"
+      "icons/tokenscope-v1/32x32.png",
+      "icons/tokenscope-v1/128x128.png",
+      "icons/tokenscope-v1/128x128@2x.png",
+      "icons/tokenscope-v1/icon.png",
+      "icons/tokenscope-v1/icon.ico",
+      "icons/tokenscope-v1/icon.icns"
     ],
     "macOS": {
       "minimumSystemVersion": "10.15"

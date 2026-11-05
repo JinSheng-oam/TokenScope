@@ -1,5 +1,5 @@
 use crate::{
-    antigravity_rpc, codex_rpc,
+    background_quota::QuotaWorkers,
     collection::{collect_once, CollectionOptions},
     session_control, shutdown, sync,
 };
@@ -31,6 +31,7 @@ fn sleep_interruptible(
     shutdown_file: Option<&Path>,
     store: &mut LocalStore,
     db_path: &Path,
+    quotas: &QuotaWorkers,
 ) -> bool {
     // Poll a file-based shutdown signal so Tauri can stop the daemon without
     // platform-specific signals. Collection is never interrupted mid-transaction.
@@ -41,6 +42,7 @@ fn sleep_interruptible(
         if let Err(error) = session_control::process_pending_requests(store, db_path) {
             eprintln!("TokenScope session control warning: {error}");
         }
+        quotas.persist_pending(store);
         thread::sleep(Duration::from_millis(250));
     }
     stop.load(Ordering::Relaxed) || shutdown::consume(shutdown_file)
@@ -56,6 +58,11 @@ pub(super) fn run(
     let stop = Arc::new(AtomicBool::new(false));
     let stop_for_signal = stop.clone();
     ctrlc::set_handler(move || stop_for_signal.store(true, Ordering::SeqCst))?;
+    let quotas = QuotaWorkers::start(
+        store,
+        options.refresh_codex_quota,
+        options.refresh_antigravity_quota,
+    );
     let mut consecutive_failures = 0_u32;
     while !stop.load(Ordering::SeqCst) {
         if shutdown::consume(options.shutdown_file) {
@@ -64,33 +71,15 @@ pub(super) fn run(
         if let Err(error) = session_control::process_pending_requests(store, db) {
             eprintln!("TokenScope session control warning: {error}");
         }
+        quotas.persist_pending(store);
         match collect_once(store, collection) {
-            Ok(()) => {
-                if options.refresh_antigravity_quota {
-                    match antigravity_rpc::refresh_and_store(store) {
-                        Ok(updated) => {
-                            consecutive_failures = 0;
-                            println!("antigravity local RPC quota snapshots updated={updated}");
-                        }
-                        Err(err) => {
-                            consecutive_failures = consecutive_failures.saturating_add(1);
-                            eprintln!("Antigravity quota refresh failed: {err}");
-                        }
-                    }
-                } else {
-                    consecutive_failures = 0;
-                }
-                if options.refresh_codex_quota {
-                    if let Err(err) = codex_rpc::refresh_and_store(store) {
-                        eprintln!("Codex quota refresh failed: {err}");
-                    }
-                }
-            }
+            Ok(()) => consecutive_failures = 0,
             Err(err) => {
                 consecutive_failures = consecutive_failures.saturating_add(1);
                 eprintln!("TokenScope scan error (retry #{consecutive_failures}): {err}");
             }
         }
+        quotas.persist_pending(store);
         if options.sync_enabled {
             // 1. Hub Sync
             match sync::resolve_sync_hub_url(options.sync_hub_url, options.sync_config_path) {
@@ -161,7 +150,7 @@ pub(super) fn run(
                 .saturating_mul(1_u64 << consecutive_failures.min(4))
                 .min(300)
         };
-        if sleep_interruptible(&stop, backoff, options.shutdown_file, store, db) {
+        if sleep_interruptible(&stop, backoff, options.shutdown_file, store, db, &quotas) {
             break;
         }
     }

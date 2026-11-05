@@ -1,6 +1,6 @@
 //! Schema v1 is append-only at the migration layer. No destructive schema reset.
 
-pub const VERSION: i64 = 8;
+pub const VERSION: i64 = 9;
 pub const MIGRATION_001: &str = r#"
 CREATE TABLE schema_migrations (
   version INTEGER PRIMARY KEY,
@@ -198,4 +198,95 @@ CREATE TABLE webdav_sync_cursors (
   last_batch_seq INTEGER NOT NULL DEFAULT 0 CHECK(last_batch_seq >= 0),
   updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms >= 0)
 );
+"#;
+
+// Revisions separate usage/labels from volatile health/quota observations.
+// No usage rows are rewritten by this migration.
+pub const MIGRATION_009: &str = r#"
+CREATE TABLE dashboard_revisions (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ full_revision INTEGER NOT NULL DEFAULT 0,
+ observation_revision INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO dashboard_revisions(singleton) VALUES(1);
+CREATE INDEX ix_remote_event ON remote_usage_cache(json_extract(payload_json,'$.event_at_ms'))
+ WHERE is_deleted=0 AND json_extract(payload_json,'$.scope')='device_local';
+CREATE TRIGGER dashboard_usage_records_insert AFTER INSERT ON usage_records
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_usage_records_update AFTER UPDATE ON usage_records WHEN OLD.payload_hash IS NOT NEW.payload_hash OR OLD.is_deleted IS NOT NEW.is_deleted
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_usage_records_delete AFTER DELETE ON usage_records
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_remote_usage_cache_insert AFTER INSERT ON remote_usage_cache
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_remote_usage_cache_update AFTER UPDATE ON remote_usage_cache WHEN OLD.payload_hash IS NOT NEW.payload_hash OR OLD.record_revision IS NOT NEW.record_revision
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_remote_usage_cache_delete AFTER DELETE ON remote_usage_cache
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_session_names_insert AFTER INSERT ON session_names
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_session_names_update AFTER UPDATE ON session_names WHEN OLD.name IS NOT NEW.name OR OLD.tool_id IS NOT NEW.tool_id
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_session_names_delete AFTER DELETE ON session_names
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_record_sources_insert AFTER INSERT ON record_sources
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_record_sources_update AFTER UPDATE ON record_sources
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_record_sources_delete AFTER DELETE ON record_sources
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_local_identity_insert AFTER INSERT ON local_identity
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_local_identity_update AFTER UPDATE ON local_identity WHEN OLD.display_name IS NOT NEW.display_name OR OLD.time_zone IS NOT NEW.time_zone
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_local_identity_delete AFTER DELETE ON local_identity
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_antigravity_activity_sources_insert AFTER INSERT ON antigravity_activity_sources
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_antigravity_activity_sources_update AFTER UPDATE ON antigravity_activity_sources WHEN OLD.known_turns IS NOT NEW.known_turns OR OLD.unknown_turns IS NOT NEW.unknown_turns
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_antigravity_activity_sources_delete AFTER DELETE ON antigravity_activity_sources
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_antigravity_model_activity_insert AFTER INSERT ON antigravity_model_activity
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_antigravity_model_activity_update AFTER UPDATE ON antigravity_model_activity WHEN OLD.response_count IS NOT NEW.response_count
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_antigravity_model_activity_delete AFTER DELETE ON antigravity_model_activity
+ BEGIN UPDATE dashboard_revisions SET full_revision=full_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_source_checkpoints_insert AFTER INSERT ON source_checkpoints
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_source_checkpoints_update AFTER UPDATE ON source_checkpoints
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_source_checkpoints_delete AFTER DELETE ON source_checkpoints
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_codex_quota_snapshots_insert AFTER INSERT ON codex_quota_snapshots
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_codex_quota_snapshots_update AFTER UPDATE ON codex_quota_snapshots
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_codex_quota_snapshots_delete AFTER DELETE ON codex_quota_snapshots
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_antigravity_quota_snapshots_insert AFTER INSERT ON antigravity_quota_snapshots
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_antigravity_quota_snapshots_update AFTER UPDATE ON antigravity_quota_snapshots
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_antigravity_quota_snapshots_delete AFTER DELETE ON antigravity_quota_snapshots
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_sync_state_insert AFTER INSERT ON sync_state
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_sync_state_update AFTER UPDATE ON sync_state
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_sync_state_delete AFTER DELETE ON sync_state
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_sync_outbox_insert AFTER INSERT ON sync_outbox
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_sync_outbox_update AFTER UPDATE ON sync_outbox
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_sync_outbox_delete AFTER DELETE ON sync_outbox
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_webdav_sync_cursors_insert AFTER INSERT ON webdav_sync_cursors
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_webdav_sync_cursors_update AFTER UPDATE ON webdav_sync_cursors
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+CREATE TRIGGER dashboard_webdav_sync_cursors_delete AFTER DELETE ON webdav_sync_cursors
+ BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
 "#;

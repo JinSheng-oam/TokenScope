@@ -101,6 +101,8 @@ pub struct RemoteUsageTotals {
     pub cache_write_tokens: u64,
     pub output_tokens: u64,
     pub unclassified_tokens: u64,
+    pub reasoning_tokens: u64,
+    pub reasoning_known_records: u64,
     pub record_count: u64,
     pub priced_records: u64,
     pub unpriced_records: u64,
@@ -117,6 +119,7 @@ pub struct RemoteDeviceUsage {
     pub total_tokens: u64,
     pub record_count: u64,
     pub estimated_cost_microusd: Option<i64>,
+    pub usage: RemoteUsageTotals,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -127,6 +130,11 @@ pub struct RemoteUsageBreakdown {
     pub total_tokens: u64,
     pub record_count: u64,
     pub estimated_cost_microusd: Option<i64>,
+    pub exact_records: u64,
+    pub aggregate_records: u64,
+    pub estimated_records: u64,
+    pub unknown_precision_records: u64,
+    pub untimed_records: u64,
 }
 
 /// A project display name shared between devices independently of usage records.
@@ -418,6 +426,13 @@ pub struct DailyUsage {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteDailyUsage {
+    pub owner_device_id: String,
+    #[serde(flatten)]
+    pub usage: DailyUsage,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SourceHealth {
     pub tool_id: String,
     pub last_scan_ms: Option<i64>,
@@ -427,7 +442,17 @@ pub struct SourceHealth {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DashboardObservations {
+    pub observed_at_ms: i64,
+    pub source_health: Vec<SourceHealth>,
+    pub codex_quota: Vec<CodexQuota>,
+    pub antigravity_quota: Vec<AntigravityQuota>,
+    pub sync_status: SyncOutboxStatus,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DashboardSnapshot {
+    pub data_revision: u64,
     pub schema_version: i64,
     pub generated_at_ms: i64,
     pub range: String,
@@ -450,6 +475,7 @@ pub struct DashboardSnapshot {
     pub by_project: Vec<UsageBreakdown>,
     pub session_usage: SessionUsagePage,
     pub daily: Vec<DailyUsage>,
+    pub remote_daily: Vec<RemoteDailyUsage>,
     pub source_health: Vec<SourceHealth>,
     pub antigravity_quota: Vec<AntigravityQuota>,
     pub codex_quota: Vec<CodexQuota>,

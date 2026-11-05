@@ -5,8 +5,11 @@ import {
   quotaWindowLabel,
   resolveScopedBreakdown,
   resolveScopedTotals,
+  resolveScopedDaily,
+  resolveSessionActivityState,
+  buildDashboardProjection,
 } from './dashboardView';
-import type { DashboardSnapshot } from './types';
+import type { DashboardSnapshot, UsageTotals } from './types';
 
 describe('dashboardView quota utilities', () => {
   it('formats pool names into readable display strings', () => {
@@ -40,77 +43,47 @@ describe('dashboardView quota utilities', () => {
     expect(quotaWindowLabel(10_080)).toBe('每周周期');
   });
 
-  it('aggregates local + remote totals when deviceScope is all, and filters when scoped', () => {
-    const mockSnapshot = {
-      local: {
-        total_records: 10,
-        untimed_records: 0,
-        input_tokens: 100,
-        cache_read_tokens: 50,
-        cache_write_tokens: 0,
-        output_tokens: 50,
-        reasoning_output_tokens: 10,
-        total_tokens: 200,
-        estimated_cost_usd: 0.1,
-        priced_records: 10,
-        exact_records: 8,
-        aggregate_records: 2,
-        estimated_records: 0,
-        unknown_records: 0,
-        unattributed_tokens: 0,
-      },
-      remote: {
-        device_count: 1,
-        total_records: 5,
-        input_tokens: 300,
-        cache_read_tokens: 100,
-        cache_write_tokens: 0,
-        output_tokens: 100,
-        total_tokens: 500,
-        exact_records: 5,
-        aggregate_records: 0,
-        estimated_records: 0,
-        unknown_records: 0,
-      },
-      remote_by_device: [
-        { owner_device_id: 'remote-dev-1', total_records: 5, total_tokens: 500 },
-      ],
-      by_tool: [
-        {
-          key: 'codex',
-          label: 'Codex',
-          total_records: 10,
-          untimed_records: 0,
-          input_tokens: 100,
-          cache_read_tokens: 50,
-          cache_write_tokens: 0,
-          output_tokens: 50,
-          reasoning_output_tokens: 10,
-          total_tokens: 200,
-          estimated_cost_usd: 0,
-          priced_records: 0,
-          exact_records: 8,
-          aggregate_records: 2,
-          estimated_records: 0,
-          unknown_records: 0,
-        },
-      ],
-      remote_by_tool: [
-        { owner_device_id: 'remote-dev-1', key: 'codex', total_records: 5, total_tokens: 500 },
-      ],
-    } as unknown as DashboardSnapshot;
+  it('keeps actual device components, reasoning, pricing and precision', () => {
+    const snapshot = devices();
+    expect(resolveScopedTotals(snapshot,'all')).toMatchObject({total_tokens:1050,reasoning_tokens:9,exact_records:1,estimated_records:1,aggregate_records:1});
+    expect(resolveScopedTotals(snapshot,'A')).toMatchObject({total_tokens:100,input_tokens:100,output_tokens:0,exact_records:0,estimated_records:1});
+    expect(resolveScopedTotals(snapshot,'B')).toMatchObject({total_tokens:900,input_tokens:0,output_tokens:900,reasoning_tokens:9,aggregate_records:1,priced_records:0});
+    expect(resolveScopedTotals(snapshot,'missing')?.total_tokens).toBe(0);
+    expect(resolveScopedBreakdown([],snapshot.remote_by_tool,'all')[0]).toMatchObject({total_tokens:1000,exact_records:0,aggregate_records:1,estimated_records:1});
+  });
 
-    const allTotals = resolveScopedTotals(mockSnapshot, 'all');
-    expect(allTotals?.total_tokens).toBe(700);
-    expect(allTotals?.exact_records).toBe(13);
+  it('uses the same device scope for cards, curves and heatmaps, with empty days', () => {
+    const snapshot = devices();
+    for (const [scope,total] of [['local',50],['all',1050],['A',100],['B',900]] as const) {
+      const view = buildDashboardProjection({snapshot,heatmapSnapshot:snapshot,deviceScope:scope,todayIso:'2026-11-05',hoveredCurveIndex:null,remoteSelectedDevice:'all',modelSortBy:'tokens',range:'all',customStart:'',customEnd:''});
+      expect(view.local?.total_tokens).toBe(total);
+      expect(view.chartValues.reduce((sum,d)=>sum+d.total_tokens,0)).toBe(total);
+      expect(resolveScopedDaily(snapshot,scope)[1].total_tokens).toBe(0);
+      expect(view.heatmapCalendar).toEqual(buildDashboardProjection({snapshot,heatmapSnapshot:null,deviceScope:scope,todayIso:'2026-11-05',hoveredCurveIndex:null,remoteSelectedDevice:'all',modelSortBy:'tokens',range:'all',customStart:'',customEnd:''}).heatmapCalendar);
+    }
+  });
 
-    const localTotals = resolveScopedTotals(mockSnapshot, 'local');
-    expect(localTotals?.total_tokens).toBe(200);
-
-    const remoteTotals = resolveScopedTotals(mockSnapshot, 'remote-dev-1');
-    expect(remoteTotals?.total_tokens).toBe(500);
-
-    const allTools = resolveScopedBreakdown(mockSnapshot.by_tool, mockSnapshot.remote_by_tool, 'all');
-    expect(allTools[0].total_tokens).toBe(700);
+  it('keeps a running turn during quiet output and clears it after completion', () => {
+    const now=2_000_000_000_000;
+    const session={tool_id:'codex',session_id:'same',display_name:'Demo',last_event_at_ms:now-300_000,activity_observed_at_ms:null};
+    expect(resolveSessionActivityState(session,[{tool_id:'codex',session_id:'same',display_name:'Demo',model_id:null,state:'generating',observed_at_ms:now-120_000}],now)).toBe('generating');
+    expect(resolveSessionActivityState(session,[],now)).toBeNull();
   });
 });
+
+function totals(patch: Partial<UsageTotals>): UsageTotals {
+  return {total_tokens:0,input_tokens:0,cache_read_tokens:0,cache_write_tokens:0,output_tokens:0,unclassified_tokens:0,reasoning_tokens:0,reasoning_known_records:0,record_count:1,estimated_cost_microusd:null,priced_records:0,unpriced_records:1,exact_records:0,aggregate_records:0,estimated_records:0,unknown_precision_records:0,...patch};
+}
+function devices(): DashboardSnapshot {
+  const a=totals({total_tokens:100,input_tokens:100,estimated_records:1});
+  const b=totals({total_tokens:900,output_tokens:900,reasoning_tokens:9,reasoning_known_records:1,aggregate_records:1});
+  return {
+    local:totals({total_tokens:50,input_tokens:50,exact_records:1}),
+    remote:totals({total_tokens:1000,input_tokens:100,output_tokens:900,reasoning_tokens:9,reasoning_known_records:1,record_count:2,unpriced_records:2,estimated_records:1,aggregate_records:1}),
+    remote_by_device:[{owner_device_id:'A',total_tokens:100,record_count:1,estimated_cost_microusd:null,usage:a},{owner_device_id:'B',total_tokens:900,record_count:1,estimated_cost_microusd:null,usage:b}],
+    by_tool:[],by_model:[],by_project:[],remote_by_model:[],remote_by_project:[],
+    remote_by_tool:[a,b].map((usage,i)=>({owner_device_id:i===0?'A':'B',key:'codex',label:'Codex',total_tokens:usage.total_tokens,record_count:1,estimated_cost_microusd:null,exact_records:usage.exact_records,aggregate_records:usage.aggregate_records,estimated_records:usage.estimated_records,unknown_precision_records:0,untimed_records:0})),
+    daily:[{date:'2026-11-04',total_tokens:50,input_tokens:50,output_tokens:0},{date:'2026-11-05',total_tokens:0,input_tokens:0,output_tokens:0}],
+    remote_daily:[{owner_device_id:'A',date:'2026-11-04',total_tokens:100,input_tokens:100,output_tokens:0},{owner_device_id:'B',date:'2026-11-04',total_tokens:900,input_tokens:0,output_tokens:900}],
+  } as unknown as DashboardSnapshot;
+}

@@ -39,7 +39,7 @@ fn usage() {
         r#"Usage: tokenscope-agent [--scan-codex | --scan-claude | --scan-antigravity | --scan-deepseek-harness | --scan-all]
     --db PATH [--device-id ID] [--codex-home PATH] [--claude-home PATH]
     [--antigravity-home PATH] [--deepseek-harness-home PATH] [--antigravity-estimates]
-    [--import-antigravity-quota-json PATH] [--refresh-antigravity-quota] [--refresh-codex-quota] [--show-antigravity]
+    [--import-antigravity-quota-json PATH] [--refresh-antigravity-quota] [--refresh-codex-quota] [--emit-codex-quota-json] [--show-antigravity]
     [--display-name NAME] [--time-zone ZONE] [--daemon --interval-seconds 120]
     --dashboard-json [--range today|7d|30d|all]
     --diagnose-json
@@ -56,6 +56,11 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.iter().any(|s| s == "--version" || s == "-V") {
         println!("tokenscope-agent {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if args.len() == 1 && args[0] == "--query-codex-quota-json" {
+        let snapshots = codex_rpc::fetch_rate_limits()?;
+        println!("{}", serde_json::to_string(&snapshots)?);
         return Ok(());
     }
     let codex = args
@@ -75,6 +80,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     let show_antigravity = args.iter().any(|s| s == "--show-antigravity");
     let refresh_antigravity_quota = args.iter().any(|s| s == "--refresh-antigravity-quota");
     let refresh_codex_quota = args.iter().any(|s| s == "--refresh-codex-quota");
+    let emit_codex_quota_json = args.iter().any(|s| s == "--emit-codex-quota-json");
     let dashboard_json = args.iter().any(|s| s == "--dashboard-json");
     let diagnose_json = args.iter().any(|s| s == "--diagnose-json");
     let session_analysis_json = args.iter().any(|s| s == "--session-analysis-json");
@@ -99,6 +105,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             || show_antigravity
             || refresh_antigravity_quota
             || refresh_codex_quota
+            || emit_codex_quota_json
             || dashboard_json
             || session_analysis_json
             || sync_once
@@ -122,6 +129,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         && !show_antigravity
         && !refresh_antigravity_quota
         && !refresh_codex_quota
+        && !emit_codex_quota_json
         && !dashboard_json
         && !diagnose_json
         && !session_analysis_json
@@ -139,9 +147,13 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     if quota_path.is_some() && refresh_antigravity_quota {
         return Err("manual quota import and local RPC refresh cannot be combined".into());
     }
+    if emit_codex_quota_json && !refresh_codex_quota {
+        return Err("--emit-codex-quota-json requires --refresh-codex-quota".into());
+    }
     if daemon
         && (quota_path.is_some()
             || show_antigravity
+            || emit_codex_quota_json
             || dashboard_json
             || session_analysis_json
             || sync_once
@@ -162,6 +174,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             || show_antigravity
             || refresh_antigravity_quota
             || refresh_codex_quota
+            || emit_codex_quota_json
             || session_analysis_json
             || sync_once
             || sync_enabled
@@ -193,6 +206,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             || show_antigravity
             || refresh_antigravity_quota
             || refresh_codex_quota
+            || emit_codex_quota_json
             || dashboard_json
             || sync_once
             || sync_enabled
@@ -210,11 +224,19 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         let tool_id = arg(&args, "--session-tool");
         let model_id = arg(&args, "--session-model");
         let project_id = arg(&args, "--session-project");
+        let session_limit: u32 = arg(&args, "--session-limit")
+            .map(|value| value.parse())
+            .transpose()?
+            .unwrap_or(50);
+        if !(1..=200).contains(&session_limit) {
+            return Err("--session-limit must be 1..200".into());
+        }
         let analysis = dashboard::read_session_analysis(
             &db,
             dashboard::SessionAnalysisOptions {
                 range: &dashboard_range,
                 session_offset,
+                session_limit,
                 search: search.as_deref(),
                 tool_id: tool_id.as_deref(),
                 model_id: model_id.as_deref(),
@@ -369,7 +391,16 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("antigravity local RPC quota snapshots updated={updated}");
         }
         if refresh_codex_quota {
-            let updated = codex_rpc::refresh_and_store(&mut store)?;
+            let updated = if emit_codex_quota_json {
+                let snapshots = codex_rpc::fetch_rate_limits()?;
+                println!(
+                    "codex local app-server quota snapshots json={}",
+                    serde_json::to_string(&snapshots)?
+                );
+                store.upsert_codex_quotas(&snapshots, chrono::Utc::now().timestamp_millis())?
+            } else {
+                codex_rpc::refresh_and_store(&mut store)?
+            };
             println!("codex local app-server quota snapshots updated={updated}");
         }
         if show_antigravity {
@@ -387,13 +418,8 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         if sync_webdav_once {
             let config = sync::resolve_webdav_config(sync_webdav_config_path.as_deref())?
                 .ok_or("no WebDAV configuration found; configure WebDAV sync first")?;
-            let (report, devices) = sync::sync_webdav_device_once(
-                &mut store,
-                &config,
-                &device,
-                &display,
-                &zone,
-            )?;
+            let (report, devices) =
+                sync::sync_webdav_device_once(&mut store, &config, &device, &display, &zone)?;
             println!(
                 "webdav sync uploaded_records={} uploaded_batches={} pulled_records={} pulled_batches={} remaining_due={} remote_devices={}",
                 report.uploaded_records,

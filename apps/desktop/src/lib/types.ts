@@ -65,6 +65,9 @@ export type SessionUsage = {
   session_id: string;
   tool_id: string;
   total_tokens: number;
+  input_uncached_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
   usage_record_count: number;
   exact_records: number;
   aggregate_records: number;

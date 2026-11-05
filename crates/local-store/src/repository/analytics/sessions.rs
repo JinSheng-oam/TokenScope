@@ -90,6 +90,9 @@ impl LocalStore {
             usage_sessions AS (
                 SELECT u.session_id,u.tool_id,
                     COALESCE(SUM(u.input_uncached_tokens+u.cache_read_tokens+u.cache_write_tokens+u.output_tokens+u.unclassified_tokens),0) AS total_tokens,
+                    COALESCE(SUM(u.input_uncached_tokens),0) AS input_uncached_tokens,
+                    COALESCE(SUM(u.cache_read_tokens),0) AS cache_read_tokens,
+                    COALESCE(SUM(u.cache_write_tokens),0) AS cache_write_tokens,
                     COUNT(*) AS usage_record_count,
                     SUM(CASE WHEN u.precision='exact' THEN 1 ELSE 0 END) AS exact_records,
                     SUM(CASE WHEN u.precision='aggregate' THEN 1 ELSE 0 END) AS aggregate_records,
@@ -111,6 +114,9 @@ impl LocalStore {
             ag_usage AS (
                 SELECT rs.source_key,
                     SUM(u.input_uncached_tokens+u.cache_read_tokens+u.cache_write_tokens+u.output_tokens+u.unclassified_tokens) AS total_tokens,
+                    COALESCE(SUM(u.input_uncached_tokens),0) AS input_uncached_tokens,
+                    COALESCE(SUM(u.cache_read_tokens),0) AS cache_read_tokens,
+                    COALESCE(SUM(u.cache_write_tokens),0) AS cache_write_tokens,
                     COUNT(*) AS usage_record_count,
                     SUM(CASE WHEN u.precision='exact' THEN 1 ELSE 0 END) AS exact_records,
                     SUM(CASE WHEN u.precision='aggregate' THEN 1 ELSE 0 END) AS aggregate_records,
@@ -137,12 +143,12 @@ impl LocalStore {
                 GROUP BY tool_id,session_id
             ),
             all_sessions AS (
-                SELECT session_id,tool_id,total_tokens,usage_record_count,exact_records,aggregate_records,
+                SELECT session_id,tool_id,total_tokens,input_uncached_tokens,cache_read_tokens,cache_write_tokens,usage_record_count,exact_records,aggregate_records,
                     estimated_records,unknown_precision_records,untimed_records,model_count,
                     known_response_count,unknown_response_count,last_event_at_ms,activity_observed_at_ms
                 FROM usage_sessions
                 UNION ALL
-                SELECT a.source_key,'antigravity',COALESCE(u.total_tokens,0),COALESCE(u.usage_record_count,0),
+                SELECT a.source_key,'antigravity',COALESCE(u.total_tokens,0),COALESCE(u.input_uncached_tokens,0),COALESCE(u.cache_read_tokens,0),COALESCE(u.cache_write_tokens,0),COALESCE(u.usage_record_count,0),
                     COALESCE(u.exact_records,0),COALESCE(u.aggregate_records,0),COALESCE(u.estimated_records,0),
                     COALESCE(u.unknown_precision_records,0),COALESCE(u.untimed_records,0),COALESCE(u.model_count,m.model_count,0),
                     a.known_turns,a.unknown_turns,u.last_event_at_ms,a.observed_at_ms
@@ -159,7 +165,8 @@ impl LocalStore {
         let page_started = Instant::now();
         let page_sql = format!(
             r#"{cte}
-            SELECT s.session_id,s.tool_id,s.total_tokens,s.usage_record_count,s.exact_records,s.aggregate_records,
+            SELECT s.session_id,s.tool_id,s.total_tokens,s.input_uncached_tokens,s.cache_read_tokens,s.cache_write_tokens,
+                s.usage_record_count,s.exact_records,s.aggregate_records,
                 s.estimated_records,s.unknown_precision_records,s.untimed_records,s.model_count,
                 s.known_response_count,s.unknown_response_count,s.last_event_at_ms,s.activity_observed_at_ms,n.name,
                 COALESCE(p.project_ids,''),
@@ -222,13 +229,16 @@ impl LocalStore {
                     r.get::<_, i64>(7)?,
                     r.get::<_, i64>(8)?,
                     r.get::<_, i64>(9)?,
-                    r.get::<_, Option<i64>>(10)?,
-                    r.get::<_, Option<i64>>(11)?,
-                    r.get::<_, Option<i64>>(12)?,
+                    r.get::<_, i64>(10)?,
+                    r.get::<_, i64>(11)?,
+                    r.get::<_, i64>(12)?,
                     r.get::<_, Option<i64>>(13)?,
-                    r.get::<_, Option<String>>(14)?,
-                    r.get::<_, String>(15)?,
-                    r.get::<_, i64>(16)?,
+                    r.get::<_, Option<i64>>(14)?,
+                    r.get::<_, Option<i64>>(15)?,
+                    r.get::<_, Option<i64>>(16)?,
+                    r.get::<_, Option<String>>(17)?,
+                    r.get::<_, String>(18)?,
+                    r.get::<_, i64>(19)?,
                 ))
             },
         )?;
@@ -239,6 +249,9 @@ impl LocalStore {
                     session_id,
                     tool_id,
                     total_tokens,
+                    input_uncached_tokens,
+                    cache_read_tokens,
+                    cache_write_tokens,
                     usage_record_count,
                     exact_records,
                     aggregate_records,
@@ -261,6 +274,9 @@ impl LocalStore {
                     session_id,
                     tool_id,
                     total_tokens: pos_u64(total_tokens)?,
+                    input_uncached_tokens: pos_u64(input_uncached_tokens)?,
+                    cache_read_tokens: pos_u64(cache_read_tokens)?,
+                    cache_write_tokens: pos_u64(cache_write_tokens)?,
                     usage_record_count: pos_u64(usage_record_count)?,
                     exact_records: pos_u64(exact_records)?,
                     aggregate_records: pos_u64(aggregate_records)?,

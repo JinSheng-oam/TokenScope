@@ -23,7 +23,7 @@ pub(crate) struct Source {
     subpath: Option<String>,
     skill: Option<String>,
 }
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub(crate) struct Candidate {
     path: String,
     name: String,
@@ -651,6 +651,98 @@ pub(crate) async fn update_skill_source(id: CustomizationId) -> Result<String, S
     tauri::async_runtime::spawn_blocking(move || update(&id))
         .await
         .map_err(|_| "更新任务失败")?
+}
+
+fn detect_source(id: &CustomizationId) -> Result<Option<String>, String> {
+    if let Some(skill) = managed(id)? {
+        if let Some(s) = skill.source_ref {
+            return Ok(Some(s));
+        }
+    }
+    let (_, path) = resolve(id)?;
+    let dir = path.parent().ok_or("无效路径")?;
+    let git_dir = dir.join(".git");
+    if git_dir.exists() {
+        if let Ok(url) = git(&["config", "--get", "remote.origin.url"], Some(dir)) {
+            let trimmed = url.trim();
+            if !trimmed.is_empty() {
+                let https_url = if let Some(rem) = trimmed.strip_prefix("git@github.com:") {
+                    format!("https://github.com/{}", rem.trim_end_matches(".git"))
+                } else if trimmed.starts_with("https://") {
+                    trimmed.trim_end_matches(".git").to_string()
+                } else {
+                    trimmed.to_string()
+                };
+                return Ok(Some(https_url));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn adopt(
+    id: &CustomizationId,
+    source_input: &str,
+    candidate_path: Option<&str>,
+) -> Result<UpdateInfo, String> {
+    let source = source_from(source_input)?;
+    let (_tmp, repo, latest) = clone_source(&source)?;
+    let candidates = discover(&repo, &source)?;
+
+    let matched = if let Some(cp) = candidate_path {
+        candidates
+            .iter()
+            .find(|c| c.path == cp)
+            .cloned()
+            .ok_or("指定的子目录不是有效的 skill")?
+    } else if candidates.len() == 1 {
+        candidates[0].clone()
+    } else if let Some(m) = candidates.iter().find(|c| c.name == id.name) {
+        m.clone()
+    } else {
+        return Err("来源包含多个 skill，请指定具体子目录".into());
+    };
+
+    let (_, path) = resolve(id)?;
+    let dir = path.parent().ok_or("无效路径")?;
+    let canonical_dir = if dir.is_symlink() {
+        fs::canonicalize(dir).map_err(|e| format!("解析符号链接失败：{e}"))?
+    } else {
+        dir.to_path_buf()
+    };
+
+    let files = snapshot(&canonical_dir)?;
+    write_meta(
+        &canonical_dir,
+        &Metadata {
+            source,
+            revision: latest,
+            skill_path: matched.path,
+            files,
+        },
+    )?;
+
+    check(id)
+}
+
+#[tauri::command]
+pub(crate) async fn detect_skill_source(id: CustomizationId) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || detect_source(&id))
+        .await
+        .map_err(|_| "检测来源任务失败")?
+}
+
+#[tauri::command]
+pub(crate) async fn adopt_skill_source(
+    id: CustomizationId,
+    source_input: String,
+    candidate_path: Option<String>,
+) -> Result<UpdateInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        adopt(&id, &source_input, candidate_path.as_deref())
+    })
+    .await
+    .map_err(|_| "纳管任务失败")?
 }
 
 #[cfg(test)]

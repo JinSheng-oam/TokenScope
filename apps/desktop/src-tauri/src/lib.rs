@@ -2,6 +2,7 @@
 //! The WebView never opens SQLite or reads source logs.
 mod agent;
 mod agent_customizations;
+mod ai_assistant;
 mod dashboard;
 mod diagnostics;
 mod hub;
@@ -81,10 +82,20 @@ pub fn run() {
             agent_customizations::list_customizations,
             agent_customizations::read_customization,
             agent_customizations::save_customization,
+            agent_customizations::create_instruction,
+            agent_customizations::rename_customization,
+            agent_customizations::toggle_skill_enabled,
             skill_sources::inspect_skill_source,
             skill_sources::install_skill_source,
             skill_sources::check_skill_update,
             skill_sources::update_skill_source,
+            skill_sources::detect_skill_source,
+            skill_sources::adopt_skill_source,
+            ai_assistant::get_ai_config,
+            ai_assistant::save_ai_config,
+            ai_assistant::fetch_ai_models,
+            ai_assistant::get_skill_summary,
+            ai_assistant::generate_skill_summary,
             session_activity::recent_session_activity,
             dashboard::get_dashboard_snapshot,
             dashboard::get_session_analysis,

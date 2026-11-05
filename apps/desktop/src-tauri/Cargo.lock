@@ -4517,6 +4517,7 @@ dependencies = [
  "fs2",
  "iana-time-zone",
  "notify",
+ "reqwest 0.12.28",
  "rusqlite",
  "serde",
  "serde_json",

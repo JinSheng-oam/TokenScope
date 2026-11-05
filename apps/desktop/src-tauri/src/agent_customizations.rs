@@ -25,6 +25,7 @@ pub(crate) struct CustomizationEntry {
     exists: bool,
     editable: bool,
     linked: bool,
+    enabled: bool,
 }
 
 pub(crate) struct Root {
@@ -110,6 +111,25 @@ pub(crate) fn valid_skill_name(name: &str) -> bool {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
+pub(crate) fn valid_instruction_name(name: &str) -> bool {
+    let trimmed = name.trim();
+    if trimmed.is_empty() || trimmed.len() > 128 {
+        return false;
+    }
+    if !trimmed.to_ascii_lowercase().ends_with(".md") {
+        return false;
+    }
+    let stem = &trimmed[..trimmed.len() - 3];
+    if stem.is_empty() || stem == "." || stem == ".." {
+        return false;
+    }
+    !stem.contains('/')
+        && !stem.contains('\\')
+        && !stem.contains(':')
+        && stem
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
 pub(crate) fn resolve(id: &CustomizationId) -> Result<(Root, PathBuf), String> {
     let root = roots(&id.provider)?
         .into_iter()
@@ -119,9 +139,15 @@ pub(crate) fn resolve(id: &CustomizationId) -> Result<(Root, PathBuf), String> {
         if !valid_skill_name(&id.name) {
             return Err("无效的 skill 名称".into());
         }
-        root.path.join(&id.name).join("SKILL.md")
+        let active = root.path.join(&id.name).join("SKILL.md");
+        let disabled = root.path.join(&id.name).join("SKILL.md.disabled");
+        if disabled.is_file() && !active.is_file() {
+            disabled
+        } else {
+            active
+        }
     } else {
-        if !root.names.contains(&id.name.as_str()) {
+        if !root.names.contains(&id.name.as_str()) && !valid_instruction_name(&id.name) {
             return Err("不支持的指令文件".into());
         }
         root.path.join(&id.name)
@@ -153,7 +179,13 @@ fn check_target(root: &Root, path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
-fn entry(id: CustomizationId, root: &Root, path: PathBuf, linked: bool) -> CustomizationEntry {
+fn entry(
+    id: CustomizationId,
+    root: &Root,
+    path: PathBuf,
+    linked: bool,
+    enabled: bool,
+) -> CustomizationEntry {
     let editable = check_target(root, &path).is_ok();
     CustomizationEntry {
         id,
@@ -162,6 +194,7 @@ fn entry(id: CustomizationId, root: &Root, path: PathBuf, linked: bool) -> Custo
         exists: path.is_file(),
         editable,
         linked,
+        enabled,
     }
 }
 pub(crate) fn display_path(path: &Path) -> String {
@@ -176,7 +209,9 @@ fn list(provider: &str) -> Result<Vec<CustomizationEntry>, String> {
     let mut result = Vec::new();
     for root in roots(provider)? {
         if root.kind == "instruction" {
+            let mut seen = std::collections::HashSet::new();
             for name in root.names {
+                seen.insert(name.to_ascii_lowercase());
                 let id = CustomizationId {
                     provider: provider.into(),
                     root: root.id.into(),
@@ -186,7 +221,28 @@ fn list(provider: &str) -> Result<Vec<CustomizationEntry>, String> {
                     .map(|(_, path)| path)
                     .unwrap_or_else(|_| root.path.join(name));
                 let linked = is_link(&root.path.join(name));
-                result.push(entry(id, &root, path, linked));
+                result.push(entry(id, &root, path, linked, true));
+            }
+            if let Ok(entries) = fs::read_dir(&root.path) {
+                for item in entries.flatten() {
+                    let file_name = item.file_name().to_string_lossy().to_string();
+                    if valid_instruction_name(&file_name)
+                        && !seen.contains(&file_name.to_ascii_lowercase())
+                        && item.path().is_file()
+                    {
+                        seen.insert(file_name.to_ascii_lowercase());
+                        let id = CustomizationId {
+                            provider: provider.into(),
+                            root: root.id.into(),
+                            name: file_name,
+                        };
+                        let linked = is_link(&item.path());
+                        let path = resolve(&id)
+                            .map(|(_, path)| path)
+                            .unwrap_or_else(|_| item.path());
+                        result.push(entry(id, &root, path, linked, true));
+                    }
+                }
             }
         } else {
             let entries = match fs::read_dir(&root.path) {
@@ -202,16 +258,20 @@ fn list(provider: &str) -> Result<Vec<CustomizationEntry>, String> {
                 if !valid_skill_name(&name) {
                     continue;
                 }
-                let path = item.path().join("SKILL.md");
-                if path.is_file() {
+                let active = item.path().join("SKILL.md");
+                let disabled = item.path().join("SKILL.md.disabled");
+                let is_active = active.is_file();
+                let is_disabled = !is_active && disabled.is_file();
+                if is_active || is_disabled {
                     let id = CustomizationId {
                         provider: provider.into(),
                         root: root.id.into(),
                         name,
                     };
-                    let linked = is_link(&item.path()) || is_link(&path);
-                    let actual = resolve(&id).map(|(_, path)| path).unwrap_or(path);
-                    result.push(entry(id, &root, actual, linked));
+                    let target_path = if is_active { active } else { disabled };
+                    let linked = is_link(&item.path()) || is_link(&target_path);
+                    let actual = resolve(&id).map(|(_, path)| path).unwrap_or(target_path);
+                    result.push(entry(id, &root, actual, linked, is_active));
                 }
             }
         }
@@ -365,6 +425,162 @@ pub(crate) async fn save_customization(
         .map_err(|_| "保存任务失败")?
 }
 
+fn create_instr(
+    provider: &str,
+    root_id: &str,
+    name: &str,
+    content: Option<&str>,
+) -> Result<CustomizationEntry, String> {
+    let name = name.trim();
+    if !valid_instruction_name(name) {
+        return Err("无效的文件名，必须以 .md 结尾且仅包含字母、数字、点、连字符和下划线".into());
+    }
+    let all_roots = roots(provider)?;
+    let root = all_roots
+        .into_iter()
+        .find(|r| r.id == root_id && r.kind == "instruction")
+        .ok_or("不支持的指令目录")?;
+    fs::create_dir_all(&root.path).map_err(|e| format!("创建目录失败：{e}"))?;
+    let path = root.path.join(name);
+    if path.exists() {
+        return Err("同名指令文件已存在".into());
+    }
+    let initial_content = content.unwrap_or("");
+    fs::write(&path, initial_content).map_err(|e| format!("创建指令文件失败：{e}"))?;
+    let id = CustomizationId {
+        provider: provider.into(),
+        root: root.id.into(),
+        name: name.into(),
+    };
+    Ok(entry(id, &root, path, false, true))
+}
+
+fn rename_item(id: &CustomizationId, new_name: &str) -> Result<CustomizationEntry, String> {
+    let new_name = new_name.trim();
+    let root = roots(&id.provider)?
+        .into_iter()
+        .find(|r| r.id == id.root)
+        .ok_or("不支持的文件位置")?;
+
+    if root.kind == "instruction" {
+        if !valid_instruction_name(new_name) {
+            return Err("无效的指令文件名，必须以 .md 结尾且不包含特殊路径字符".into());
+        }
+        let old_path = root.path.join(&id.name);
+        if !old_path.is_file() {
+            return Err("原指令文件不存在".into());
+        }
+        if is_link(&old_path) {
+            return Err("符号链接文件不支持直接重命名，请在原位置管理".into());
+        }
+        let new_path = root.path.join(new_name);
+        if new_path.exists() {
+            return Err("目标文件名已存在".into());
+        }
+        fs::rename(&old_path, &new_path).map_err(|e| format!("重命名文件失败：{e}"))?;
+        let new_id = CustomizationId {
+            provider: id.provider.clone(),
+            root: id.root.clone(),
+            name: new_name.into(),
+        };
+        Ok(entry(new_id, &root, new_path, false, true))
+    } else if root.kind == "skill" {
+        if !valid_skill_name(new_name) {
+            return Err("无效的 skill 名称，仅允许字母、数字、连字符和下划线".into());
+        }
+        let old_dir = root.path.join(&id.name);
+        if !old_dir.is_dir() {
+            return Err("原 skill 目录不存在".into());
+        }
+        if is_link(&old_dir) {
+            return Err("符号链接目录不支持直接重命名，请在原位置管理".into());
+        }
+        let new_dir = root.path.join(new_name);
+        if new_dir.exists() {
+            return Err("目标 skill 名称已存在".into());
+        }
+        fs::rename(&old_dir, &new_dir).map_err(|e| format!("重命名 skill 失败：{e}"))?;
+        let new_id = CustomizationId {
+            provider: id.provider.clone(),
+            root: id.root.clone(),
+            name: new_name.into(),
+        };
+        let active = new_dir.join("SKILL.md");
+        let is_active = active.is_file();
+        let target_file = if is_active {
+            active
+        } else {
+            new_dir.join("SKILL.md.disabled")
+        };
+        Ok(entry(new_id, &root, target_file, false, is_active))
+    } else {
+        Err("不支持的类型".into())
+    }
+}
+
+fn toggle_skill(id: &CustomizationId, enabled: bool) -> Result<bool, String> {
+    let (root, _) = resolve(id)?;
+    if root.kind != "skill" {
+        return Err("仅支持对 skill 启用或停用".into());
+    }
+    let skill_dir = root.path.join(&id.name);
+    let active = skill_dir.join("SKILL.md");
+    let disabled = skill_dir.join("SKILL.md.disabled");
+    if enabled {
+        if active.is_file() {
+            return Ok(true);
+        }
+        if !disabled.is_file() {
+            return Err("找不到可启用的 SKILL.md.disabled 文件".into());
+        }
+        fs::rename(&disabled, &active).map_err(|e| format!("启用 skill 失败：{e}"))?;
+        Ok(true)
+    } else {
+        if disabled.is_file() && !active.is_file() {
+            return Ok(false);
+        }
+        if !active.is_file() {
+            return Err("找不到可停用的 SKILL.md 文件".into());
+        }
+        fs::rename(&active, &disabled).map_err(|e| format!("停用 skill 失败：{e}"))?;
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn create_instruction(
+    provider: String,
+    root: String,
+    name: String,
+    content: Option<String>,
+) -> Result<CustomizationEntry, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        create_instr(&provider, &root, &name, content.as_deref())
+    })
+    .await
+    .map_err(|_| "创建指令任务失败")?
+}
+
+#[tauri::command]
+pub(crate) async fn rename_customization(
+    id: CustomizationId,
+    new_name: String,
+) -> Result<CustomizationEntry, String> {
+    tauri::async_runtime::spawn_blocking(move || rename_item(&id, &new_name))
+        .await
+        .map_err(|_| "重命名任务失败")?
+}
+
+#[tauri::command]
+pub(crate) async fn toggle_skill_enabled(
+    id: CustomizationId,
+    enabled: bool,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || toggle_skill(&id, enabled))
+        .await
+        .map_err(|_| "切换状态任务失败")?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,6 +673,46 @@ mod tests {
         fs::remove_dir(&link).unwrap();
         #[cfg(unix)]
         fs::remove_file(&link).unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn validates_instruction_names() {
+        assert!(valid_instruction_name("AGENTS.md"));
+        assert!(valid_instruction_name("custom_rules.md"));
+        assert!(valid_instruction_name("rules-2.md"));
+        assert!(!valid_instruction_name(""));
+        assert!(!valid_instruction_name(".md"));
+        assert!(!valid_instruction_name("rules.txt"));
+        assert!(!valid_instruction_name("../rules.md"));
+        assert!(!valid_instruction_name("dir/rules.md"));
+    }
+
+    #[test]
+    fn toggles_skill_between_enabled_and_disabled() {
+        let dir = env::temp_dir().join(format!(
+            "tokenscope-toggle-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let skill_dir = dir.join("test-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        let skill_file = skill_dir.join("SKILL.md");
+        fs::write(&skill_file, "# Test Skill").unwrap();
+
+        // Disable
+        // Verify file rename
+        fs::rename(&skill_file, skill_dir.join("SKILL.md.disabled")).unwrap();
+        assert!(skill_dir.join("SKILL.md.disabled").is_file());
+        assert!(!skill_file.exists());
+
+        // Re-enable
+        fs::rename(skill_dir.join("SKILL.md.disabled"), &skill_file).unwrap();
+        assert!(skill_file.is_file());
+        assert!(!skill_dir.join("SKILL.md.disabled").exists());
+
         fs::remove_dir_all(dir).unwrap();
     }
 }

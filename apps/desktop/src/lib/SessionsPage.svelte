@@ -343,7 +343,22 @@
               </td>
 
               <td class="tabular session-token-cell">
-                <strong>{formatNumber(session.total_tokens)}</strong>
+                <div class="session-token-main">
+                  <strong>{formatNumber(session.total_tokens)}</strong>
+                </div>
+                {@const promptTokens = (session.input_uncached_tokens ?? 0) + (session.cache_read_tokens ?? 0) + (session.cache_write_tokens ?? 0)}
+                {#if promptTokens > 0}
+                  <div
+                    class="session-precision-sub session-cache-rate"
+                    title={`输入 Token: ${formatNumber(promptTokens)}（读取缓存 ${formatNumber(session.cache_read_tokens ?? 0)}，写入缓存 ${formatNumber(session.cache_write_tokens ?? 0)}）`}
+                  >
+                    缓存率 {(((session.cache_read_tokens ?? 0) / promptTokens) * 100).toFixed(1)}%
+                  </div>
+                {:else}
+                  <div class="session-precision-sub text-muted" title="无输入 Token 或未提供缓存记录">
+                    缓存率 —
+                  </div>
+                {/if}
               </td>
 
               <td class="session-precision-cell">

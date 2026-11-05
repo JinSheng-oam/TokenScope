@@ -1,6 +1,7 @@
 //! Desktop shell: packaged Agent supervisor, tray lifecycle and read-only stdio queries.
 //! The WebView never opens SQLite or reads source logs.
 mod agent;
+mod agent_customizations;
 mod dashboard;
 mod diagnostics;
 mod hub;
@@ -8,6 +9,7 @@ mod lifecycle;
 mod paths;
 mod session_activity;
 mod settings;
+mod skill_sources;
 mod state;
 mod webdav;
 
@@ -76,6 +78,13 @@ pub fn run() {
             agent::stop_agent,
             agent::get_agent_status,
             agent::refresh_codex_quota_now,
+            agent_customizations::list_customizations,
+            agent_customizations::read_customization,
+            agent_customizations::save_customization,
+            skill_sources::inspect_skill_source,
+            skill_sources::install_skill_source,
+            skill_sources::check_skill_update,
+            skill_sources::update_skill_source,
             session_activity::recent_session_activity,
             dashboard::get_dashboard_snapshot,
             dashboard::get_session_analysis,

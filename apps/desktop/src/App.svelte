@@ -36,9 +36,11 @@
   import SessionsPage from './lib/SessionsPage.svelte';
   import SettingsPage from './lib/SettingsPage.svelte';
   import ToolsPage from './lib/ToolsPage.svelte';
+  import AgentCustomizations from './lib/AgentCustomizations.svelte';
 
-  type Tab = 'overview' | 'devices' | 'tools' | 'models' | 'sessions' | 'projects' | 'quota' | 'settings';
+  type Tab = 'overview' | 'devices' | 'tools' | 'models' | 'sessions' | 'projects' | 'quota' | 'settings' | 'customizations';
   let activeTab: Tab = 'overview';
+  let customizationDirty = false;
   let range: DashboardRange = 'all';
   let customStart = '';
   let customEnd = '';
@@ -140,6 +142,7 @@
     { id: 'projects', label: '项目分析', iconKey: 'projects' },
     { id: 'sessions', label: '会话分析', iconKey: 'sessions' },
     { id: 'quota', label: '额度与活动', iconKey: 'quota' },
+    { id: 'customizations', label: 'Agent 配置', iconKey: 'tools' },
     { id: 'settings', label: '系统设置', iconKey: 'settings' },
   ];
 
@@ -360,6 +363,7 @@
 
   function handleSelectTab(nextTab: Tab) {
     if (activeTab === nextTab) return;
+    if (activeTab === 'customizations' && customizationDirty && !window.confirm('当前文件有未保存的更改，放弃更改？')) return;
     activeTab = nextTab;
     if (nextTab === 'overview') void pollSessionActivity();
     if (nextTab === 'quota') pollVisibleCodexQuota();
@@ -701,7 +705,9 @@
         </div>
       {/if}
 
-      {#if loading}
+      {#if activeTab === 'customizations'}
+        <AgentCustomizations {runtimeAvailable} bind:dirty={customizationDirty} />
+      {:else if loading}
         <div class="loading-state" role="status" aria-live="polite">
           <div class="loading-status-bar">
             <div class="loading-message">

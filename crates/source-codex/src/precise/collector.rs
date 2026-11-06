@@ -7,7 +7,7 @@ use super::{
     MAX_SESSION_INDEX_BYTES, MAX_SESSION_INDEX_LINE, MAX_SESSION_INDEX_ROWS, VERSION,
 };
 use crate::{
-    decompress_rollout, discover_codex_files, hash_path, is_zstd_rollout, mtime_ns, now_ms,
+    decompress_rollout, discover_codex_files, is_zstd_rollout, mtime_ns, now_ms,
     read_session_header_metadata, CodexError, Result, MAX_FILES,
 };
 use serde_json::Value;
@@ -119,6 +119,7 @@ fn import_codex_session_names(
 
     let updated_at_ms = now_ms()?;
     let mut updated = 0usize;
+    let mut batch = Vec::new();
     for (id, name) in names {
         let fallback_key;
         let keys = match source_keys.get(&id) {
@@ -130,13 +131,14 @@ fn import_codex_session_names(
         };
         for key in keys {
             if let Some(name) = name.as_deref() {
-                store.upsert_session_name(key, "codex", name, updated_at_ms)?;
+                batch.push((key.clone(), Some(name.to_owned())));
                 updated += 1;
             } else {
-                store.clear_session_name(key, "codex")?;
+                batch.push((key.clone(), None));
             }
         }
     }
+    store.upsert_session_names("codex", &batch, updated_at_ms)?;
     Ok(updated)
 }
 
@@ -161,6 +163,13 @@ fn collect_codex_precise_with_policy(
     let mut sessions = HashSet::new();
     let mut session_name_keys = HashMap::<String, Vec<String>>::new();
     let files = discover_codex_files(home)?;
+    let mut groups = HashMap::<String, Vec<std::path::PathBuf>>::new();
+    for file in &files {
+        if let Ok(header) = read_session_header_metadata(file) {
+            groups.entry(header.id).or_default().push(file.clone());
+        }
+    }
+    let mut grouped = HashSet::new();
     if files.len() > MAX_FILES {
         return Err(CodexError::Limit("too many files"));
     }
@@ -178,52 +187,47 @@ fn collect_codex_precise_with_policy(
             }
             Err(e) => return Err(e),
         };
-        let session = header.id;
         if let Some((project_id, project_name)) =
             header.cwd.as_deref().and_then(codex_project_metadata)
         {
             store.upsert_project_name(&project_id, &project_name, now_ms()?)?;
         }
-        let mut continuation: Option<String> = None;
-        let base_key = session_key("codex", session.as_bytes())?;
-        let key = if sessions.insert(base_key.clone()) {
-            base_key.clone()
-        } else if tolerant {
-            // A compaction continuation keeps the original logical session id.
-            // Give its source a derived key so both rollouts can be tracked
-            // independently without splitting their session in analytics.
-            let digest = hash_path(&file)?;
-            let derived = format!("{session}#{}", &digest[..8.min(digest.len())]);
-            let derived_key = session_key("codex", derived.as_bytes())?;
-            if !sessions.insert(derived_key.clone()) {
-                report.unsupported += 1;
+        let session = header.id;
+        if let Some(group) = groups.get(&session).filter(|g| g.len() > 1) {
+            if !grouped.insert(session.clone()) {
                 continue;
             }
-            eprintln!(
-                "TokenScope: codex continuation {} tracked as {derived}",
-                file.display()
-            );
-            continuation = Some(derived);
-            derived_key
-        } else {
-            return Err(CodexError::Invalid("duplicate session sources"));
-        };
+            let key = session_key("codex", session.as_bytes())?;
+            sessions.insert(key.clone());
+            session_name_keys
+                .entry(session.clone())
+                .or_default()
+                .push(key);
+            match super::grouped::collect(group, &session, store, device_id) {
+                Ok(result) => {
+                    report.files += result.files;
+                    report.reconciled += result.reconciled;
+                    report.inserted += result.inserted;
+                    report.revised += result.revised;
+                    report.unchanged += result.unchanged;
+                    report.lines += result.lines;
+                }
+                Err(CodexError::PendingHeader) => report.pending += 1,
+                Err(error) if tolerant => {
+                    eprintln!("TokenScope grouped rollout skipped: {error}");
+                    report.unsupported += 1;
+                }
+                Err(error) => return Err(error),
+            }
+            continue;
+        }
+        let continuation: Option<String> = None;
+        let base_key = session_key("codex", session.as_bytes())?;
+        let key = base_key.clone();
+        sessions.insert(key.clone());
         let title_keys = session_name_keys.entry(session.clone()).or_default();
         if !title_keys.contains(&base_key) {
             title_keys.push(base_key.clone());
-        }
-        if continuation.is_some() {
-            // Earlier versions exposed the derived rollout key as a session.
-            // If the user deleted that duplicate, carry the suppression to
-            // the now-canonical logical session before rescanning either file.
-            if store.is_session_suppressed("codex", &key)?
-                && !store.is_session_suppressed("codex", &base_key)?
-            {
-                store.delete_session("codex", &base_key, now_ms()?)?;
-            }
-            // Older versions stored the thread title under the derived rollout
-            // id, which surfaced as a second session row.
-            store.clear_session_name(&key, "codex")?;
         }
         let prior = store.checkpoint("codex", &key)?;
         // Compressed rollouts are immutable archives. Their fingerprint is

@@ -229,6 +229,41 @@ impl LocalStore {
     where
         I: IntoIterator<Item = CanonicalRecord>,
     {
+        self.reconcile_source_impl(expected, next, records, observed_at_ms, activity, None)
+    }
+
+    pub fn reconcile_complete_session_source<I>(
+        &mut self,
+        expected: Option<&SourceCheckpoint>,
+        next: &SourceCheckpoint,
+        records: I,
+        observed_at_ms: i64,
+    ) -> Result<ReconcileReport>
+    where
+        I: IntoIterator<Item = CanonicalRecord>,
+    {
+        self.reconcile_source_impl(
+            expected,
+            next,
+            records,
+            observed_at_ms,
+            None,
+            Some(&next.source_key),
+        )
+    }
+
+    fn reconcile_source_impl<I>(
+        &mut self,
+        expected: Option<&SourceCheckpoint>,
+        next: &SourceCheckpoint,
+        records: I,
+        observed_at_ms: i64,
+        activity: Option<&AntigravityActivity>,
+        retire_session: Option<&str>,
+    ) -> Result<ReconcileReport>
+    where
+        I: IntoIterator<Item = CanonicalRecord>,
+    {
         next.validate()?;
         if let Some(a) = activity {
             a.validate()?;
@@ -266,7 +301,16 @@ impl LocalStore {
             .optional()?
             .ok_or(StoreError::NotInitialized)?;
         let suppressed = load_suppressed_sessions(&tx, &next.tool_id)?;
-        let suppress_source = suppressed.contains(&next.source_key);
+        let mut suppress_source = suppressed.contains(&next.source_key);
+        if let Some(session) = retire_session {
+            let legacy_deleted: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM record_sources rs JOIN usage_records u ON u.record_id=rs.record_id JOIN session_suppressions s ON s.tool_id=rs.tool_id AND s.session_id=rs.source_key WHERE rs.tool_id=?1 AND u.session_id=?2)",
+                params![next.tool_id,session],|r|r.get(0))?;
+            if legacy_deleted {
+                suppress_source = true;
+                tx.execute("INSERT OR IGNORE INTO session_suppressions(tool_id,session_id,deleted_at_ms) VALUES(?1,?2,?3)",params![next.tool_id,session,observed_at_ms])?;
+            }
+        }
         tx.execute_batch(
             "CREATE TEMP TABLE IF NOT EXISTS tokenscope_seen (record_id TEXT PRIMARY KEY) WITHOUT ROWID; \
              DELETE FROM temp.tokenscope_seen;"
@@ -399,6 +443,28 @@ impl LocalStore {
             for (model, count) in &a.models {
                 tx.execute("INSERT INTO antigravity_model_activity(source_key,model_id,response_count) VALUES(?1,?2,?3)",
                     params![next.source_key,model,db_int(*count)?])?;
+            }
+        }
+        if let Some(session) = retire_session {
+            let keys = {
+                let mut stmt = tx.prepare("SELECT DISTINCT rs.source_key FROM record_sources rs JOIN usage_records u ON u.record_id=rs.record_id WHERE rs.tool_id=?1 AND u.session_id=?2 AND rs.source_key<>?3")?;
+                let rows = stmt
+                    .query_map(params![next.tool_id, session, next.source_key], |r| {
+                        r.get::<_, String>(0)
+                    })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            for key in keys {
+                report.tombstoned += super::super::records::tombstone_source_records(
+                    &tx,
+                    &next.tool_id,
+                    &key,
+                    observed_at_ms,
+                )?;
+                tx.execute(
+                    "DELETE FROM source_checkpoints WHERE tool_id=?1 AND source_key=?2",
+                    params![next.tool_id, key],
+                )?;
             }
         }
         // Temp seen keys are erased inside the same transaction. In-memory

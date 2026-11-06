@@ -139,7 +139,7 @@ fn scan_precise_mode(
         None => read_session_header_metadata(path)?,
     };
     let header_session = header.id;
-    let project_id = header
+    let mut project_id = header
         .cwd
         .as_deref()
         .and_then(codex_project_metadata)
@@ -243,6 +243,16 @@ fn scan_precise_mode(
         let v: Value = serde_json::from_slice(&line.bytes)?;
         let typ = v.get("type").and_then(Value::as_str);
         let payload = v.get("payload");
+        if typ == Some("session_meta")
+            && payload.and_then(|p| p.get("id")).and_then(Value::as_str)
+                == Some(header_session.as_str())
+        {
+            project_id = payload
+                .and_then(|p| p.get("cwd"))
+                .and_then(Value::as_str)
+                .and_then(codex_project_metadata)
+                .map(|(id, _)| id);
+        }
         if typ == Some("turn_context") {
             if let Some(s) = payload.and_then(|p| p.get("model")).and_then(Value::as_str) {
                 if s.len() > 256 || s.trim().is_empty() || s.chars().any(char::is_control) {

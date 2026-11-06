@@ -1,13 +1,14 @@
 //! M0-05 precision collector: per-response native usage is authoritative.
 //! Legacy sessions use monotonic cumulative deltas. A schema switch triggers
 //! a full, source-scoped reconciliation with explicit tombstones.
-const VERSION: u32 = 8;
+const VERSION: u32 = 9;
 const MAX_BATCH: usize = 50_000; // explicit upper bound pending true streaming decoder
 const MAX_SESSION_INDEX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_SESSION_INDEX_LINE: usize = 1024 * 1024;
 const MAX_SESSION_INDEX_ROWS: usize = 100_000;
 
 mod collector;
+mod grouped;
 mod model;
 mod scanner;
 mod usage;

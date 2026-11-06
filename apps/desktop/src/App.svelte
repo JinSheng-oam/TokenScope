@@ -382,7 +382,7 @@
       refreshTimer = undefined;
     }
     if (intervalMs > 0) {
-      refreshTimer = window.setInterval(() => void loadDashboard(false), intervalMs);
+      refreshTimer = window.setInterval(() => { if (document.visibilityState === 'visible') void loadDashboard(false); }, intervalMs);
     }
   }
 

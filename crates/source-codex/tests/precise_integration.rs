@@ -372,3 +372,74 @@ fn modern_full_log_with_3100_responses_is_not_truncated() {
     let next = collect_codex_precise(&f.root, &mut db, "dev1").unwrap();
     assert_eq!((next.inserted, next.revised), (0, 0));
 }
+
+#[test]
+fn grouped_rollouts_keep_identity_on_archive_and_deduplicate_responses() {
+    let f = Fx::new();
+    f.response("r1", "2026-11-02T00:00:01Z", 98, 0, 0, 2);
+    let second = f.file.with_file_name("rollout-z.jsonl");
+    let header = fs::read_to_string(&f.file)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap()
+        .to_owned();
+    fs::write(
+        &second,
+        format!(
+            "{header}\n{}",
+            response("r2", "2026-11-02T00:00:02Z", 198, 0, 0, 2)
+        ),
+    )
+    .unwrap();
+    let mut db = store();
+    let old = tokenscope_source_codex::precise::scan_precise_continuation(
+        &second,
+        "dev1",
+        None,
+        1,
+        &format!("{SESSION}#legacy-path"),
+    )
+    .unwrap();
+    let old_key = old.next.source_key.clone();
+    db.apply_scan(None, &old.next, &old.records, 1, false)
+        .unwrap();
+    collect_codex_precise_tolerant(&f.root, &mut db, "dev1").unwrap();
+    assert_eq!(db.usage_overview().unwrap().total_tokens, 300);
+    assert!(db.checkpoint("codex", &old_key).unwrap().is_none());
+    fs::create_dir_all(f.root.join("archived_sessions")).unwrap();
+    fs::rename(&second, f.root.join("archived_sessions/rollout-z.jsonl")).unwrap();
+    collect_codex_precise_tolerant(&f.root, &mut db, "dev1").unwrap();
+    assert_eq!(db.usage_overview().unwrap().total_tokens, 300);
+    // A copied historical response must not create a second billable event.
+    fs::write(
+        &second,
+        format!(
+            "{header}\n{}",
+            response("r1", "2026-11-02T00:00:01Z", 98, 0, 0, 2)
+        ),
+    )
+    .unwrap();
+    collect_codex_precise_tolerant(&f.root, &mut db, "dev1").unwrap();
+    assert_eq!(db.usage_overview().unwrap().total_tokens, 300);
+    assert_eq!(db.usage_overview().unwrap().record_count, 2);
+}
+#[test]
+fn grouped_legacy_counters_share_the_previous_rollout_baseline() {
+    let f = Fx::new();
+    f.total(98, 0, 2);
+    let header = fs::read_to_string(&f.file)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap()
+        .to_owned();
+    fs::write(
+        f.file.with_file_name("rollout-z.jsonl"),
+        format!("{header}\n{}", total(148, 0, 2)),
+    )
+    .unwrap();
+    let mut db = store();
+    collect_codex_precise_tolerant(&f.root, &mut db, "dev1").unwrap();
+    assert_eq!(db.usage_overview().unwrap().total_tokens, 150);
+}

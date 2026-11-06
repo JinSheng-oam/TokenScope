@@ -6,6 +6,35 @@ use crate::error::{Result, StoreError};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use tokenscope_core_domain::{payload_hash, TokenBreakdown};
 impl LocalStore {
+    pub fn upsert_session_names(
+        &mut self,
+        tool: &str,
+        names: &[(String, Option<String>)],
+        at: i64,
+    ) -> Result<()> {
+        self.conn.execute_batch("SAVEPOINT session_name_batch")?;
+        let result = (|| {
+            for (key, name) in names {
+                if let Some(name) = name {
+                    self.upsert_session_name(key, tool, name, at)?;
+                } else {
+                    self.clear_session_name(key, tool)?;
+                }
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.conn.execute_batch("RELEASE session_name_batch")?;
+                Ok(())
+            }
+            Err(error) => {
+                self.conn
+                    .execute_batch("ROLLBACK TO session_name_batch; RELEASE session_name_batch")?;
+                Err(error)
+            }
+        }
+    }
     /// Returns whether a session was manually removed from this device's statistics.
     pub fn is_session_suppressed(&self, tool_id: &str, session_id: &str) -> Result<bool> {
         validate_tool_id(tool_id)?;
@@ -143,7 +172,8 @@ impl LocalStore {
              VALUES(?1,?2,?3,?4)
              ON CONFLICT(session_id) DO UPDATE SET
                 tool_id=excluded.tool_id,name=excluded.name,updated_at_ms=excluded.updated_at_ms
-             WHERE excluded.updated_at_ms >= session_names.updated_at_ms",
+             WHERE excluded.updated_at_ms >= session_names.updated_at_ms
+               AND (excluded.name IS NOT session_names.name OR excluded.tool_id IS NOT session_names.tool_id)",
             params![session_id, tool_id, name, updated_at_ms],
         )?;
         Ok(())

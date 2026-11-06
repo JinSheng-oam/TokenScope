@@ -61,8 +61,10 @@ pub(super) fn query_agent(
             .lock()
             .ok()
             .and_then(|cache| cache.get(&key).cloned());
-        if let Some((cached, at)) = hit {
-            if at.elapsed() > Duration::from_secs(10)
+        if let Some((cached, _at)) = hit {
+            if chrono::DateTime::from_timestamp_millis(cached.snapshot.generated_at_ms)
+                .map(|at| at.with_timezone(&chrono::Local).date_naive())
+                != Some(chrono::Local::now().date_naive())
                 || cached.snapshot.data_revision < watch.revision.load(Ordering::Acquire)
             {
                 spawn_dashboard_refresh(app, range, start_date, end_date);

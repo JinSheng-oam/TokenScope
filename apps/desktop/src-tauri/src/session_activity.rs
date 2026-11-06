@@ -9,7 +9,7 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokenscope_core_domain::session_key;
+use tokenscope_core_domain::{session_key, stable_record_id};
 
 const ACTIVE_TURN_RETENTION_MS: u64 = 20 * 60 * 1000;
 const FRESH_FILE_ACTIVE_MS: u64 = 90 * 1000;
@@ -211,7 +211,8 @@ fn read_antigravity_active(db: &Path, now: u64) -> Option<Vec<SessionActivity>> 
                 if id.is_empty() || id.len() > 200 || id.chars().any(char::is_control) {
                     return None;
                 }
-                let session_id = session_key("antigravity", id.as_bytes()).ok()?;
+                let session_id =
+                    stable_record_id("antigravity", b"conversation", id.as_bytes()).ok()?;
                 Some(SessionActivity {
                     tool_id: "antigravity",
                     session_id,
@@ -382,10 +383,7 @@ fn codex_thread_titles(home: &Path) -> Arc<HashMap<String, String>> {
         {
             continue;
         }
-        let Some(raw_name) = value
-            .get("thread_name")
-            .and_then(serde_json::Value::as_str)
-        else {
+        let Some(raw_name) = value.get("thread_name").and_then(serde_json::Value::as_str) else {
             continue;
         };
         let normalized = raw_name.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -411,6 +409,43 @@ fn codex_thread_titles(home: &Path) -> Arc<HashMap<String, String>> {
 
 fn other_activities(now: u64) -> Vec<SessionActivity> {
     ensure_other_watchers();
+    // File events are a fast path; quiet generations still need a heartbeat.
+    static LAST_CHECK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let last = LAST_CHECK.load(std::sync::atomic::Ordering::Relaxed);
+    if now.saturating_sub(last) >= 30_000
+        && LAST_CHECK
+            .compare_exchange(
+                last,
+                now,
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+            .is_ok()
+    {
+        let mut active = Vec::new();
+        let mut succeeded = false;
+        for (root, tool, _) in active_roots() {
+            if tool == "antigravity-summary" {
+                if let Some(rows) =
+                    read_antigravity_active(&root.join("conversation_summaries.db"), now)
+                {
+                    active.extend(rows);
+                    succeeded = true;
+                }
+            }
+        }
+        if succeeded {
+            if let Ok(mut states) = OTHER_ACTIVITY
+                .get_or_init(|| Mutex::new(HashMap::new()))
+                .lock()
+            {
+                states.retain(|_, a| a.tool_id != "antigravity");
+                for a in active {
+                    states.insert(a.session_id.clone(), a);
+                }
+            }
+        }
+    }
     OTHER_ACTIVITY
         .get()
         .and_then(|states| states.lock().ok())

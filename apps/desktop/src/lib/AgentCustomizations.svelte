@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { icons } from './icons';
 
   export let runtimeAvailable: boolean;
   export let dirty = false;
@@ -79,6 +80,41 @@
   let adopting = false;
   let adoptSourceInput = '';
   let adoptingBusy = false;
+
+    let filterQuery = '';
+  let copiedPath = false;
+
+  $: filteredInstructions = instructions.filter(
+    (entry) => !filterQuery.trim() || entry.id.name.toLowerCase().includes(filterQuery.toLowerCase().trim())
+  );
+  $: filteredSkills = skills.filter(
+    (entry) => !filterQuery.trim() || entry.id.name.toLowerCase().includes(filterQuery.toLowerCase().trim())
+  );
+  $: hasAiConfig = Boolean(aiConfig.api_url.trim() && aiConfig.api_key.trim());
+  $: editorLines = content ? content.split('\n').length : 0;
+  $: editorChars = content ? content.length : 0;
+
+  function isPresetActive(preset: typeof aiPresets[0]): boolean {
+    if (!aiConfig.api_url) return false;
+    const cur = aiConfig.api_url.toLowerCase();
+    return cur.includes(preset.url.toLowerCase()) || 
+      (preset.label === 'DeepSeek' && cur.includes('deepseek')) ||
+      (preset.label === 'OpenAI' && cur.includes('openai')) ||
+      (preset.label === 'SiliconFlow' && cur.includes('siliconflow')) ||
+      (preset.label === '通义千问' && (cur.includes('aliyuncs') || cur.includes('dashscope'))) ||
+      (preset.label === 'OpenRouter' && cur.includes('openrouter')) ||
+      (preset.label === 'Ollama' && (cur.includes('11434') || cur.includes('ollama')));
+  }
+
+  async function copyPath(path: string) {
+    try {
+      await navigator.clipboard.writeText(path);
+      copiedPath = true;
+      setTimeout(() => (copiedPath = false), 2000);
+    } catch {
+      // fallback
+    }
+  }
 
   $: dirty = selected !== null && content !== (original ?? '');
   $: instructions = entries.filter((entry) => entry.kind === 'instruction');
@@ -482,50 +518,85 @@
 
 <div class="custom-page">
   <div class="custom-heading">
-    <div>
+    <div class="heading-text">
       <h1>Agent 配置与技能管理</h1>
       <p>管理全局指令、Skill 启停与更新；支持第三方 Skill 纳管与 AI 智能摘要分析。</p>
     </div>
     <div class="head-right-actions">
-      <button class="btn-secondary" onclick={() => showAiConfig = !showAiConfig}>
-        ⚙️ AI 助手配置
+      <button
+        class="ai-toggle-btn"
+        class:active={showAiConfig}
+        onclick={() => showAiConfig = !showAiConfig}
+        title="配置用于 Skill 智能分析的 AI 模型 API"
+      >
+        <span class="ai-status-dot" class:configured={hasAiConfig}></span>
+        <span class="ai-btn-icon">{@html icons.sparkle}</span>
+        <span>AI 助手配置</span>
       </button>
-      <span class="local-label">仅本机</span>
+      <span class="local-badge" title="所有指令与 Skill 均只读写本机环境文件，不上传云端">
+        {@html icons.shield}
+        <span>仅操作本机文件</span>
+      </span>
     </div>
   </div>
 
   {#if showAiConfig}
-    <div class="ai-config-panel">
+    <div class="ai-config-panel" role="region" aria-label="AI 助手配置">
       <div class="ai-config-head">
-        <strong>🤖 AI 助手配置（用于 Skill 智能分析与摘要生成）</strong>
-        <button class="btn-compact" onclick={() => showAiConfig = false}>✕ 关闭</button>
+        <div class="ai-config-title">
+          <span class="ai-config-icon">{@html icons.sparkle}</span>
+          <strong>AI 助手服务配置</strong>
+          <span class="ai-config-sub">用于 Skill 代码智能分析与中文使用指南生成</span>
+          {#if hasAiConfig}
+            <span class="ai-saved-pill">已配置</span>
+          {:else}
+            <span class="ai-unsaved-pill">待配置</span>
+          {/if}
+        </div>
+        <button class="btn-compact btn-close" onclick={() => showAiConfig = false} title="收起配置面板">✕ 收起</button>
       </div>
-      <div class="ai-presets-row">
-        <span class="text-muted">快捷服务商：</span>
-        {#each aiPresets as p}
-          <button class="ai-preset-chip" onclick={() => applyAiPreset(p)}>{p.label}</button>
-        {/each}
+
+      <div class="ai-presets-bar">
+        <span class="presets-label">快捷服务商：</span>
+        <div class="preset-chips">
+          {#each aiPresets as p}
+            {@const active = isPresetActive(p)}
+            <button
+              type="button"
+              class="ai-preset-chip"
+              class:selected={active}
+              onclick={() => applyAiPreset(p)}
+            >
+              {p.label}
+              {#if active}<span class="preset-check">✓</span>{/if}
+            </button>
+          {/each}
+        </div>
       </div>
+
       <div class="ai-config-grid">
-        <label>
-          <span>API 接口地址 (支持自动补全)：</span>
+        <label class="ai-field">
+          <span class="field-title">API 接口地址 <small class="text-muted">(自动补全 /v1)</small></span>
           <input
+            type="text"
             bind:value={aiConfig.api_url}
             onblur={() => aiConfig.api_url = normalizeApiUrl(aiConfig.api_url)}
-            placeholder="例如 https://api.openai.com/v1 或 https://api.deepseek.com"
+            placeholder="例如 https://api.deepseek.com/v1"
           />
         </label>
-        <label>
-          <span>API Key：</span>
+
+        <label class="ai-field">
+          <span class="field-title">API Key</span>
           <input
             type="password"
             bind:value={aiConfig.api_key}
             placeholder="sk-..."
           />
         </label>
-        <label class="ai-model-field">
-          <span>模型名称：</span>
-          <div class="ai-model-input-group">
+
+        <label class="ai-field ai-model-field">
+          <span class="field-title">模型名称</span>
+          <div class="ai-model-group">
             <input
               list="models-datalist"
               bind:value={aiConfig.model}
@@ -537,77 +608,171 @@
               {/each}
             </datalist>
             <button
-              class="btn-secondary"
+              type="button"
+              class="btn-fetch-models"
               disabled={fetchingModels || !aiConfig.api_url.trim()}
               onclick={() => void fetchModels()}
+              title="连接 API 接口并获取当前可用模型列表"
             >
-              {fetchingModels ? '拉取中…' : '拉取模型'}
+              {#if fetchingModels}
+                <span class="spinner-small" aria-hidden="true"></span> 拉取中…
+              {:else}
+                拉取模型
+              {/if}
             </button>
           </div>
         </label>
       </div>
-      <div class="ai-config-actions">
-        <button class="btn-primary" disabled={aiSaving} onclick={() => void saveAiConfig()}>
-          {aiSaving ? '保存中…' : '保存配置'}
-        </button>
+
+      <div class="ai-config-footer">
+        <span class="ai-security-tip">密钥仅保存在本机桌面端受保护的配置库，不经过第三方中间服务</span>
+        <div class="ai-footer-buttons">
+          <button class="btn-secondary btn-sm" onclick={() => showAiConfig = false}>取消</button>
+          <button class="btn-primary btn-sm" disabled={aiSaving} onclick={() => void saveAiConfig()}>
+            {aiSaving ? '保存中…' : '保存配置'}
+          </button>
+        </div>
       </div>
     </div>
   {/if}
 
-  <p class="privacy-note">内容直接读写工具原有文件，不进入 TokenScope 数据库或同步。支持第三方 Skill 纳管更新；Skill 停用后编码工具将不再扫描载入。</p>
-  <div class="provider-tabs" role="group" aria-label="选择工具">
-    {#each providers as item}
-      <button class="btn-secondary" class:selected={provider === item.id} aria-pressed={provider === item.id} disabled={busy} onclick={() => void switchProvider(item.id)}>{item.label}</button>
-    {/each}
+  <div class="privacy-banner">
+    <span class="banner-icon">{@html icons.info}</span>
+    <p>内容直接读写工具原有文件，不进入 TokenScope 数据库或同步。支持第三方 Skill 纳管更新；Skill 停用后编码工具将不再扫描载入。</p>
+  </div>
+
+  <div class="provider-tabs-wrap">
+    <div class="provider-tabs" role="group" aria-label="选择工具">
+      {#each providers as item}
+        <button
+          type="button"
+          class="provider-tab-btn"
+          class:selected={provider === item.id}
+          aria-pressed={provider === item.id}
+          disabled={busy}
+          onclick={() => void switchProvider(item.id)}
+        >
+          {item.label}
+        </button>
+      {/each}
+    </div>
   </div>
 
   {#if !runtimeAvailable}
     <div class="empty-box">请在 TokenScope 桌面应用中管理本地文件。</div>
   {:else}
     {#if error}<p class="message error" role="alert">{error}</p>{/if}
-    {#if notice}<p class="message" role="status">{notice}</p>{/if}
+    {#if notice}<p class="message success" role="status">{notice}</p>{/if}
+
     <div class="workspace">
+      <!-- Catalog (Left Column) -->
       <section class="catalog" aria-label="文件列表">
         <div class="catalog-head">
-          <strong>文件列表</strong>
-          <button class="btn-secondary" disabled={busy} onclick={() => void refresh()}>刷新</button>
+          <div class="catalog-head-left">
+            <strong>文件列表</strong>
+            <span class="catalog-total-pill">{instructions.length + skills.length} 项</span>
+          </div>
+          <button
+            class="btn-icon-refresh"
+            disabled={busy}
+            onclick={() => void refresh()}
+            title="刷新本地文件与 Skill 状态"
+            aria-label="刷新"
+          >
+            <span class:spin={busy}>{@html icons.refresh}</span>
+          </button>
+        </div>
+
+        <div class="catalog-search-box">
+          <input
+            type="search"
+            class="catalog-search-input"
+            bind:value={filterQuery}
+            placeholder="搜索指令或 Skill..."
+            aria-label="搜索指令或 Skill"
+          />
+          {#if filterQuery}
+            <button
+              type="button"
+              class="search-clear-btn"
+              onclick={() => filterQuery = ''}
+              title="清除搜索"
+              aria-label="清除搜索"
+            >✕</button>
+          {/if}
         </div>
 
         <div class="group-title instructions-head">
-          <span>全局指令 · {instructions.length}</span>
-          <button class="btn-secondary" disabled={busy} onclick={beginCreateInstruction}>新建指令</button>
+          <div class="group-title-left">
+            <span>全局指令</span>
+            <span class="count-badge">{filteredInstructions.length}</span>
+          </div>
+          <button class="btn-ghost-sm" disabled={busy} onclick={beginCreateInstruction}>+ 新建指令</button>
         </div>
-        {#each instructions as entry}
-          <button class="file-row" class:active={selected?.id.root === entry.id.root && selected?.id.name === entry.id.name} disabled={busy || !entry.editable} onclick={() => void select(entry)}>
-            <strong>{entry.id.name}</strong><span>{entry.exists ? entry.id.root : '尚未创建'}</span>
+
+        {#each filteredInstructions as entry}
+          <button
+            type="button"
+            class="file-row"
+            class:active={selected?.id.root === entry.id.root && selected?.id.name === entry.id.name}
+            disabled={busy || !entry.editable}
+            onclick={() => void select(entry)}
+          >
+            <div class="file-row-main">
+              <span class="file-type-icon">📄</span>
+              <strong class="file-name" title={entry.id.name}>{entry.id.name}</strong>
+            </div>
+            <span class="file-sub-root">{entry.exists ? entry.id.root : '尚未创建'}</span>
           </button>
+        {:else}
+          {#if filterQuery}
+            <p class="empty-list">未匹配到指令</p>
+          {/if}
         {/each}
 
         <div class="group-title skills-head">
-          <span>Skills · {skills.length}</span>
+          <div class="group-title-left">
+            <span>Skills</span>
+            <span class="count-badge">{filteredSkills.length}</span>
+          </div>
           <div class="catalog-actions">
-            <button class="btn-secondary" disabled={busy} onclick={beginImport}>添加</button>
-            <button class="btn-secondary" disabled={busy} onclick={beginCreate}>新建</button>
+            <button class="btn-ghost-sm" disabled={busy} onclick={beginImport}>添加</button>
+            <button class="btn-ghost-sm" disabled={busy} onclick={beginCreate}>新建</button>
           </div>
         </div>
-        {#each skills as entry}
-          <button class="file-row" class:active={selected?.id.root === entry.id.root && selected?.id.name === entry.id.name} class:row-disabled={!entry.enabled} disabled={busy || !entry.editable} title={entry.editable ? entry.path : '符号链接请在原位置管理'} onclick={() => void select(entry)}>
-            <div class="skill-row-title">
-              <strong>{entry.id.name}</strong>
-              {#if !entry.enabled}
-                <span class="status-badge disabled">已停用</span>
-              {/if}
-              {#if entry.linked}
-                <span class="link-badge">软链接</span>
-              {/if}
+
+        {#each filteredSkills as entry}
+          <button
+            type="button"
+            class="file-row"
+            class:active={selected?.id.root === entry.id.root && selected?.id.name === entry.id.name}
+            class:row-disabled={!entry.enabled}
+            disabled={busy || !entry.editable}
+            title={entry.editable ? entry.path : '符号链接请在原位置管理'}
+            onclick={() => void select(entry)}
+          >
+            <div class="file-row-main">
+              <span class="file-type-icon">🧩</span>
+              <div class="skill-name-col">
+                <strong class="file-name" title={entry.id.name}>{entry.id.name}</strong>
+                <div class="skill-tags-row">
+                  {#if !entry.enabled}
+                    <span class="status-badge disabled">已停用</span>
+                  {/if}
+                  {#if entry.linked}
+                    <span class="link-badge">软链接</span>
+                  {/if}
+                </div>
+              </div>
             </div>
-            <span>{entry.editable ? entry.id.root : '无法访问目标文件'}</span>
+            <span class="file-sub-root">{entry.editable ? entry.id.root : '无法访问目标文件'}</span>
           </button>
         {:else}
-          <p class="empty-list">尚未发现全局 skill。</p>
+          <p class="empty-list">{filterQuery ? '未匹配到相关 Skill' : '尚未发现全局 skill。'}</p>
         {/each}
       </section>
 
+      <!-- Editor Area (Right Column) -->
       <section class="editor" aria-label="文件编辑器">
         {#if importing}
           <div class="editor-head">
@@ -637,7 +802,7 @@
               <label for="import-name">安装名称</label>
               <input id="import-name" bind:value={skillName} maxlength="64" />
               <p class="source-hint">{inspection.source.url} · {inspection.revision.slice(0, 12)}。请确认来源可信，skill 可能包含脚本。</p>
-              <div>
+              <div class="form-btn-row">
                 <button class="btn-primary" disabled={busy} onclick={() => void installSource()}>安装选中 skill</button>
                 <button class="btn-secondary" onclick={() => importing = false}>取消</button>
               </div>
@@ -662,7 +827,7 @@
             </select>
             <label for="instr-name">指令文件名 (必须以 .md 结尾)</label>
             <input id="instr-name" bind:value={instructionName} placeholder="例如 CUSTOM_RULES.md" maxlength="64" />
-            <div>
+            <div class="form-btn-row">
               <button class="btn-primary" disabled={busy || !instructionName.trim()} onclick={() => void createInstruction()}>立即创建</button>
               <button class="btn-secondary" onclick={() => creatingInstruction = false}>取消</button>
             </div>
@@ -684,7 +849,7 @@
             </select>
             <label for="skill-name">名称</label>
             <input id="skill-name" bind:value={skillName} placeholder="例如 code-review" maxlength="64" />
-            <div>
+            <div class="form-btn-row">
               <button class="btn-primary" disabled={busy} onclick={() => void createSkill()}>开始编辑</button>
               <button class="btn-secondary" onclick={() => creating = false}>取消</button>
             </div>
@@ -692,25 +857,45 @@
 
         {:else if selected}
           <div class="editor-head">
-            <div>
+            <div class="editor-meta">
               <div class="editor-title-row">
-                <h2>{selected.id.name}{selected.kind === 'skill' ? ' / SKILL.md' : ''}</h2>
-                {#if selected.kind === 'skill'}
-                  <span class="status-badge" class:disabled={!selected.enabled} class:enabled={selected.enabled}>
-                    {selected.enabled ? '已启用' : '已停用'}
-                  </span>
-                {/if}
-                {#if selected.linked}
-                  <span class="link-badge">软链接目标</span>
-                {/if}
+                <h2 class="editor-file-title" title={selected.id.name}>
+                  {selected.id.name}{selected.kind === 'skill' ? ' / SKILL.md' : ''}
+                </h2>
+                <div class="editor-badges">
+                  {#if selected.kind === 'skill'}
+                    <span class="status-badge" class:disabled={!selected.enabled} class:enabled={selected.enabled}>
+                      <span class="status-dot"></span>
+                      {selected.enabled ? '已启用' : '已停用'}
+                    </span>
+                  {/if}
+                  {#if selected.linked}
+                    <span class="link-badge">软链接目标</span>
+                  {/if}
+                </div>
               </div>
-              <p title={selected.path}>{selected.path}</p>
+
+              <div class="editor-path-row">
+                <span class="editor-path" title={selected.path}>{selected.path}</span>
+                <button
+                  type="button"
+                  class="copy-path-btn"
+                  onclick={() => { if (selected) void copyPath(selected.path); }}
+                  title="复制文件绝对路径"
+                >
+                  {#if copiedPath}
+                    <span class="copy-success">已复制</span>
+                  {:else}
+                    <span>复制路径</span>
+                  {/if}
+                </button>
+              </div>
             </div>
 
             <div class="editor-actions">
               {#if selected.kind === 'skill' && selected.exists}
                 <button
-                  class="btn-secondary"
+                  class="btn-secondary btn-action"
                   disabled={busy}
                   onclick={() => void toggleSkill()}
                   title={selected.enabled ? '停用此 Skill，Agent 将不再载入' : '启用此 Skill'}
@@ -718,15 +903,19 @@
                   {selected.enabled ? '停用 Skill' : '启用 Skill'}
                 </button>
                 <button
-                  class="btn-secondary"
+                  class="btn-secondary btn-action ai-action-btn"
                   disabled={busy || analyzingSkill}
                   onclick={() => void generateSkillSummary()}
                   title="使用 AI 深度分析此 Skill，给出中文核心功能摘要与调用指南"
                 >
-                  {analyzingSkill ? 'AI 分析中…' : '✨ AI 智能分析'}
+                  {#if analyzingSkill}
+                    <span class="spinner-small" aria-hidden="true"></span> 分析中…
+                  {:else}
+                    <span class="ai-sparkle-icon">{@html icons.sparkle}</span> AI 智能分析
+                  {/if}
                 </button>
                 <button
-                  class="btn-secondary"
+                  class="btn-secondary btn-action"
                   disabled={busy || dirty}
                   onclick={() => void checkUpdate()}
                 >
@@ -736,7 +925,7 @@
 
               {#if selected.exists}
                 <button
-                  class="btn-secondary"
+                  class="btn-secondary btn-action"
                   disabled={busy}
                   onclick={() => void renameCustomization()}
                   title="重命名文件或 Skill 目录"
@@ -746,7 +935,7 @@
               {/if}
 
               <button
-                class="btn-primary"
+                class="btn-primary btn-save"
                 disabled={busy || (!dirty && selected.exists)}
                 onclick={() => void save()}
               >
@@ -808,7 +997,8 @@
             <div class="summary-card">
               <div class="summary-header">
                 <div class="summary-title">
-                  <span>💡 AI 智能摘要分析</span>
+                  <span class="summary-sparkle">{@html icons.sparkle}</span>
+                  <span>AI 智能摘要分析</span>
                   <span class="summary-meta">模型: {skillSummary.model}</span>
                 </div>
                 <div class="summary-actions">
@@ -827,12 +1017,12 @@
               {#if showSummaryCard}
                 <div class="summary-body">
                   <div class="summary-section">
-                    <h4>功能定位（这个 Skill 是干什么的）：</h4>
+                    <h4>💡 功能定位（这个 Skill 是干什么的）：</h4>
                     <p>{skillSummary.overview}</p>
                   </div>
                   {#if skillSummary.usage_guide}
                     <div class="summary-section">
-                      <h4>推荐使用方式与调用指南：</h4>
+                      <h4>📖 推荐使用方式与调用指南：</h4>
                       <pre class="summary-pre">{skillSummary.usage_guide}</pre>
                     </div>
                   {/if}
@@ -841,16 +1031,46 @@
             </div>
           {/if}
 
-          <label class="sr-only" for="agent-editor">文件内容</label>
-          <textarea id="agent-editor" spellcheck="false" bind:value={content} disabled={busy}></textarea>
+          <div class="editor-textarea-wrap">
+            <label class="sr-only" for="agent-editor">文件内容</label>
+            <textarea
+              id="agent-editor"
+              spellcheck="false"
+              bind:value={content}
+              disabled={busy}
+              placeholder="文件为空，在此输入文本内容..."
+            ></textarea>
+          </div>
+
           <div class="editor-foot">
-            <span>{dirty ? '有未保存的更改' : selected.exists ? '已保存' : '文件尚未创建'}</span>
-            <span>UTF-8 · 最大 1 MiB</span>
+            <div class="editor-foot-left">
+              {#if dirty}
+                <span class="foot-status dirty">
+                  <span class="status-dot dirty"></span> 有未保存的更改
+                </span>
+              {:else if selected.exists}
+                <span class="foot-status saved">
+                  <span class="status-dot saved"></span> 已保存
+                </span>
+              {:else}
+                <span class="foot-status unsaved">
+                  <span class="status-dot unsaved"></span> 文件尚未创建
+                </span>
+              {/if}
+              <span class="foot-divider">·</span>
+              <span class="foot-metrics">{editorLines} 行 · {editorChars} 字符</span>
+            </div>
+            <div class="editor-foot-right">
+              <span>UTF-8</span>
+              <span class="foot-divider">·</span>
+              <span>最大 1 MiB</span>
+            </div>
           </div>
         {:else}
           <div class="editor-empty">
+            <div class="empty-icon-box">{@html icons.tools}</div>
             <h2>选择文件开始编辑</h2>
-            <p>在左侧选择全局指令或 skill，也可新建指令、新建 skill 或添加来自 GitHub 的第三方 skill。</p>
+            <p>在左侧选择全局指令或 Skill 进行查看与修改，亦可新建指令、新建 Skill 或一键安装 GitHub 开源技能。</p>
           </div>
         {/if}
       </section>
@@ -859,75 +1079,1300 @@
 </div>
 
 <style>
-  .custom-page { max-width: 1500px; margin: 0 auto; }
-  .custom-heading,.catalog-head,.editor-head,.skills-head,.instructions-head,.editor-foot { display:flex; align-items:center; justify-content:space-between; gap:16px; }
-  .head-right-actions { display:flex; align-items:center; gap:10px; }
-  h1 { font-size:21px; margin:0 0 5px; color:var(--text-primary); } h2 { font-size:14px; margin:0; color:var(--text-primary); }
-  p { color:var(--text-secondary); } .custom-heading p { margin:0; font-size:12px; }
-  .local-label { color:var(--text-secondary); border:1px solid var(--border-subtle); border-radius:20px; padding:4px 9px; font-size:11px; white-space:nowrap; }
-  .privacy-note { margin:16px 0; font-size:12px; line-height:1.5; }
-  .provider-tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
-  .workspace { display:grid; grid-template-columns:270px minmax(0,1fr); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--bg-card); min-height:540px; overflow:hidden; }
-  .catalog { border-right:1px solid var(--border-subtle); padding:14px; max-height:75vh; overflow:auto; }
-  .catalog-head { font-size:13px; color:var(--text-primary); } .catalog-head button,.skills-head button,.instructions-head button { min-height:26px; padding:2px 8px; font-size:11px; }
-  .group-title { margin:19px 0 7px; font-size:11px; color:var(--text-muted); font-weight:600; }
-  .file-row { display:flex; flex-direction:column; align-items:flex-start; width:100%; gap:3px; text-align:left; border:1px solid transparent; border-radius:5px; background:transparent; color:var(--text-primary); padding:8px; cursor:pointer; }
-  .file-row:hover,.file-row.active { background:var(--bg-secondary); border-color:var(--border-subtle); } .file-row:disabled { opacity:.55; cursor:not-allowed; }
-  .file-row.row-disabled { opacity:.7; border-left:3px solid var(--text-muted); }
-  .file-row strong { font-size:12px; overflow-wrap:anywhere; } .file-row span,.empty-list { font-size:11px; color:var(--text-muted); overflow-wrap:anywhere; }
-  .skill-row-title { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-  .link-badge { border:1px solid var(--border-subtle); border-radius:4px; padding:1px 4px; font-size:10px; font-weight:400; color:var(--text-muted); }
-  .status-badge { display:inline-block; border-radius:4px; padding:1px 5px; font-size:10px; font-weight:500; }
-  .status-badge.disabled { background:rgba(239, 68, 68, 0.12); color:#ef4444; border:1px solid rgba(239, 68, 68, 0.25); }
-  .status-badge.enabled { background:rgba(16, 185, 129, 0.12); color:#10b981; border:1px solid rgba(16, 185, 129, 0.25); }
-  .catalog-actions,.editor-actions { display:flex; gap:6px; flex-shrink:0; flex-wrap:wrap; }
-  .editor-title-row { display:flex; align-items:center; gap:8px; }
-  .update-panel { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid var(--border-subtle); background:rgba(59, 130, 246, 0.04); color:var(--text-secondary); font-size:12px; overflow-wrap:anywhere; }
-  .update-actions { display:flex; gap:8px; flex-shrink:0; }
-  .source-hint { font-size:11px; line-height:1.5; overflow-wrap:anywhere; }
-  details { color:var(--text-secondary); } summary { cursor:pointer; } pre { max-height:220px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:11px/1.5 var(--font-mono, monospace); }
-  .editor { display:flex; min-width:0; flex-direction:column; } .editor-head { padding:16px; border-bottom:1px solid var(--border-subtle); }
-  .editor-head p { margin:5px 0 0; font-size:11px; overflow-wrap:anywhere; } .editor-head button { flex-shrink:0; }
-  textarea { flex:1; min-height:360px; resize:vertical; padding:16px; border:0; outline-offset:-3px; color:var(--text-primary); background:transparent; font:12px/1.6 var(--font-mono, monospace); }
-  .editor-foot { padding:10px 16px; border-top:1px solid var(--border-subtle); font-size:11px; color:var(--text-muted); }
-  .editor-empty { margin:auto; text-align:center; padding:30px; } .editor-empty p { font-size:12px; }
-  .create-form { display:grid; gap:10px; max-width:480px; padding:20px; color:var(--text-secondary); font-size:12px; }
-  input,select { color:var(--text-primary); background:var(--bg-secondary); border:1px solid var(--border-subtle); border-radius:5px; padding:8px; font:inherit; }
-  .message { font-size:12px; padding:10px 12px; border:1px solid var(--border-subtle); border-radius:5px; margin-bottom:12px; } .message.error { color:var(--color-danger); }
-  .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+  .custom-page {
+    max-width: 1440px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
 
-  /* AI config styling */
-  .ai-config-panel { margin-bottom:16px; padding:14px 18px; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--bg-card); display:grid; gap:12px; }
-  .ai-config-head { display:flex; justify-content:space-between; align-items:center; }
-  .ai-presets-row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:11px; }
-  .ai-preset-chip { background:var(--bg-secondary); border:1px solid var(--border-subtle); border-radius:12px; padding:2px 8px; font-size:11px; cursor:pointer; color:var(--text-primary); }
-  .ai-preset-chip:hover { border-color:var(--text-primary); }
-  .ai-config-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; font-size:12px; }
-  .ai-config-grid label { display:flex; flex-direction:column; gap:4px; }
-  .ai-model-input-group { display:flex; gap:6px; }
-  .ai-model-input-group input { flex:1; }
-  .ai-config-actions { display:flex; justify-content:flex-end; }
+  .custom-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
 
-  /* Adopt panel styling */
-  .adopt-panel { padding:14px 18px; background:rgba(245, 158, 11, 0.05); border-bottom:1px solid var(--border-subtle); display:grid; gap:8px; font-size:12px; }
-  .adopt-title { display:flex; justify-content:space-between; align-items:center; }
-  .adopt-desc { margin:0; font-size:11px; color:var(--text-muted); }
-  .adopt-form { display:grid; gap:8px; max-width:540px; margin-top:4px; }
-  .adopt-buttons { display:flex; gap:8px; }
+  .heading-text h1 {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 4px;
+    color: var(--text-primary);
+  }
 
-  /* Summary card styling */
-  .summary-card { margin:12px 16px; border:1px solid var(--border-subtle); border-radius:6px; background:var(--bg-secondary); overflow:hidden; font-size:12px; }
-  .summary-header { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; border-bottom:1px solid var(--border-subtle); background:rgba(0,0,0,0.02); }
-  .summary-title { display:flex; align-items:center; gap:8px; font-weight:600; color:var(--text-primary); }
-  .summary-meta { font-size:10px; color:var(--text-muted); font-weight:normal; }
-  .summary-actions { display:flex; gap:6px; }
-  .summary-body { padding:12px; display:grid; gap:10px; }
-  .summary-section h4 { margin:0 0 4px; font-size:12px; color:var(--text-primary); }
-  .summary-section p { margin:0; line-height:1.5; color:var(--text-secondary); }
-  .summary-pre { margin:0; padding:8px; background:rgba(0,0,0,0.04); border-radius:4px; font-size:11px; line-height:1.5; color:var(--text-primary); white-space:pre-wrap; }
+  .heading-text p {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
 
-  .btn-compact { min-height:24px; padding:2px 8px; font-size:11px; border:1px solid var(--border-subtle); border-radius:4px; background:var(--bg-secondary); color:var(--text-primary); cursor:pointer; }
-  .btn-compact:hover { background:var(--border-subtle); }
+  .head-right-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
 
-  @media(max-width:760px) { .workspace { grid-template-columns:1fr; } .catalog { border-right:0; border-bottom:1px solid var(--border-subtle); max-height:260px; } }
+  .ai-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .ai-toggle-btn:hover {
+    border-color: var(--border-default);
+    background: var(--bg-card-hover);
+  }
+
+  .ai-toggle-btn.active {
+    color: var(--brand-strong);
+    background: var(--brand-subtle);
+    border-color: var(--brand-border);
+  }
+
+  .ai-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+  }
+
+  .ai-status-dot.configured {
+    background: var(--color-exact);
+    box-shadow: 0 0 6px var(--color-exact);
+  }
+
+  .ai-btn-icon {
+    display: inline-flex;
+    width: 14px;
+    height: 14px;
+  }
+
+  .ai-btn-icon :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .local-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 9px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
+  .local-badge :global(svg) {
+    width: 12px;
+    height: 12px;
+    color: var(--color-exact);
+  }
+
+  /* AI Config Drawer Panel */
+  .ai-config-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+    animation: fadeIn 0.15s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .ai-config-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .ai-config-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+
+  .ai-config-icon {
+    display: inline-flex;
+    width: 16px;
+    height: 16px;
+    color: var(--brand-primary);
+  }
+
+  .ai-config-icon :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .ai-config-sub {
+    font-size: 11.5px;
+    font-weight: normal;
+    color: var(--text-muted);
+  }
+
+  .ai-saved-pill, .ai-unsaved-pill {
+    padding: 1px 7px;
+    font-size: 10.5px;
+    font-weight: 600;
+    border-radius: 999px;
+  }
+
+  .ai-saved-pill {
+    background: var(--color-exact-bg);
+    color: var(--color-exact);
+    border: 1px solid var(--color-exact-border);
+  }
+
+  .ai-unsaved-pill {
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    border: 1px solid var(--border-subtle);
+  }
+
+  .btn-close {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 2px 6px;
+  }
+
+  .btn-close:hover {
+    color: var(--text-primary);
+  }
+
+  .ai-presets-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    font-size: 11.5px;
+  }
+
+  .presets-label {
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .preset-chips {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .ai-preset-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+    padding: 0 10px;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .ai-preset-chip:hover {
+    color: var(--text-primary);
+    border-color: var(--border-default);
+  }
+
+  .ai-preset-chip.selected {
+    color: var(--brand-strong);
+    background: var(--brand-subtle);
+    border-color: var(--brand-border);
+    font-weight: 600;
+  }
+
+  .preset-check {
+    font-size: 10px;
+  }
+
+  .ai-config-grid {
+    display: grid;
+    grid-template-columns: minmax(260px, 1.3fr) minmax(180px, 1fr) minmax(240px, 1.2fr);
+    gap: 12px;
+  }
+
+  .ai-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .field-title {
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .ai-field input {
+    height: 32px;
+    padding: 0 10px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--text-primary);
+    background: var(--bg-input);
+    border: 1px solid var(--border-input);
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
+  }
+
+  .ai-field input:focus {
+    border-color: var(--brand-primary);
+    background: var(--bg-card);
+    outline: none;
+  }
+
+  .ai-model-group {
+    display: flex;
+    gap: 4px;
+  }
+
+  .ai-model-group input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .btn-fetch-models {
+    height: 32px;
+    padding: 0 10px;
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: all var(--transition-fast);
+  }
+
+  .btn-fetch-models:hover:not(:disabled) {
+    border-color: var(--border-default);
+    background: var(--bg-card-hover);
+  }
+
+  .btn-fetch-models:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .spinner-small {
+    width: 11px;
+    height: 11px;
+    border: 2px solid var(--border-subtle);
+    border-top-color: var(--brand-primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .ai-config-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-subtle);
+    font-size: 11.5px;
+  }
+
+  .ai-security-tip {
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .ai-footer-buttons {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-sm {
+    height: 28px;
+    padding: 0 12px;
+    font-size: 11.5px;
+  }
+
+  /* Privacy Banner */
+  .privacy-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--text-muted);
+  }
+
+  .banner-icon {
+    display: inline-flex;
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    color: var(--text-secondary);
+  }
+
+  .banner-icon :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .privacy-banner p {
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Provider Segmented Capsule */
+  .provider-tabs-wrap {
+    display: flex;
+    align-items: center;
+    margin-bottom: 2px;
+  }
+
+  .provider-tabs {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+  }
+
+  .provider-tab-btn {
+    height: 28px;
+    padding: 0 14px;
+    border: none;
+    background: transparent;
+    border-radius: 4px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+  }
+
+  .provider-tab-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+  }
+
+  .provider-tab-btn.selected {
+    background: var(--bg-card);
+    color: var(--brand-strong);
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  }
+
+  .provider-tab-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* Workspace Layout */
+  .workspace {
+    display: grid;
+    grid-template-columns: 290px minmax(0, 1fr);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+    min-height: 560px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  }
+
+  /* Catalog (Left Column) */
+  .catalog {
+    border-right: 1px solid var(--border-subtle);
+    padding: 12px;
+    max-height: 76vh;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--bg-card);
+  }
+
+  .catalog-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .catalog-head-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    color: var(--text-primary);
+  }
+
+  .catalog-total-pill {
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: var(--bg-secondary);
+    border-radius: 999px;
+  }
+
+  .btn-icon-refresh {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .btn-icon-refresh:hover:not(:disabled) {
+    color: var(--text-primary);
+    border-color: var(--border-default);
+  }
+
+  .btn-icon-refresh :global(svg) {
+    width: 13px;
+    height: 13px;
+  }
+
+  .btn-icon-refresh :global(.spin) {
+    animation: spin 0.8s linear infinite;
+  }
+
+  .catalog-search-box {
+    position: relative;
+    width: 100%;
+  }
+
+  .catalog-search-input {
+    width: 100%;
+    height: 28px;
+    padding: 0 24px 0 8px;
+    font: inherit;
+    font-size: 11.5px;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    transition: all var(--transition-fast);
+  }
+
+  .catalog-search-input:focus {
+    outline: none;
+    border-color: var(--brand-primary);
+    background: var(--bg-card);
+  }
+
+  .search-clear-btn {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .search-clear-btn:hover {
+    color: var(--text-primary);
+  }
+
+  .group-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+    margin-bottom: 2px;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+
+  .group-title-left {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .count-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 15px;
+    padding: 0 4px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    border-radius: 999px;
+  }
+
+  .btn-ghost-sm {
+    height: 22px;
+    padding: 0 6px;
+    font: inherit;
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--brand-strong);
+    background: var(--brand-subtle);
+    border: 1px solid var(--brand-border);
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+  }
+
+  .btn-ghost-sm:hover:not(:disabled) {
+    background: var(--brand-primary);
+    color: #fff;
+    border-color: var(--brand-primary);
+  }
+
+  .catalog-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .file-row {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    gap: 2px;
+    text-align: left;
+    border: 1px solid transparent;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--text-primary);
+    padding: 7px 8px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .file-row:hover {
+    background: var(--bg-secondary);
+    border-color: var(--border-subtle);
+  }
+
+  .file-row.active {
+    background: var(--bg-secondary);
+    border-color: var(--brand-border);
+  }
+
+  .file-row.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 6px;
+    bottom: 6px;
+    width: 3px;
+    background: var(--brand-primary);
+    border-radius: 0 2px 2px 0;
+  }
+
+  .file-row:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .file-row.row-disabled {
+    opacity: 0.65;
+  }
+
+  .file-row-main {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .file-type-icon {
+    font-size: 12px;
+    flex-shrink: 0;
+    line-height: 1.4;
+  }
+
+  .file-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+    line-height: 1.4;
+  }
+
+  .file-sub-root {
+    font-size: 10.5px;
+    color: var(--text-muted);
+    padding-left: 18px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    width: 100%;
+  }
+
+  .skill-name-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .skill-tags-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 1px;
+  }
+
+  .empty-list {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 10px 4px;
+    text-align: center;
+    margin: 0;
+  }
+
+  /* Badges - CRITICAL BUG FIX: white-space: nowrap */
+  .status-badge, .link-badge {
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: 0;
+  }
+
+  .status-badge.enabled {
+    background: var(--color-exact-bg);
+    color: var(--color-exact);
+    border: 1px solid var(--color-exact-border);
+  }
+
+  .status-badge.disabled {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.25);
+  }
+
+  .status-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  .link-badge {
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+  }
+
+  /* Editor Area (Right Column) */
+  .editor {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    background: var(--bg-card);
+  }
+
+  .editor-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-card);
+  }
+
+  .editor-meta {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .editor-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  .editor-file-title {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+    margin: 0;
+    word-break: break-all;
+    line-height: 1.3;
+  }
+
+  .editor-badges {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .editor-path-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+    min-width: 0;
+  }
+
+  .editor-path {
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 520px;
+    line-height: 1.4;
+  }
+
+  .copy-path-btn {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 6px;
+    font: inherit;
+    font-size: 10px;
+    color: var(--text-muted);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .copy-path-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--border-default);
+  }
+
+  .copy-success {
+    color: var(--color-exact);
+    font-weight: 600;
+  }
+
+  .editor-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .btn-action {
+    height: 28px;
+    padding: 0 10px;
+    font-size: 11.5px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+
+  .ai-action-btn {
+    color: var(--brand-strong);
+    background: var(--brand-subtle);
+    border-color: var(--brand-border);
+  }
+
+  .ai-action-btn:hover:not(:disabled) {
+    background: var(--brand-primary);
+    color: #fff;
+  }
+
+  .ai-sparkle-icon {
+    display: inline-flex;
+    width: 12px;
+    height: 12px;
+  }
+
+  .ai-sparkle-icon :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .btn-save {
+    height: 28px;
+    padding: 0 14px;
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  /* Forms & Create/Import Panels */
+  .create-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 520px;
+    padding: 20px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .create-form input, .create-form select {
+    height: 32px;
+    padding: 0 10px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--text-primary);
+    background: var(--bg-input);
+    border: 1px solid var(--border-input);
+    border-radius: var(--radius-sm);
+  }
+
+  .create-form input:focus, .create-form select:focus {
+    border-color: var(--brand-primary);
+    outline: none;
+  }
+
+  .form-btn-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  .source-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    margin: 4px 0;
+  }
+
+  details {
+    color: var(--text-secondary);
+    font-size: 11.5px;
+  }
+
+  summary {
+    cursor: pointer;
+    color: var(--brand-strong);
+  }
+
+  pre {
+    max-height: 220px;
+    overflow: auto;
+    white-space: pre-wrap;
+    font: 11px/1.5 var(--font-mono, monospace);
+    background: var(--bg-secondary);
+    padding: 8px;
+    border-radius: var(--radius-xs);
+    border: 1px solid var(--border-subtle);
+  }
+
+  /* Update and Adopt Panels */
+  .update-panel {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 18px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--brand-subtle);
+    color: var(--brand-strong);
+    font-size: 11.5px;
+  }
+
+  .update-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .adopt-panel {
+    padding: 12px 18px;
+    background: rgba(245, 158, 11, 0.06);
+    border-bottom: 1px solid rgba(245, 158, 11, 0.2);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+  }
+
+  .adopt-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #d97706;
+  }
+
+  .adopt-desc {
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .adopt-form {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 520px;
+    margin-top: 4px;
+  }
+
+  .adopt-form input {
+    height: 30px;
+    padding: 0 8px;
+    font: inherit;
+    font-size: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-input);
+    border-radius: var(--radius-sm);
+  }
+
+  .adopt-buttons {
+    display: flex;
+    gap: 8px;
+  }
+
+  /* Summary Card */
+  .summary-card {
+    margin: 12px 18px;
+    border: 1px solid var(--brand-border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    overflow: hidden;
+    font-size: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+  }
+
+  .summary-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--brand-border);
+    background: var(--brand-subtle);
+  }
+
+  .summary-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    color: var(--brand-strong);
+  }
+
+  .summary-sparkle {
+    display: inline-flex;
+    width: 14px;
+    height: 14px;
+  }
+
+  .summary-sparkle :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .summary-meta {
+    font-size: 10.5px;
+    color: var(--text-muted);
+    font-weight: normal;
+  }
+
+  .summary-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .summary-body {
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .summary-section h4 {
+    margin: 0 0 4px;
+    font-size: 12px;
+    color: var(--text-primary);
+  }
+
+  .summary-section p {
+    margin: 0;
+    line-height: 1.55;
+    color: var(--text-secondary);
+  }
+
+  .summary-pre {
+    margin: 0;
+    padding: 8px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+  }
+
+  /* Textarea Editor Box */
+  .editor-textarea-wrap {
+    flex: 1;
+    min-height: 380px;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-secondary);
+  }
+
+  textarea {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    min-height: 380px;
+    resize: none;
+    padding: 16px;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    background: transparent;
+    font: 12.5px/1.65 var(--font-mono, 'JetBrains Mono', 'Cascadia Code', Consolas, monospace);
+    tab-size: 2;
+  }
+
+  /* Editor Footer Status Bar */
+  .editor-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 18px;
+    border-top: 1px solid var(--border-subtle);
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--bg-card);
+  }
+
+  .editor-foot-left, .editor-foot-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .foot-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-weight: 500;
+  }
+
+  .foot-status.dirty {
+    color: #f59e0b;
+  }
+
+  .foot-status.saved {
+    color: var(--color-exact);
+  }
+
+  .foot-status .status-dot.dirty {
+    background: #f59e0b;
+  }
+
+  .foot-status .status-dot.saved {
+    background: var(--color-exact);
+  }
+
+  .foot-divider {
+    color: var(--border-default);
+  }
+
+  .editor-empty {
+    margin: auto;
+    text-align: center;
+    padding: 48px 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .empty-icon-box {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: 50%;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+
+  .empty-icon-box :global(svg) {
+    width: 20px;
+    height: 20px;
+  }
+
+  .editor-empty h2 {
+    font-size: 14px;
+    color: var(--text-primary);
+    margin: 0;
+  }
+
+  .editor-empty p {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    max-width: 42ch;
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  .btn-compact {
+    min-height: 22px;
+    padding: 0 8px;
+    font-size: 10.5px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .btn-compact:hover {
+    border-color: var(--border-default);
+    background: var(--bg-card-hover);
+  }
+
+  .message {
+    font-size: 11.5px;
+    padding: 8px 14px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 8px;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .message.error {
+    color: var(--color-danger);
+    background: var(--color-danger-bg);
+    border-color: var(--color-danger-border);
+  }
+
+  .message.success {
+    color: var(--color-exact);
+    background: var(--color-exact-bg);
+    border-color: var(--color-exact-border);
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  @media (max-width: 900px) {
+    .ai-config-grid {
+      grid-template-columns: 1fr;
+    }
+    .workspace {
+      grid-template-columns: 1fr;
+    }
+    .catalog {
+      border-right: none;
+      border-bottom: 1px solid var(--border-subtle);
+      max-height: 280px;
+    }
+  }
 </style>

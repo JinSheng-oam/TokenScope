@@ -347,6 +347,13 @@ impl LocalStore {
             eprintln!("session page: {:?}", page_started.elapsed());
         }
         if !sessions.is_empty() {
+            let page_keys = serde_json::to_string(
+                &sessions
+                    .iter()
+                    .map(|s| (&s.tool_id, &s.session_id))
+                    .collect::<Vec<_>>(),
+            )
+            .map_err(|_| StoreError::InvalidInput("session page keys"))?;
             let mut models = self.conn.prepare(
                 "SELECT tool_id,session_id,model_id,
                         SUM(input_uncached_tokens+cache_read_tokens+cache_write_tokens+output_tokens+unclassified_tokens),
@@ -355,6 +362,8 @@ impl LocalStore {
                  WHERE owner_device_id=?1 AND scope='device_local' AND is_deleted=0
                    AND session_id IS NOT NULL AND tool_id<>'antigravity'
                    AND (?2 IS NULL OR event_at_ms >= ?2) AND (?3 IS NULL OR event_at_ms < ?3)
+                   AND (tool_id,session_id) IN (
+                     SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each(?4))
                  GROUP BY tool_id,session_id,model_id
                  ORDER BY 4 DESC",
             )?;
@@ -362,7 +371,7 @@ impl LocalStore {
                 (String, String),
                 Vec<SessionModelUsage>,
             > = std::collections::HashMap::new();
-            let mut rows = models.query(params![owner_device_id, from_ms, to_ms])?;
+            let mut rows = models.query(params![owner_device_id, from_ms, to_ms, page_keys])?;
             while let Some(row) = rows.next()? {
                 let tool_id: String = row.get(0)?;
                 let session_id: String = row.get(1)?;
@@ -388,10 +397,13 @@ impl LocalStore {
                  WHERE rs.tool_id='antigravity' AND u.owner_device_id=?1
                    AND u.scope='device_local' AND u.is_deleted=0
                    AND (?2 IS NULL OR u.event_at_ms >= ?2) AND (?3 IS NULL OR u.event_at_ms < ?3)
+                   AND rs.source_key IN (SELECT json_extract(value,'$[1]') FROM json_each(?4)
+                     WHERE json_extract(value,'$[0]')='antigravity')
                  GROUP BY rs.source_key,u.model_id
                  ORDER BY 3 DESC",
             )?;
-            let mut ag_rows = ag_models.query(params![owner_device_id, from_ms, to_ms])?;
+            let mut ag_rows =
+                ag_models.query(params![owner_device_id, from_ms, to_ms, page_keys])?;
             while let Some(row) = ag_rows.next()? {
                 let session_id: String = row.get(0)?;
                 let model_id: Option<String> = row.get(1)?;

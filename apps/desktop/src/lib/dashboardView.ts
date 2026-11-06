@@ -443,13 +443,7 @@ export function findActivityForSession(
   const exact = activity.find(
     (item) => item.tool_id === session.tool_id && item.session_id === session.session_id,
   );
-  if (exact || !session.display_name) return exact;
-  const sameName = activity.filter(
-    (item) =>
-      item.tool_id === session.tool_id &&
-      item.display_name?.trim() === session.display_name?.trim(),
-  );
-  return sameName.length === 1 ? sameName[0] : undefined;
+  return exact;
 }
 
 export function resolveSessionActivityState(

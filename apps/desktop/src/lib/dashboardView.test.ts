@@ -87,3 +87,11 @@ function devices(): DashboardSnapshot {
     remote_daily:[{owner_device_id:'A',date:'2026-11-04',total_tokens:100,input_tokens:100,output_tokens:0},{owner_device_id:'B',date:'2026-11-04',total_tokens:900,input_tokens:0,output_tokens:900}],
   } as unknown as DashboardSnapshot;
 }
+
+it('does not transfer live state to another session with the same title', () => {
+  const now=2_000_000_000_000;
+  const activity=[{tool_id:'antigravity',session_id:'active',display_name:'Demo',model_id:null,state:'generating' as const,observed_at_ms:now}];
+  const session={tool_id:'antigravity',session_id:'different',display_name:'Demo',last_event_at_ms:now-600_000,activity_observed_at_ms:null};
+  expect(resolveSessionActivityState(session,activity,now)).toBeNull();
+  expect(resolveSessionActivityState({...session,session_id:'active'},activity,now)).toBe('generating');
+});

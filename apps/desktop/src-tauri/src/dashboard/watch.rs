@@ -36,9 +36,6 @@ pub(crate) fn spawn_dashboard_watch(app: AppHandle) {
             let watch = app.state::<DashboardWatch>();
             watch.revision.store(full, Ordering::Release);
             if last_full != Some(full) {
-                if let Ok(mut cache) = watch.cache.lock() {
-                    cache.clear();
-                }
                 let request = watch.request.lock().map(|r| r.clone()).unwrap_or_default();
                 if request.range.is_empty() {
                     continue;

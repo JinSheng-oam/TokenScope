@@ -15,6 +15,12 @@
     editable: boolean;
     linked: boolean;
     enabled: boolean;
+    instructionEntry: boolean;
+  };
+  type InstructionInfo = {
+    label: string;
+    detail: string;
+    tone: 'primary' | 'entry' | 'warning' | 'auxiliary';
   };
   type Source = { url: string; branch: string | null; subpath: string | null; skill: string | null };
   type Inspection = { source: Source; revision: string; candidates: { path: string; name: string; preview: string }[] };
@@ -120,6 +126,86 @@
   $: instructions = entries.filter((entry) => entry.kind === 'instruction');
   $: skills = entries.filter((entry) => entry.kind === 'skill');
   $: currentProvider = providers.find((p) => p.id === provider)!;
+
+  function instructionRootLabel(rootId: string): string {
+    const labels: Record<string, string> = {
+      'codex-instructions': 'Codex 全局目录',
+      'claude-instructions': 'Claude Code 全局目录',
+      'gemini-instructions': 'Antigravity 用户目录',
+      'gemini-config-instructions': 'Antigravity 配置目录',
+      'dsh-instructions': 'DeepSeek Harness 用户目录',
+      'dsh-shared-instructions': '共享 Agent 目录',
+    };
+    return labels[rootId] ?? rootId;
+  }
+
+  function instructionInfo(entry: Entry): InstructionInfo {
+    if (!entry.instructionEntry) {
+      return {
+        label: entry.exists ? '辅助文件' : '新辅助文件',
+        detail: '这个文件名不在工具预设的指令入口中；仅放在此目录通常不会自动加载。需要时，请在工具实际读取的入口文件中引用它。',
+        tone: 'auxiliary',
+      };
+    }
+
+    if (provider === 'codex' && entry.id.root === 'codex-instructions') {
+      const overrideExists = instructions.some(
+        (item) => item.id.root === entry.id.root && item.id.name === 'AGENTS.override.md' && item.exists
+      );
+      if (entry.id.name === 'AGENTS.override.md') {
+        return entry.exists
+          ? {
+              label: '优先级最高的入口',
+              detail: 'Codex 全局层优先检查 AGENTS.override.md。TokenScope 显示文件存在，但不会验证正在运行的 Codex 会话是否已重新加载。',
+              tone: 'primary',
+            }
+          : {
+              label: '可选覆盖入口',
+              detail: '创建后会优先于 AGENTS.md；未创建时不影响默认入口。',
+              tone: 'entry',
+            };
+      }
+      if (entry.id.name === 'AGENTS.md') {
+        if (overrideExists) {
+          return {
+            label: '可能被覆盖',
+            detail: 'AGENTS.override.md 已存在并优先。若覆盖文件为空，Codex 可能继续回退到此文件；TokenScope 不会验证会话的实际加载结果。',
+            tone: 'warning',
+          };
+        }
+        return entry.exists
+          ? {
+              label: '默认全局入口',
+              detail: '这是 Codex 默认的全局指令文件。修改后需由 Codex 新会话重新读取；TokenScope 不会控制其会话缓存。',
+              tone: 'primary',
+            }
+          : {
+              label: '默认入口未创建',
+              detail: '创建 AGENTS.md 可作为 Codex 默认的全局指令文件。',
+              tone: 'entry',
+            };
+      }
+    }
+
+    return entry.exists
+      ? {
+          label: '工具预设入口',
+          detail: '此文件名和目录是 TokenScope 为该工具登记的指令入口。TokenScope 未启动对应工具验证运行时是否已加载。',
+          tone: 'entry',
+        }
+      : {
+          label: '入口文件未创建',
+          detail: '这是 TokenScope 为该工具登记的入口文件，目前尚未创建。',
+          tone: 'entry',
+        };
+  }
+
+  function instructionDraftHelp(): string {
+    if (provider === 'codex') {
+      return 'Codex 全局入口为 AGENTS.override.md（优先）或 AGENTS.md；其他文件名只是辅助文件，不会仅因位于此目录就自动加载。';
+    }
+    return 'TokenScope 会标出工具预设的入口文件；自定义 Markdown 是否自动加载取决于对应工具，必要时请从入口文件引用。';
+  }
 
   function canLeave(): boolean {
     return !dirty || window.confirm('当前文件有未保存的更改，放弃更改？');
@@ -329,6 +415,32 @@
     }
   }
 
+  async function deleteInstruction() {
+    if (!selected || selected.kind !== 'instruction' || !selected.exists || busy || selected.linked) return;
+    const unsavedNote = dirty ? '\n\n未保存的编辑也会丢弃。' : '';
+    const confirmed = window.confirm(
+      `确定删除指令文件“${selected.id.name}”？\n\n${selected.path}\n\n此操作无法撤销。${unsavedNote}`
+    );
+    if (!confirmed) return;
+
+    const deletedName = selected.id.name;
+    busy = true;
+    error = '';
+    notice = '';
+    try {
+      await invoke('delete_instruction', { id: selected.id });
+      selected = null;
+      original = null;
+      content = '';
+      entries = await invoke<Entry[]>('list_customizations', { provider });
+      notice = `已删除指令文件：${deletedName}`;
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function toggleSkill() {
     if (!selected || selected.kind !== 'skill' || busy) return;
     busy = true; error = ''; notice = '';
@@ -377,18 +489,16 @@
     busy = true;
     error = '';
     try {
-      const newEntry = await invoke<Entry>('create_instruction', {
+      const newEntry = await invoke<Entry>('prepare_instruction', {
         provider,
         root: instructionRoot,
         name,
-        content: `# ${name}\n\n`,
       });
       creatingInstruction = false;
-      entries = await invoke<Entry[]>('list_customizations', { provider });
       selected = newEntry;
-      original = `# ${name}\n\n`;
-      content = original;
-      notice = '已创建新全局指令文件，可直接在此编辑保存。';
+      original = null;
+      content = `# ${name}\n\n`;
+      notice = '这是尚未落盘的草稿；保存后才会创建文件。';
     } catch (e) {
       error = String(e);
     } finally {
@@ -405,7 +515,7 @@
     try {
       const existing = await invoke<string | null>('read_customization', { id });
       if (existing !== null) { error = '这个 skill 已存在，请在列表中打开。'; return; }
-      selected = { id, path: `${currentProvider.roots.find((r) => r.id === skillRoot)?.label} / ${skillName} / SKILL.md`, kind: 'skill', exists: false, editable: true, linked: false, enabled: true };
+      selected = { id, path: `${currentProvider.roots.find((r) => r.id === skillRoot)?.label} / ${skillName} / SKILL.md`, kind: 'skill', exists: false, editable: true, linked: false, enabled: true, instructionEntry: false };
       original = null;
       content = `---\nname: ${skillName}\ndescription: 描述何时使用此 skill。\n---\n\n# ${skillName}\n\n`;
       creating = false; notice = '编辑后点击保存，才会创建文件。';
@@ -520,7 +630,7 @@
   <div class="custom-heading">
     <div class="heading-text">
       <h1>Agent 配置与技能管理</h1>
-      <p>管理全局指令、Skill 启停与更新；支持第三方 Skill 纳管与 AI 智能摘要分析。</p>
+      <p>编辑工具指令入口与辅助规则文件，管理 Skill 启停、来源和更新。</p>
     </div>
     <div class="head-right-actions">
       <button
@@ -704,25 +814,31 @@
 
         <div class="group-title instructions-head">
           <div class="group-title-left">
-            <span>全局指令</span>
+            <span>指令文件</span>
             <span class="count-badge">{filteredInstructions.length}</span>
           </div>
           <button class="btn-ghost-sm" disabled={busy} onclick={beginCreateInstruction}>+ 新建指令</button>
         </div>
 
         {#each filteredInstructions as entry}
+          {@const info = instructionInfo(entry)}
           <button
             type="button"
             class="file-row"
             class:active={selected?.id.root === entry.id.root && selected?.id.name === entry.id.name}
             disabled={busy || !entry.editable}
+            title={info.detail}
+            aria-label={`${entry.id.name}，${info.label}。${info.detail}`}
             onclick={() => void select(entry)}
           >
             <div class="file-row-main">
               <span class="file-type-icon">📄</span>
-              <strong class="file-name" title={entry.id.name}>{entry.id.name}</strong>
+              <div class="instruction-name-col">
+                <strong class="file-name" title={entry.id.name}>{entry.id.name}</strong>
+                <span class={`instruction-badge ${info.tone}`}>{info.label}</span>
+              </div>
             </div>
-            <span class="file-sub-root">{entry.exists ? entry.id.root : '尚未创建'}</span>
+            <span class="file-sub-root">{instructionRootLabel(entry.id.root)} · {entry.exists ? '已保存' : '未创建'}</span>
           </button>
         {:else}
           {#if filterQuery}
@@ -814,21 +930,22 @@
         {:else if creatingInstruction}
           <div class="editor-head">
             <div>
-              <h2>新建全局指令文件</h2>
-              <p>创建自定义全局指令或规则文件（如 RULES.md、CUSTOM.md）。</p>
+              <h2>新建指令文件草稿</h2>
+              <p>保存前不会写入磁盘。工具入口文件可被自动读取；其他 Markdown 通常需要由入口文件引用。</p>
             </div>
           </div>
           <div class="create-form">
             <label for="instr-root">保存目录</label>
             <select id="instr-root" bind:value={instructionRoot}>
               {#each instructions.map((e) => e.id.root).filter((v, i, a) => a.indexOf(v) === i) as rootId}
-                <option value={rootId}>{rootId}</option>
+                <option value={rootId}>{instructionRootLabel(rootId)}</option>
               {/each}
             </select>
             <label for="instr-name">指令文件名 (必须以 .md 结尾)</label>
-            <input id="instr-name" bind:value={instructionName} placeholder="例如 CUSTOM_RULES.md" maxlength="64" />
+            <input id="instr-name" bind:value={instructionName} placeholder={provider === 'codex' ? 'AGENTS.md 或 CUSTOM_RULES.md' : '例如 RULES.md'} maxlength="64" />
+            <p class="source-hint">{instructionDraftHelp()}</p>
             <div class="form-btn-row">
-              <button class="btn-primary" disabled={busy || !instructionName.trim()} onclick={() => void createInstruction()}>立即创建</button>
+              <button class="btn-primary" disabled={busy || !instructionName.trim()} onclick={() => void createInstruction()}>开始编辑草稿</button>
               <button class="btn-secondary" onclick={() => creatingInstruction = false}>取消</button>
             </div>
           </div>
@@ -863,6 +980,10 @@
                   {selected.id.name}{selected.kind === 'skill' ? ' / SKILL.md' : ''}
                 </h2>
                 <div class="editor-badges">
+                  {#if selected.kind === 'instruction'}
+                    {@const info = instructionInfo(selected)}
+                    <span class={`instruction-badge ${info.tone}`} title={info.detail}>{info.label}</span>
+                  {/if}
                   {#if selected.kind === 'skill'}
                     <span class="status-badge" class:disabled={!selected.enabled} class:enabled={selected.enabled}>
                       <span class="status-dot"></span>
@@ -890,6 +1011,11 @@
                   {/if}
                 </button>
               </div>
+
+              {#if selected.kind === 'instruction'}
+                {@const info = instructionInfo(selected)}
+                <p class={`instruction-status-note ${info.tone}`}>{info.detail}</p>
+              {/if}
             </div>
 
             <div class="editor-actions">
@@ -931,6 +1057,17 @@
                   title="重命名文件或 Skill 目录"
                 >
                   改名
+                </button>
+              {/if}
+
+              {#if selected.kind === 'instruction' && selected.exists}
+                <button
+                  class="btn-secondary btn-action btn-danger"
+                  disabled={busy || selected.linked}
+                  onclick={() => void deleteInstruction()}
+                  title={selected.linked ? '符号链接文件请在原位置管理' : '删除此指令文件'}
+                >
+                  删除
                 </button>
               {/if}
 
@@ -1757,6 +1894,52 @@
     min-width: 0;
   }
 
+  .instruction-name-col {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .instruction-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 17px;
+    padding: 1px 6px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 1.25;
+    white-space: nowrap;
+  }
+
+  .instruction-badge.primary {
+    border-color: var(--color-exact-border);
+    background: var(--color-exact-bg);
+    color: var(--color-exact);
+  }
+
+  .instruction-badge.entry {
+    border-color: var(--brand-border);
+    background: var(--brand-subtle);
+    color: var(--brand-strong);
+  }
+
+  .instruction-badge.warning {
+    border-color: rgba(245, 158, 11, 0.32);
+    background: rgba(245, 158, 11, 0.1);
+    color: #d97706;
+  }
+
+  .instruction-badge.auxiliary {
+    color: var(--text-muted);
+  }
+
   .file-type-icon {
     font-size: 12px;
     flex-shrink: 0;
@@ -1850,6 +2033,17 @@
     color: var(--text-muted);
   }
 
+  .btn-danger {
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.28);
+    background: rgba(239, 68, 68, 0.06);
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    border-color: rgba(239, 68, 68, 0.5);
+    background: rgba(239, 68, 68, 0.12);
+  }
+
   /* Editor Area (Right Column) */
   .editor {
     display: flex;
@@ -1904,6 +2098,18 @@
     gap: 8px;
     margin-top: 4px;
     min-width: 0;
+  }
+
+  .instruction-status-note {
+    max-width: 70ch;
+    margin: 6px 0 0;
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  .instruction-status-note.warning {
+    color: #d97706;
   }
 
   .editor-path {

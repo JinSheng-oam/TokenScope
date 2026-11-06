@@ -155,6 +155,11 @@ pub(crate) fn query_agent_fresh(
     if let Some(value) = end_date {
         command.arg("--end-date").arg(value);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -258,6 +263,11 @@ pub(super) fn query_agent_session_analysis(
         if let Some(value) = value.filter(|value| !value.is_empty()) {
             command.arg(name).arg(value);
         }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
     }
     let mut child = command
         .stdin(Stdio::null())

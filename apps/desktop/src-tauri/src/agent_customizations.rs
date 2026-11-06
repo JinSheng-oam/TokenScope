@@ -26,6 +26,8 @@ pub(crate) struct CustomizationEntry {
     editable: bool,
     linked: bool,
     enabled: bool,
+    #[serde(rename = "instructionEntry")]
+    instruction_entry: bool,
 }
 
 pub(crate) struct Root {
@@ -187,6 +189,8 @@ fn entry(
     enabled: bool,
 ) -> CustomizationEntry {
     let editable = check_target(root, &path).is_ok();
+    let instruction_entry =
+        root.kind == "instruction" && root.names.iter().any(|name| *name == id.name.as_str());
     CustomizationEntry {
         id,
         path: display_path(&path),
@@ -195,6 +199,7 @@ fn entry(
         editable,
         linked,
         enabled,
+        instruction_entry,
     }
 }
 pub(crate) fn display_path(path: &Path) -> String {
@@ -211,7 +216,7 @@ fn list(provider: &str) -> Result<Vec<CustomizationEntry>, String> {
         if root.kind == "instruction" {
             let mut seen = std::collections::HashSet::new();
             for name in root.names {
-                seen.insert(name.to_ascii_lowercase());
+                seen.insert((*name).to_owned());
                 let id = CustomizationId {
                     provider: provider.into(),
                     root: root.id.into(),
@@ -227,10 +232,10 @@ fn list(provider: &str) -> Result<Vec<CustomizationEntry>, String> {
                 for item in entries.flatten() {
                     let file_name = item.file_name().to_string_lossy().to_string();
                     if valid_instruction_name(&file_name)
-                        && !seen.contains(&file_name.to_ascii_lowercase())
+                        && !seen.contains(&file_name)
                         && item.path().is_file()
                     {
-                        seen.insert(file_name.to_ascii_lowercase());
+                        seen.insert(file_name.clone());
                         let id = CustomizationId {
                             provider: provider.into(),
                             root: root.id.into(),
@@ -425,12 +430,7 @@ pub(crate) async fn save_customization(
         .map_err(|_| "保存任务失败")?
 }
 
-fn create_instr(
-    provider: &str,
-    root_id: &str,
-    name: &str,
-    content: Option<&str>,
-) -> Result<CustomizationEntry, String> {
+fn prepare_instr(provider: &str, root_id: &str, name: &str) -> Result<CustomizationEntry, String> {
     let name = name.trim();
     if !valid_instruction_name(name) {
         return Err("无效的文件名，必须以 .md 结尾且仅包含字母、数字、点、连字符和下划线".into());
@@ -440,19 +440,33 @@ fn create_instr(
         .into_iter()
         .find(|r| r.id == root_id && r.kind == "instruction")
         .ok_or("不支持的指令目录")?;
-    fs::create_dir_all(&root.path).map_err(|e| format!("创建目录失败：{e}"))?;
     let path = root.path.join(name);
-    if path.exists() {
+    if fs::symlink_metadata(&path).is_ok() {
         return Err("同名指令文件已存在".into());
     }
-    let initial_content = content.unwrap_or("");
-    fs::write(&path, initial_content).map_err(|e| format!("创建指令文件失败：{e}"))?;
     let id = CustomizationId {
         provider: provider.into(),
         root: root.id.into(),
         name: name.into(),
     };
     Ok(entry(id, &root, path, false, true))
+}
+
+fn delete_instr(id: &CustomizationId) -> Result<(), String> {
+    let (root, resolved_path) = resolve(id)?;
+    if root.kind != "instruction" {
+        return Err("仅支持删除指令文件".into());
+    }
+
+    let path = root.path.join(&id.name);
+    if is_link(&path) {
+        return Err("符号链接文件不支持直接删除，请在原位置管理".into());
+    }
+    check_target(&root, &path)?;
+    if !path.is_file() {
+        return Err("指令文件不存在".into());
+    }
+    fs::remove_file(&resolved_path).map_err(|e| format!("删除指令文件失败：{e}"))
 }
 
 fn rename_item(id: &CustomizationId, new_name: &str) -> Result<CustomizationEntry, String> {
@@ -548,17 +562,21 @@ fn toggle_skill(id: &CustomizationId, enabled: bool) -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub(crate) async fn create_instruction(
+pub(crate) async fn prepare_instruction(
     provider: String,
     root: String,
     name: String,
-    content: Option<String>,
 ) -> Result<CustomizationEntry, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        create_instr(&provider, &root, &name, content.as_deref())
-    })
-    .await
-    .map_err(|_| "创建指令任务失败")?
+    tauri::async_runtime::spawn_blocking(move || prepare_instr(&provider, &root, &name))
+        .await
+        .map_err(|_| "准备指令草稿失败")?
+}
+
+#[tauri::command]
+pub(crate) async fn delete_instruction(id: CustomizationId) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || delete_instr(&id))
+        .await
+        .map_err(|_| "删除指令任务失败")?
 }
 
 #[tauri::command]

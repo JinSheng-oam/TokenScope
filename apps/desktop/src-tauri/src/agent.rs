@@ -85,7 +85,8 @@ pub(crate) fn start_agent_inner(
     let stderr = log.try_clone().map_err(|e| e.to_string())?;
     let sync_config = sync_config_path(app)?;
     let webdav_config = webdav_config_path(app)?;
-    let child = Command::new(&agent)
+    let mut command = Command::new(&agent);
+    command
         .args([
             "--scan-all",
             "--refresh-antigravity-quota",
@@ -109,7 +110,13 @@ pub(crate) fn start_agent_inner(
         .arg(&stop_file)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
-        .stderr(Stdio::from(stderr))
+        .stderr(Stdio::from(stderr));
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let child = command
         .spawn()
         .map_err(|e| format!("启动 Agent 失败：{e}"))?;
     *child_slot = Some(child);

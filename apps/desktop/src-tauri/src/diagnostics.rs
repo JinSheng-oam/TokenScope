@@ -168,13 +168,20 @@ fn collect(app: &AppHandle) -> Result<DiagnosticReport, String> {
 }
 
 fn query_agent(agent: &Path, db: &Path) -> Result<DiagnosticReport, String> {
-    let mut child = Command::new(agent)
+    let mut command = Command::new(agent);
+    command
         .arg("--diagnose-json")
         .arg("--db")
         .arg(db)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let mut child = command
         .spawn()
         .map_err(|error| format!("启动诊断进程失败：{error}"))?;
     let stdout = child.stdout.take().ok_or("Agent stdout 管道不可用")?;

@@ -157,7 +157,8 @@ pub(super) fn legacy_difference(
 }
 
 pub(super) fn record(
-    session: &str,
+    source_session: &str,
+    logical_session: &str,
     device: &str,
     native_key: &[u8],
     model: Option<String>,
@@ -166,7 +167,7 @@ pub(super) fn record(
     tokens: TokenBreakdown,
 ) -> Result<CanonicalRecord> {
     let rec = CanonicalRecord {
-        record_id: stable_record_id("codex", session.as_bytes(), native_key)?,
+        record_id: stable_record_id("codex", source_session.as_bytes(), native_key)?,
         owner_device_id: device.to_owned(),
         tool_id: "codex".into(),
         scope: UsageScope::DeviceLocal,
@@ -178,7 +179,7 @@ pub(super) fn record(
         account_id: None,
         model_id: model,
         project_id,
-        session_id: Some(session_key("codex", session.as_bytes())?),
+        session_id: Some(session_key("codex", logical_session.as_bytes())?),
         event_at_ms: Some(at),
         usage: tokens,
         estimated_cost_microusd: None,

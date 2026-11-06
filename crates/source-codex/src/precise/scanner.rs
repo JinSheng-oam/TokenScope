@@ -53,17 +53,25 @@ pub fn scan_precise_body(
     scan_precise_entry(path, Some(body), device_id, prior, observed_ms, None)
 }
 
-/// Compaction writes a continuation rollout that keeps the original session id
-/// but carries its own turns. Scan it under a derived session id so both files
-/// count and legacy ordinals cannot collide across the pair.
+/// Compaction writes a continuation rollout that keeps the original logical
+/// session id but carries its own turns. Scan it under a derived source id so
+/// checkpoints and record identities remain unique while records still belong
+/// to the original logical session.
 pub fn scan_precise_continuation(
     path: &Path,
     device_id: &str,
     prior: Option<&SourceCheckpoint>,
     observed_ms: i64,
-    session_id: &str,
+    source_session_id: &str,
 ) -> Result<PreciseScan> {
-    scan_precise_entry(path, None, device_id, prior, observed_ms, Some(session_id))
+    scan_precise_entry(
+        path,
+        None,
+        device_id,
+        prior,
+        observed_ms,
+        Some(source_session_id),
+    )
 }
 
 pub fn scan_precise_continuation_body(
@@ -72,7 +80,7 @@ pub fn scan_precise_continuation_body(
     device_id: &str,
     prior: Option<&SourceCheckpoint>,
     observed_ms: i64,
-    session_id: &str,
+    source_session_id: &str,
 ) -> Result<PreciseScan> {
     scan_precise_entry(
         path,
@@ -80,7 +88,7 @@ pub fn scan_precise_continuation_body(
         device_id,
         prior,
         observed_ms,
-        Some(session_id),
+        Some(source_session_id),
     )
 }
 
@@ -90,7 +98,7 @@ fn scan_precise_entry(
     device_id: &str,
     prior: Option<&SourceCheckpoint>,
     observed_ms: i64,
-    session_override: Option<&str>,
+    source_session_override: Option<&str>,
 ) -> Result<PreciseScan> {
     // A rollout written across a schema switch cannot mix both projections,
     // but the cumulative counters span the whole file, so fall back to the
@@ -102,7 +110,7 @@ fn scan_precise_entry(
         prior,
         observed_ms,
         false,
-        session_override,
+        source_session_override,
     ) {
         Err(CodexError::Invalid("mixed legacy/modern coverage")) => scan_precise_mode(
             path,
@@ -111,7 +119,7 @@ fn scan_precise_entry(
             prior,
             observed_ms,
             true,
-            session_override,
+            source_session_override,
         ),
         other => other,
     }
@@ -124,7 +132,7 @@ fn scan_precise_mode(
     prior: Option<&SourceCheckpoint>,
     observed_ms: i64,
     force_legacy: bool,
-    session_override: Option<&str>,
+    source_session_override: Option<&str>,
 ) -> Result<PreciseScan> {
     let header = match body {
         Some(bytes) => session_header_from_bytes(bytes)?,
@@ -136,8 +144,10 @@ fn scan_precise_mode(
         .as_deref()
         .and_then(codex_project_metadata)
         .map(|(project_id, _)| project_id);
-    let session = session_override.unwrap_or(&header_session).to_owned();
-    let key = session_key("codex", session.as_bytes())?;
+    let source_session = source_session_override
+        .unwrap_or(&header_session)
+        .to_owned();
+    let key = session_key("codex", source_session.as_bytes())?;
     if let Some(cp) = prior {
         if cp.tool_id != "codex" || cp.source_key != key {
             return Err(CodexError::Invalid("checkpoint mismatch"));
@@ -290,7 +300,8 @@ fn scan_precise_mode(
             };
             let response_model = explicit_response_model(p).or_else(|| model.clone());
             let r = record(
-                &session,
+                &source_session,
+                &header_session,
                 device_id,
                 native.as_bytes(),
                 response_model,
@@ -333,7 +344,8 @@ fn scan_precise_mode(
                                     let ts = event_ms(&v)?
                                         .ok_or(CodexError::Invalid("missing legacy timestamp"))?;
                                     let r = record(
-                                        &session,
+                                        &source_session,
+                                        &header_session,
                                         device_id,
                                         format!("legacy:{legacy_seq}").as_bytes(),
                                         model.clone(),
@@ -373,8 +385,14 @@ fn scan_precise_mode(
     // New modern records in a previously legacy-tracked file require complete
     // replacement of the old delta projection, not a mixture of both schemas.
     if reuse && old_mode == "legacy" && !modern.is_empty() {
-        let rebuilt =
-            scan_precise_entry(path, body, device_id, None, observed_ms, session_override)?;
+        let rebuilt = scan_precise_entry(
+            path,
+            body,
+            device_id,
+            None,
+            observed_ms,
+            source_session_override,
+        )?;
         if rebuilt.pending_line {
             return Err(CodexError::PendingHeader);
         }

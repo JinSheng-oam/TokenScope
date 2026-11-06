@@ -159,12 +159,16 @@ pub(super) fn tombstone_source_records(
     }
     for session_id in session_ids {
         tx.execute(
-            "DELETE FROM session_names WHERE session_id=?1 AND tool_id=?2",
+            "DELETE FROM session_names WHERE session_id=?1 AND tool_id=?2 \
+             AND NOT EXISTS (SELECT 1 FROM usage_records u \
+                 WHERE u.session_id=?1 AND u.tool_id=?2 AND u.is_deleted=0)",
             params![session_id, tool_id],
         )?;
     }
     tx.execute(
-        "DELETE FROM session_names WHERE session_id=?1 AND tool_id=?2",
+        "DELETE FROM session_names WHERE session_id=?1 AND tool_id=?2 \
+         AND NOT EXISTS (SELECT 1 FROM usage_records u \
+             WHERE u.session_id=?1 AND u.tool_id=?2 AND u.is_deleted=0)",
         params![source_key, tool_id],
     )?;
     if tool_id == "antigravity" {

@@ -244,6 +244,7 @@
             {@const actState = resolveSessionActivityState(session, sessionActivity, $liveNow)}
             {@const projectLabels = session.project_ids.map((id) => getSessionProjectLabel(id)).filter((p) => p && p.trim().length > 0 && !p.startsWith('prj_') && p !== '项目名称未提供')}
             {@const isDeletingThis = pendingSessionDeleteKey === sessionActionKey(session)}
+            {@const promptTokens = (session.input_uncached_tokens ?? 0) + (session.cache_read_tokens ?? 0) + (session.cache_write_tokens ?? 0)}
             <tr class:row-deleting={isDeletingThis}>
               <td class="session-info-cell">
                 <div class="session-name-row">
@@ -346,7 +347,6 @@
                 <div class="session-token-main">
                   <strong>{formatNumber(session.total_tokens)}</strong>
                 </div>
-                {@const promptTokens = (session.input_uncached_tokens ?? 0) + (session.cache_read_tokens ?? 0) + (session.cache_write_tokens ?? 0)}
                 {#if promptTokens > 0}
                   <div
                     class="session-precision-sub session-cache-rate"

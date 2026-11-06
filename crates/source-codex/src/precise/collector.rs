@@ -187,11 +187,11 @@ fn collect_codex_precise_with_policy(
         let mut continuation: Option<String> = None;
         let base_key = session_key("codex", session.as_bytes())?;
         let key = if sessions.insert(base_key.clone()) {
-            base_key
+            base_key.clone()
         } else if tolerant {
-            // A compaction continuation keeps the original session id. Give it
-            // a derived id so both rollouts are counted instead of dropping the
-            // newer file's turns.
+            // A compaction continuation keeps the original logical session id.
+            // Give its source a derived key so both rollouts can be tracked
+            // independently without splitting their session in analytics.
             let digest = hash_path(&file)?;
             let derived = format!("{session}#{}", &digest[..8.min(digest.len())]);
             let derived_key = session_key("codex", derived.as_bytes())?;
@@ -208,10 +208,23 @@ fn collect_codex_precise_with_policy(
         } else {
             return Err(CodexError::Invalid("duplicate session sources"));
         };
-        session_name_keys
-            .entry(session.clone())
-            .or_default()
-            .push(key.clone());
+        let title_keys = session_name_keys.entry(session.clone()).or_default();
+        if !title_keys.contains(&base_key) {
+            title_keys.push(base_key.clone());
+        }
+        if continuation.is_some() {
+            // Earlier versions exposed the derived rollout key as a session.
+            // If the user deleted that duplicate, carry the suppression to
+            // the now-canonical logical session before rescanning either file.
+            if store.is_session_suppressed("codex", &key)?
+                && !store.is_session_suppressed("codex", &base_key)?
+            {
+                store.delete_session("codex", &base_key, now_ms()?)?;
+            }
+            // Older versions stored the thread title under the derived rollout
+            // id, which surfaced as a second session row.
+            store.clear_session_name(&key, "codex")?;
+        }
         let prior = store.checkpoint("codex", &key)?;
         // Compressed rollouts are immutable archives. Their fingerprint is
         // enough to prove nothing changed; decompressing 100 MiB every cycle
@@ -301,7 +314,7 @@ fn collect_codex_precise_with_policy(
             scan
         };
         if let Some(name) = scan.title.as_deref() {
-            store.upsert_session_name(&scan.next.source_key, "codex", name, now_ms()?)?;
+            store.upsert_session_name(&base_key, "codex", name, now_ms()?)?;
         }
         let (inserted, revised, unchanged) = if scan.full_reconcile {
             if scan.pending_line && prior.is_some() {

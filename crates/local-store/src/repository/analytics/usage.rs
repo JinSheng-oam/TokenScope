@@ -222,9 +222,10 @@ impl LocalStore {
     ) -> Result<Vec<ModelActivityBreakdown>> {
         let mut activity = Vec::new();
         let mut stmt = self.conn.prepare(
-            "SELECT COALESCE(u.model_id,'unknown-model'),COUNT(*) \
-             FROM usage_records u JOIN source_checkpoints cp \
-               ON cp.tool_id='codex' AND cp.source_key=u.session_id \
+            "SELECT COALESCE(u.model_id,'unknown-model'),COUNT(DISTINCT u.record_id) \
+             FROM usage_records u \
+             JOIN record_sources rs ON rs.record_id=u.record_id AND rs.tool_id='codex' \
+             JOIN source_checkpoints cp ON cp.tool_id=rs.tool_id AND cp.source_key=rs.source_key \
              WHERE u.tool_id='codex' AND u.scope='device_local' AND u.is_deleted=0 \
                AND cp.source_fingerprint LIKE '%\"mode\":\"modern\"%' \
                AND (?1 IS NULL OR u.event_at_ms >= ?1) AND (?2 IS NULL OR u.event_at_ms < ?2) \

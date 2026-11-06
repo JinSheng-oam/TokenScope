@@ -82,10 +82,13 @@ impl LocalStore {
             return Err(StoreError::InvalidInput("session search"));
         }
         let cte = format!(
-            r#"{SESSION_LINKS_CTE}, modern_codex AS (
-                SELECT source_key FROM source_checkpoints
-                WHERE tool_id='codex'
-                    AND source_fingerprint LIKE '%"mode":"modern"%'
+            r#"{SESSION_LINKS_CTE}, modern_codex_records AS (
+                SELECT DISTINCT rs.record_id
+                FROM record_sources rs
+                JOIN source_checkpoints cp
+                    ON cp.tool_id=rs.tool_id AND cp.source_key=rs.source_key
+                WHERE rs.tool_id='codex'
+                    AND cp.source_fingerprint LIKE '%"mode":"modern"%'
             ),
             usage_sessions AS (
                 SELECT u.session_id,u.tool_id,
@@ -100,12 +103,13 @@ impl LocalStore {
                     SUM(CASE WHEN u.precision='unknown' THEN 1 ELSE 0 END) AS unknown_precision_records,
                     SUM(CASE WHEN u.event_at_ms IS NULL THEN 1 ELSE 0 END) AS untimed_records,
                     COUNT(DISTINCT u.model_id) AS model_count,
-                    CASE WHEN u.tool_id='codex' AND u.session_id IN (SELECT source_key FROM modern_codex)
-                        THEN SUM(CASE WHEN u.model_id IS NOT NULL THEN 1 ELSE 0 END) ELSE NULL END AS known_response_count,
-                    CASE WHEN u.tool_id='codex' AND u.session_id IN (SELECT source_key FROM modern_codex)
-                        THEN SUM(CASE WHEN u.model_id IS NULL THEN 1 ELSE 0 END) ELSE NULL END AS unknown_response_count,
+                    CASE WHEN SUM(CASE WHEN mcr.record_id IS NOT NULL THEN 1 ELSE 0 END)>0
+                        THEN SUM(CASE WHEN mcr.record_id IS NOT NULL AND u.model_id IS NOT NULL THEN 1 ELSE 0 END) ELSE NULL END AS known_response_count,
+                    CASE WHEN SUM(CASE WHEN mcr.record_id IS NOT NULL THEN 1 ELSE 0 END)>0
+                        THEN SUM(CASE WHEN mcr.record_id IS NOT NULL AND u.model_id IS NULL THEN 1 ELSE 0 END) ELSE NULL END AS unknown_response_count,
                     MAX(u.event_at_ms) AS last_event_at_ms,NULL AS activity_observed_at_ms
                 FROM usage_records u
+                LEFT JOIN modern_codex_records mcr ON mcr.record_id=u.record_id
                 WHERE u.owner_device_id=?1 AND u.scope='device_local' AND u.is_deleted=0
                     AND u.session_id IS NOT NULL AND u.tool_id<>'antigravity'
                     AND (?2 IS NULL OR u.event_at_ms >= ?2) AND (?3 IS NULL OR u.event_at_ms < ?3)

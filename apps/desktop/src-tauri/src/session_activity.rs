@@ -5,17 +5,29 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
-    path::Path,
-    sync::{Mutex, OnceLock},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokenscope_core_domain::session_key;
 
 const ACTIVE_TURN_RETENTION_MS: u64 = 20 * 60 * 1000;
 const FRESH_FILE_ACTIVE_MS: u64 = 90 * 1000;
+const MAX_CODEX_INDEX_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_CODEX_INDEX_LINE_BYTES: usize = 1024 * 1024;
+const MAX_CODEX_INDEX_ROWS: usize = 100_000;
 static ACTIVE_TURNS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
 static OTHER_ACTIVITY: OnceLock<Mutex<HashMap<String, SessionActivity>>> = OnceLock::new();
 static OTHER_WATCHER: OnceLock<Mutex<Option<RecommendedWatcher>>> = OnceLock::new();
+static CODEX_THREAD_TITLES: OnceLock<Mutex<CodexThreadTitleCache>> = OnceLock::new();
+
+#[derive(Default)]
+struct CodexThreadTitleCache {
+    path: Option<PathBuf>,
+    file_len: u64,
+    modified: Option<SystemTime>,
+    names: Arc<HashMap<String, String>>,
+}
 
 fn is_generating(session_id: &str, explicit: Option<bool>, modified_ms: u64, now_ms: u64) -> bool {
     let states = ACTIVE_TURNS.get_or_init(|| Mutex::new(HashMap::new()));
@@ -307,6 +319,96 @@ fn ensure_other_watchers() {
     }
 }
 
+fn codex_thread_titles(home: &Path) -> Arc<HashMap<String, String>> {
+    let path = home.join("session_index.jsonl");
+    let before = match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => metadata,
+        _ => return Arc::new(HashMap::new()),
+    };
+    if before.len() > MAX_CODEX_INDEX_BYTES {
+        return Arc::new(HashMap::new());
+    }
+    let modified = before.modified().ok();
+    let cache = CODEX_THREAD_TITLES.get_or_init(|| Mutex::new(CodexThreadTitleCache::default()));
+    let Ok(mut cache) = cache.lock() else {
+        return Arc::new(HashMap::new());
+    };
+    if cache.path.as_deref() == Some(path.as_path())
+        && cache.file_len == before.len()
+        && cache.modified == modified
+    {
+        return Arc::clone(&cache.names);
+    }
+    let fallback = if cache.path.as_deref() == Some(path.as_path()) {
+        Arc::clone(&cache.names)
+    } else {
+        Arc::new(HashMap::new())
+    };
+
+    let file = match File::open(&path) {
+        Ok(file) => file,
+        Err(_) => return fallback,
+    };
+    let mut reader = BufReader::new(file);
+    let mut line = Vec::new();
+    let mut names = HashMap::new();
+    let mut rows = 0usize;
+    loop {
+        line.clear();
+        let bytes = match reader.read_until(b'\n', &mut line) {
+            Ok(bytes) => bytes,
+            Err(_) => return fallback,
+        };
+        if bytes == 0 {
+            break;
+        }
+        rows = rows.saturating_add(1);
+        if rows > MAX_CODEX_INDEX_ROWS || line.len() > MAX_CODEX_INDEX_LINE_BYTES {
+            return fallback;
+        }
+        let has_newline = line.last() == Some(&b'\n');
+        let value: serde_json::Value = match serde_json::from_slice(&line) {
+            Ok(value) => value,
+            Err(_) if !has_newline => break,
+            Err(_) => continue,
+        };
+        let Some(id) = value.get("id").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if !(8..=128).contains(&id.len())
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        {
+            continue;
+        }
+        let Some(raw_name) = value
+            .get("thread_name")
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        let normalized = raw_name.split_whitespace().collect::<Vec<_>>().join(" ");
+        if normalized.is_empty() || normalized.chars().any(char::is_control) {
+            continue;
+        }
+        names.insert(id.to_owned(), normalized.chars().take(200).collect());
+    }
+
+    let after = match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => metadata,
+        _ => return fallback,
+    };
+    if before.len() != after.len() || before.modified().ok() != after.modified().ok() {
+        return fallback;
+    }
+    cache.path = Some(path);
+    cache.file_len = after.len();
+    cache.modified = after.modified().ok();
+    cache.names = Arc::new(names);
+    Arc::clone(&cache.names)
+}
+
 fn other_activities(now: u64) -> Vec<SessionActivity> {
     ensure_other_watchers();
     OTHER_ACTIVITY
@@ -381,6 +483,7 @@ fn read_codex_activity(now: u64) -> Result<Vec<SessionActivity>, String> {
     };
     conn.busy_timeout(std::time::Duration::from_millis(250))
         .map_err(|e| e.to_string())?;
+    let thread_titles = codex_thread_titles(&home);
     let mut stmt = conn.prepare("SELECT id,rollout_path,title,model FROM threads WHERE archived=0 ORDER BY updated_at DESC LIMIT 128").map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
@@ -445,7 +548,11 @@ fn read_codex_activity(now: u64) -> Result<Vec<SessionActivity>, String> {
             session_id,
             state: if generating { "generating" } else { "recent" },
             observed_at_ms: modified,
-            display_name: display_name.map(|name| name.chars().take(200).collect()),
+            display_name: thread_titles
+                .get(&id)
+                .cloned()
+                .or(display_name)
+                .map(|name| name.chars().take(200).collect()),
             model_id: model_id.map(|name| name.chars().take(128).collect()),
         });
     }

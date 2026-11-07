@@ -12,7 +12,7 @@ use std::io;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const MODULE_ID: &str = "source-antigravity";
-pub const PARSER_VERSION: u32 = 6;
+pub const PARSER_VERSION: u32 = 7;
 pub(crate) const MAX_FILES: usize = 20_000;
 pub(crate) const MAX_TURNS_PER_DB: u64 = 50_000;
 pub(crate) const MAX_MODELS_PER_DB: usize = 512;

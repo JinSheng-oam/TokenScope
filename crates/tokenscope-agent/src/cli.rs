@@ -224,6 +224,9 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         let tool_id = arg(&args, "--session-tool");
         let model_id = arg(&args, "--session-model");
         let project_id = arg(&args, "--session-project");
+        let include_filter_options = !args
+            .iter()
+            .any(|value| value == "--skip-session-filter-options");
         let session_limit: u32 = arg(&args, "--session-limit")
             .map(|value| value.parse())
             .transpose()?
@@ -243,6 +246,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
                 project_id: project_id.as_deref(),
                 start_date: start_date.as_deref(),
                 end_date: end_date.as_deref(),
+                include_filter_options,
             },
         )?;
         println!(

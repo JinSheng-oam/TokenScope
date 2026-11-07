@@ -41,6 +41,35 @@ impl LocalStore {
         model_id: Option<&str>,
         project_id: Option<&str>,
     ) -> Result<SessionAnalysisPage> {
+        self.session_analysis_page_with_filter_options(
+            owner_device_id,
+            from_ms,
+            to_ms,
+            offset,
+            limit,
+            search,
+            tool_id,
+            model_id,
+            project_id,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn session_analysis_page_with_filter_options(
+        &self,
+        owner_device_id: &str,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+        offset: u64,
+        limit: u32,
+        search: Option<&str>,
+        tool_id: Option<&str>,
+        model_id: Option<&str>,
+        project_id: Option<&str>,
+        include_filter_options: bool,
+    ) -> Result<SessionAnalysisPage> {
+        let started = Instant::now();
         let page = self.session_usage_page_filtered(
             owner_device_id,
             from_ms,
@@ -52,7 +81,20 @@ impl LocalStore {
             model_id,
             project_id,
         )?;
-        let filter_options = self.session_filter_options(owner_device_id, from_ms, to_ms)?;
+        let page_elapsed = started.elapsed();
+        let filters_started = Instant::now();
+        let filter_options = if include_filter_options {
+            self.session_filter_options(owner_device_id, from_ms, to_ms)?
+        } else {
+            Default::default()
+        };
+        if std::env::var_os("TOKENSCOPE_DASHBOARD_PROFILE").is_some() {
+            eprintln!(
+                "session analysis: page={page_elapsed:?}, filters={:?}, total={:?}",
+                filters_started.elapsed(),
+                started.elapsed()
+            );
+        }
         Ok(SessionAnalysisPage {
             page,
             filter_options,
@@ -82,15 +124,7 @@ impl LocalStore {
             return Err(StoreError::InvalidInput("session search"));
         }
         let cte = format!(
-            r#"{SESSION_LINKS_CTE}, modern_codex_records AS (
-                SELECT DISTINCT rs.record_id
-                FROM record_sources rs
-                JOIN source_checkpoints cp
-                    ON cp.tool_id=rs.tool_id AND cp.source_key=rs.source_key
-                WHERE rs.tool_id='codex'
-                    AND cp.source_fingerprint LIKE '%"mode":"modern"%'
-            ),
-            usage_sessions AS (
+            r#"{SESSION_LINKS_CTE}, usage_sessions AS (
                 SELECT u.session_id,u.tool_id,
                     COALESCE(SUM(u.input_uncached_tokens+u.cache_read_tokens+u.cache_write_tokens+u.output_tokens+u.unclassified_tokens),0) AS total_tokens,
                     COALESCE(SUM(u.input_uncached_tokens),0) AS input_uncached_tokens,
@@ -103,16 +137,25 @@ impl LocalStore {
                     SUM(CASE WHEN u.precision='unknown' THEN 1 ELSE 0 END) AS unknown_precision_records,
                     SUM(CASE WHEN u.event_at_ms IS NULL THEN 1 ELSE 0 END) AS untimed_records,
                     COUNT(DISTINCT u.model_id) AS model_count,
-                    CASE WHEN SUM(CASE WHEN mcr.record_id IS NOT NULL THEN 1 ELSE 0 END)>0
-                        THEN SUM(CASE WHEN mcr.record_id IS NOT NULL AND u.model_id IS NOT NULL THEN 1 ELSE 0 END) ELSE NULL END AS known_response_count,
-                    CASE WHEN SUM(CASE WHEN mcr.record_id IS NOT NULL THEN 1 ELSE 0 END)>0
-                        THEN SUM(CASE WHEN mcr.record_id IS NOT NULL AND u.model_id IS NULL THEN 1 ELSE 0 END) ELSE NULL END AS unknown_response_count,
+                    CASE WHEN SUM(CASE WHEN u.is_modern_codex THEN 1 ELSE 0 END)>0
+                        THEN SUM(CASE WHEN u.is_modern_codex AND u.model_id IS NOT NULL THEN 1 ELSE 0 END) ELSE NULL END AS known_response_count,
+                    CASE WHEN SUM(CASE WHEN u.is_modern_codex THEN 1 ELSE 0 END)>0
+                        THEN SUM(CASE WHEN u.is_modern_codex AND u.model_id IS NULL THEN 1 ELSE 0 END) ELSE NULL END AS unknown_response_count,
                     MAX(u.event_at_ms) AS last_event_at_ms,NULL AS activity_observed_at_ms
-                FROM usage_records u
-                LEFT JOIN modern_codex_records mcr ON mcr.record_id=u.record_id
-                WHERE u.owner_device_id=?1 AND u.scope='device_local' AND u.is_deleted=0
-                    AND u.session_id IS NOT NULL AND u.tool_id<>'antigravity'
-                    AND (?2 IS NULL OR u.event_at_ms >= ?2) AND (?3 IS NULL OR u.event_at_ms < ?3)
+                FROM (
+                    SELECT u.*,
+                        EXISTS (
+                            SELECT 1 FROM record_sources rs
+                            JOIN source_checkpoints cp
+                                ON cp.tool_id=rs.tool_id AND cp.source_key=rs.source_key
+                            WHERE rs.record_id=u.record_id AND rs.tool_id='codex'
+                                AND cp.source_fingerprint LIKE '%"mode":"modern"%'
+                        ) AS is_modern_codex
+                    FROM usage_records u
+                    WHERE u.owner_device_id=?1 AND u.scope='device_local' AND u.is_deleted=0
+                        AND u.session_id IS NOT NULL AND u.tool_id<>'antigravity'
+                        AND (?2 IS NULL OR u.event_at_ms >= ?2) AND (?3 IS NULL OR u.event_at_ms < ?3)
+                ) u
                 GROUP BY u.tool_id,u.session_id
             ),
             ag_usage AS (

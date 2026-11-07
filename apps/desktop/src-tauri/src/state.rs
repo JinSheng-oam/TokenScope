@@ -9,6 +9,7 @@ use std::{
     time::Instant,
 };
 use tokenscope_local_ipc::DashboardResponse;
+use tokenscope_local_store::SessionFilterOptions;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,5 +47,6 @@ pub(crate) struct DashboardWatch {
     pub(crate) revision: AtomicU64,
     pub(crate) request: Mutex<DashboardRequest>,
     pub(crate) cache: Mutex<HashMap<String, (DashboardResponse, Instant)>>,
+    pub(crate) session_filter_options: Mutex<HashMap<String, SessionFilterOptions>>,
     pub(crate) refreshing: Mutex<HashSet<String>>,
 }

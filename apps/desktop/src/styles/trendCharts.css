@@ -1,0 +1,154 @@
+/* SVG Trend Chart & GitHub Heatmap */
+.panel-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.trend-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+.trend-mode-btn {
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  outline: none;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.trend-mode-btn:hover {
+  color: var(--text-primary);
+}
+
+.trend-mode-btn:focus {
+  outline: none;
+}
+
+.trend-mode-btn:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 1px;
+}
+
+.trend-mode-btn.selected {
+  background-color: var(--bg-card);
+  color: var(--brand-primary);
+  box-shadow: var(--shadow-card);
+  border-color: var(--border-subtle);
+  font-weight: 600;
+}
+
+.chart-wrap {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+/* Interactive Floating Hover Tooltip (Curve & Heatmap) */
+.chart-hover-tooltip {
+  position: absolute;
+  z-index: 30;
+  min-width: 196px;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-elevated);
+  pointer-events: none;
+  font-size: 11px;
+  color: var(--text-secondary);
+  transition: left 70ms ease-out, top 70ms ease-out;
+}
+
+.tooltip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 5px;
+  margin-bottom: 5px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tooltip-weekday {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.tooltip-total-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 5px;
+  font-size: 11.5px;
+  color: var(--text-primary);
+}
+
+.tooltip-total-row strong {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--brand-primary);
+}
+
+.tooltip-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 2.5px;
+  font-size: 11px;
+}
+
+.tooltip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tooltip-row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+}
+
+.tooltip-row-val {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.chart-axis-labels {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 6px 4px 0;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}

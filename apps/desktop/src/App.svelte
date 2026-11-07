@@ -1,6 +1,7 @@
 <script lang="ts">
-  import DateRangePicker from './lib/DateRangePicker.svelte';
-  import { createRequestGate, dashboardRequestKey } from './lib/dashboardRequests';
+  import DashboardTopbar from './lib/DashboardTopbar.svelte';
+  import { dashboardRequestKey } from './lib/dashboardRequests';
+  import { createDashboardLoader } from './lib/dashboardLoader';
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import {
@@ -12,13 +13,11 @@
     type TrendViewMode,
   } from './lib/dashboardView';
   import {
-    getAgentStatus,
     getDashboardSnapshot,
     getRecentSessionActivity,
     isTauriRuntime,
     refreshCodexQuotaNow,
     runDiagnostics,
-    startAgent,
   } from './lib/api';
   import { toIsoDate, type HeatmapCell } from './lib/heatmap';
   import { createHubController } from './lib/hubController';
@@ -30,6 +29,7 @@
   import { BOOTSTRAP_STAGE } from './lib/status';
   import type { AgentStatus, CodexQuota, DashboardObservations, DashboardRange, DashboardSnapshot, RemoteDevice, SessionActivity } from './lib/types';
   import DevicesPage from './lib/DevicesPage.svelte';
+  import ModelPricingPage from './lib/ModelPricingPage.svelte';
   import ModelsPage from './lib/ModelsPage.svelte';
   import OverviewPage from './lib/OverviewPage.svelte';
   import ProjectsPage from './lib/ProjectsPage.svelte';
@@ -39,13 +39,12 @@
   import ToolsPage from './lib/ToolsPage.svelte';
   import AgentCustomizations from './lib/AgentCustomizations.svelte';
 
-  type Tab = 'overview' | 'devices' | 'tools' | 'models' | 'sessions' | 'projects' | 'quota' | 'settings' | 'customizations';
+  type Tab = 'overview' | 'devices' | 'tools' | 'models' | 'pricing' | 'sessions' | 'projects' | 'quota' | 'settings' | 'customizations';
   let activeTab: Tab = 'overview';
   let customizationDirty = false;
   let range: DashboardRange = 'all';
   let customStart = '';
   let customEnd = '';
-  let customOpen = false;
   let todayIso = '';
 
   let snapshot: DashboardSnapshot | null = null;
@@ -62,20 +61,29 @@
   let lastQuotaAttemptAt = 0;
   let errorMessage = '';
   let runtimeAvailable = isTauriRuntime();
-  let agentStarted = false;
   let latestObservations: DashboardObservations | null = null;
   let unlistenObservations: (() => void) | undefined;
   let disposed = false;
   let unlistenDashboard: (() => void) | undefined;
-  let refreshTimer: number | undefined;
-  let appliedRefreshIntervalMs = -1;
-  const dashboardRequests = createRequestGate();
-  let appliedSnapshotKey = '';
   let heatmapRequest = 0;
 
   let remoteSelectedDevice = 'all';
   let deviceScope: DeviceScope = (typeof localStorage !== 'undefined' && localStorage.getItem('tokenscope.deviceScope')) || 'all';
-  let deviceMenuOpen = false;
+
+  const { load: loadDashboard, setRefreshInterval: applyRefreshInterval, acceptSnapshot, dispose: disposeDashboard } = createDashboardLoader({
+    runtimeAvailable: () => runtimeAvailable,
+    selection: () => ({ range, start: customStart, end: customEnd }),
+    agentChanged: (value) => { agent = value; },
+    loadingChanged: (value) => { loading = value; },
+    refreshingChanged: (value) => { refreshing = value; },
+    errorChanged: (value) => { errorMessage = value; },
+    snapshotCleared: () => { snapshot = null; },
+    snapshotChanged: applySnapshot,
+    snapshotLoaded: (next) => {
+      if (!$hubState.displayName && next.identity?.display_name) hubController.setDisplayName(next.identity.display_name);
+      if (activeTab === "sessions") void sessionController.load(false, next.data_revision);
+    },
+  });
 
   const sessionController = createSessionController({
     isRuntimeAvailable: () => runtimeAvailable,
@@ -140,6 +148,7 @@
     { id: 'devices', label: '多设备网络', iconKey: 'devices' },
     { id: 'tools', label: '工具分析', iconKey: 'tools' },
     { id: 'models', label: '模型排行', iconKey: 'models' },
+    { id: 'pricing', label: '模型定价', iconKey: 'pricing' },
     { id: 'projects', label: '项目分析', iconKey: 'projects' },
     { id: 'sessions', label: '会话分析', iconKey: 'sessions' },
     { id: 'quota', label: '额度与活动', iconKey: 'quota' },
@@ -162,6 +171,7 @@
   });
 
   $: sessionPage = $sessionState.analysis?.page;
+  $: activeTabLabel = navItems.find((t) => t.id === activeTab)?.label ?? '使用总览';
   $: sessionPageStart = sessionPage && sessionPage.total > 0 ? sessionPage.offset + 1 : 0;
   $: sessionPageEnd = Math.min((sessionPage?.offset ?? 0) + (sessionPage?.sessions.length ?? 0), sessionPage?.total ?? 0);
   $: sessionFilterOptions = $sessionState.analysis?.filter_options ?? { tools: [], models: [], projects: [] };
@@ -211,7 +221,6 @@
 
   function selectDeviceScope(nextScope: DeviceScope) {
     deviceScope = nextScope;
-    deviceMenuOpen = false;
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('tokenscope.deviceScope', nextScope);
     }
@@ -221,15 +230,6 @@
     (d) => d.device_id !== snapshot?.identity?.device_id && d.revoked_at_ms === null
   );
 
-  function fetchSnapshot(selectedRange: DashboardRange, start: string, end: string) {
-    return getDashboardSnapshot(
-      selectedRange,
-      0,
-      selectedRange === 'custom' ? start : undefined,
-      selectedRange === 'custom' ? end : undefined
-    );
-  }
-
   function quotaCovers(stored: CodexQuota[], candidate: CodexQuota[]) {
     return candidate.length > 0 && candidate.every((q) => stored.some((s) =>
       s.source_id === q.source_id && s.pool_id === q.pool_id &&
@@ -237,10 +237,7 @@
     ));
   }
 
-  function applySnapshot(next: DashboardSnapshot, key: string) {
-    if (key !== dashboardRequestKey(range, customStart, customEnd)) return;
-    if (appliedSnapshotKey === key && snapshot && snapshot.generated_at_ms > next.generated_at_ms) return;
-    appliedSnapshotKey = key;
+  function applySnapshot(next: DashboardSnapshot) {
     if (latestObservations && latestObservations.observed_at_ms > next.generated_at_ms) {
       const { observed_at_ms, ...update } = latestObservations;
       next = { ...next, ...update };
@@ -260,53 +257,6 @@
       sessionActivity = [];
     } finally {
       activityPolling = false;
-    }
-  }
-
-  async function loadDashboard(showSpinner = true) {
-    const request = dashboardRequests.begin();
-    const selectedRange = range, start = customStart, end = customEnd;
-    const key = dashboardRequestKey(selectedRange, start, end);
-    if (!runtimeAvailable) {
-      errorMessage = '请在 TokenScope 桌面端运行环境查看实时统计。';
-      loading = false;
-      return;
-    }
-    if (showSpinner) refreshing = true;
-    errorMessage = '';
-    try {
-      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-      let currentAgent: AgentStatus;
-      if (!agentStarted) {
-        currentAgent = await startAgent(timeZone);
-        agentStarted = true;
-      } else {
-        currentAgent = await getAgentStatus();
-        if (!currentAgent.running && currentAgent.binaryFound) {
-          currentAgent = await startAgent(timeZone);
-        }
-      }
-      if (!dashboardRequests.isCurrent(request)) return;
-      agent = currentAgent;
-      if (!currentAgent.running) {
-        errorMessage = currentAgent.message;
-        snapshot = null;
-      } else if (!currentAgent.databaseReady) {
-        errorMessage = 'Agent 已启动，正在初始化本地 SQLite WAL 数据库…';
-        snapshot = null;
-      } else {
-        const nextSnapshot = await fetchSnapshot(selectedRange, start, end);
-        if (!dashboardRequests.isCurrent(request)) return;
-        applySnapshot(nextSnapshot, key);
-        if (!$hubState.displayName && nextSnapshot.identity?.display_name) {
-          hubController.setDisplayName(nextSnapshot.identity.display_name);
-        }
-        if (activeTab === 'sessions') void sessionController.load();
-      }
-    } catch (error) {
-      if (dashboardRequests.isCurrent(request)) errorMessage = error instanceof Error ? error.message : String(error);
-    } finally {
-      if (dashboardRequests.isCurrent(request)) { loading = false; refreshing = false; }
     }
   }
 
@@ -336,27 +286,24 @@
     if (Date.now() - newest >= 60_000 && Date.now() - lastQuotaAttemptAt >= 60_000) void handleRefreshCodexQuota();
   }
 
-  function handleSelectRange(next: DashboardRange) {
-    if (next === 'custom') {
-      customOpen = true;
-      return;
-    }
+  function handleSelectRange(next: Exclude<DashboardRange, 'custom'>) {
     if (range === next) return;
     sessionController.resetForRangeChange();
     range = next;
     void loadDashboard();
   }
 
-  function applyCustomRange() {
-    if (!customStart || !customEnd || customStart > customEnd) {
+  function applyCustomRange({ start, end }: { start: string; end: string }) {
+    if (!start || !end || start > end) {
       errorMessage = '请选择有效的起止日期';
       return;
     }
-    if (customEnd > todayIso) {
+    if (end > todayIso) {
       errorMessage = '结束日期不能晚于今天';
       return;
     }
-    customOpen = false;
+    customStart = start;
+    customEnd = end;
     sessionController.resetForRangeChange();
     range = 'custom';
     void loadDashboard();
@@ -370,21 +317,9 @@
     if (nextTab === 'quota') pollVisibleCodexQuota();
     if (nextTab === 'sessions') {
       void pollSessionActivity();
-      void sessionController.load();
+      if (snapshot) void sessionController.load(false, snapshot.data_revision);
     }
     if (nextTab === 'devices' && $webdavState.enabled) void webdavController.refreshDevices();
-  }
-
-  function applyRefreshInterval(intervalMs: number) {
-    if (intervalMs === appliedRefreshIntervalMs) return;
-    appliedRefreshIntervalMs = intervalMs;
-    if (refreshTimer !== undefined) {
-      window.clearInterval(refreshTimer);
-      refreshTimer = undefined;
-    }
-    if (intervalMs > 0) {
-      refreshTimer = window.setInterval(() => { if (document.visibilityState === 'visible') void loadDashboard(false); }, intervalMs);
-    }
   }
 
   onMount(() => {
@@ -402,9 +337,9 @@
       void listen<{ protocol_version: number; request_key: string; snapshot: DashboardSnapshot }>('dashboard-updated', (event) => {
         const next = event.payload?.snapshot;
         if (!next || event.payload.request_key !== dashboardRequestKey(range, customStart, customEnd)) return;
-        applySnapshot(next, event.payload.request_key);
+        acceptSnapshot(next, event.payload.request_key);
         errorMessage = '';
-        if (activeTab === 'sessions') void sessionController.load();
+        if (activeTab === 'sessions') void sessionController.load(false, next.data_revision);
       }).then((unlisten) => {
         if (disposed) unlisten(); else unlistenDashboard = unlisten;
       });
@@ -433,15 +368,11 @@
 
     return () => {
       disposed = true;
-      dashboardRequests.invalidate();
+      disposeDashboard();
       heatmapRequest += 1;
       unsubscribeRefreshInterval();
       if (activityTimer !== undefined) window.clearInterval(activityTimer);
       if (quotaTimer !== undefined) window.clearInterval(quotaTimer);
-      if (refreshTimer !== undefined) {
-        window.clearInterval(refreshTimer);
-        refreshTimer = undefined;
-      }
       sessionController.dispose();
       unlistenDashboard?.();
       unlistenObservations?.();
@@ -453,19 +384,6 @@
 <svelte:head>
   <title>TokenScope · 跨设备 AI Token 监控</title>
 </svelte:head>
-
-<svelte:window
-  onmousedown={(e) => {
-    if (deviceMenuOpen && !(e.target as Element | null)?.closest('.device-switcher-wrap')) {
-      deviceMenuOpen = false;
-    }
-  }}
-  onkeydown={(e) => {
-    if (e.key === 'Escape' && deviceMenuOpen) {
-      deviceMenuOpen = false;
-    }
-  }}
-/>
 
 <div class="app-shell">
   <!-- Sidebar -->
@@ -543,156 +461,17 @@
   <!-- Main Area -->
   <main class="main-area">
     <!-- Topbar -->
-    <header class="topbar">
-      <div class="breadcrumbs">
-        <span>TokenScope</span>
-        <span class="sep">/</span>
-        <strong>{navItems.find((t) => t.id === activeTab)?.label}</strong>
-      </div>
-
-      <div class="topbar-actions">
-        <div class="device-switcher-wrap">
-          <button
-            type="button"
-            class="machine-capsule interactive"
-            class:active={deviceMenuOpen || deviceScope !== 'local'}
-            title="切换设备数据统计范围（可汇总全部设备或单看某台设备）"
-            aria-haspopup="listbox"
-            aria-expanded={deviceMenuOpen}
-            onclick={() => (deviceMenuOpen = !deviceMenuOpen)}
-          >
-            {@html icons.cpu}
-            <span>{deviceScopeLabel}</span>
-            <svg class="capsule-chevron" class:rotated={deviceMenuOpen} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-
-          {#if deviceMenuOpen}
-            <div class="device-scope-dropdown" role="listbox" aria-label="选择统计设备范围">
-              <button
-                type="button"
-                class="device-scope-option"
-                class:selected={deviceScope === 'all'}
-                role="option"
-                aria-selected={deviceScope === 'all'}
-                onclick={() => selectDeviceScope('all')}
-              >
-                <div class="scope-opt-main">
-                  <span class="scope-opt-title">全部设备汇总</span>
-                </div>
-                <span class="scope-opt-badge tabular">
-                  {formatCompactTokens((snapshot?.local.total_tokens ?? 0) + (snapshot?.remote.total_tokens ?? 0))}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                class="device-scope-option"
-                class:selected={deviceScope === 'local'}
-                role="option"
-                aria-selected={deviceScope === 'local'}
-                onclick={() => selectDeviceScope('local')}
-              >
-                <div class="scope-opt-main">
-                  <span class="scope-opt-title">本机 · {snapshot?.identity?.display_name ?? 'This device'}</span>
-                </div>
-                <span class="scope-opt-badge tabular">
-                  {formatCompactTokens(snapshot?.local.total_tokens ?? 0)}
-                </span>
-              </button>
-
-              {#if selectableRemoteDevices.length > 0}
-                <div class="device-scope-divider">已同步远端设备</div>
-                {#each selectableRemoteDevices as rDev}
-                  {@const rTokens = snapshot?.remote_by_device.find((x) => x.owner_device_id === rDev.device_id)?.total_tokens ?? 0}
-                  <button
-                    type="button"
-                    class="device-scope-option"
-                    class:selected={deviceScope === rDev.device_id}
-                    role="option"
-                    aria-selected={deviceScope === rDev.device_id}
-                    onclick={() => selectDeviceScope(rDev.device_id)}
-                  >
-                    <div class="scope-opt-main">
-                      <span class="scope-opt-title">{rDev.display_name}</span>
-                      <span class="scope-opt-sub">ID: …{rDev.device_id.slice(-8)}</span>
-                    </div>
-                    <span class="scope-opt-badge tabular">{formatCompactTokens(rTokens)}</span>
-                  </button>
-                {/each}
-              {/if}
-            </div>
-          {/if}
-        </div>
-
-        <div class="range-capsule" role="group" aria-label="时间跨度">
-          {#each [
-            { value: 'today', label: '今天' },
-            { value: '7d', label: '7 天' },
-            { value: '30d', label: '30 天' },
-            { value: 'all', label: '全部' },
-          ] as opt}
-            <button
-              class="range-btn"
-              class:selected={range === opt.value}
-              aria-pressed={range === opt.value}
-              onclick={() => {
-                customOpen = false;
-                handleSelectRange(opt.value as DashboardRange);
-              }}
-            >
-              {opt.label}
-            </button>
-          {/each}
-
-          <div class="custom-range-wrap">
-            <button
-              class="range-btn"
-              class:selected={range === 'custom'}
-              aria-pressed={range === 'custom'}
-              onclick={() => (customOpen = !customOpen)}
-            >
-              {#if range === 'custom' && customStart && customEnd}
-                {customStart.slice(5)} ~ {customEnd.slice(5)}
-              {:else}
-                自定义
-              {/if}
-            </button>
-
-            {#if customOpen}
-              <DateRangePicker
-                startDate={customStart}
-                endDate={customEnd}
-                maxDate={todayIso}
-                onApply={({ start, end }) => {
-                  customStart = start;
-                  customEnd = end;
-                  customOpen = false;
-                  handleSelectRange('custom');
-                  applyCustomRange();
-                }}
-                onClose={() => (customOpen = false)}
-              />
-            {/if}
-          </div>
-        </div>
-
-        <button
-          class="icon-btn"
-          aria-label="刷新数据"
-          title="刷新统计"
-          disabled={refreshing}
-          onclick={() => void loadDashboard()}
-        >
-          <span class:spin={refreshing}>{@html icons.refresh}</span>
-        </button>
-      </div>
-    </header>
+    <DashboardTopbar {activeTabLabel} {deviceScope} {deviceScopeLabel} {selectableRemoteDevices} {snapshot}
+      {range} {todayIso} {customStart} {customEnd}
+      {refreshing} {selectDeviceScope} {handleSelectRange} {applyCustomRange} {loadDashboard} showControls={activeTab !== 'pricing'} />
 
     <!-- Page Content Area -->
-    <section class="page-content" class:fit-viewport={(activeTab === 'overview' && !!snapshot) || loading}>
-      {#if errorMessage}
+    <section
+      class="page-content"
+      class:fit-viewport={(activeTab === 'overview' && !!snapshot) || (loading && activeTab !== 'pricing')}
+      class:compact-session={activeTab === 'sessions' && $sessionState.pageSize <= 6}
+    >
+      {#if errorMessage && activeTab !== 'pricing'}
         <div class="notice-box" role="alert">
           {@html icons.alert}
           <p>{errorMessage}</p>
@@ -700,7 +479,9 @@
         </div>
       {/if}
 
-      {#if activeTab === 'customizations'}
+      {#if activeTab === 'pricing'}
+        <ModelPricingPage {runtimeAvailable} />
+      {:else if activeTab === 'customizations'}
         <AgentCustomizations {runtimeAvailable} bind:dirty={customizationDirty} />
       {:else if loading}
         <div class="loading-state" role="status" aria-live="polite">
@@ -901,6 +682,7 @@
         {:else if activeTab === 'models'}
           <ModelsPage
             {snapshot}
+            {deviceScope}
             sortedModels={dashboardView.sortedModels}
             topModelTotal={dashboardView.topModelTotal}
             bind:modelSortBy
@@ -938,7 +720,7 @@
             onRequestSessionDelete={sessionController.requestDelete}
             onCancelSessionDelete={sessionController.cancelDelete}
             onConfirmSessionDelete={sessionController.confirmDelete}
-            onSelectRange={handleSelectRange}
+            onShowAllDates={() => handleSelectRange('all')}
             onLoadSessionAnalysis={sessionController.load}
           />
         <!-- TAB 5: PROJECTS (项目分析) -->

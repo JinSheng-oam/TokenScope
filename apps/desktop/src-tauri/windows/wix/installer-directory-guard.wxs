@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="TokenScopeInstallDirectoryGuardMarker" Guid="*">
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\TokenScope\TokenScope"
+          Name="InstallDirGuard"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Property Id="TOKENSCOPE_PREVIOUS_INSTALLDIR">
+      <RegistrySearch
+        Id="TokenScopePreviousInstallDirSearch"
+        Root="HKCU"
+        Key="Software\TokenScope\TokenScope"
+        Name="InstallDir"
+        Type="raw" />
+    </Property>
+
+    <CustomAction Id="TokenScopeEnsureSafeInstallDir" Script="vbscript" Execute="immediate" Return="check">
+      <![CDATA[
+        Dim fso, selectedDir, previousDir, selectedFolder, candidateDir, candidateFolder, suffix
+        Set fso = CreateObject("Scripting.FileSystemObject")
+        selectedDir = Session.Property("INSTALLDIR")
+        previousDir = Session.Property("TOKENSCOPE_PREVIOUS_INSTALLDIR")
+
+        If fso.FolderExists(selectedDir) Then
+          Set selectedFolder = fso.GetFolder(selectedDir)
+          If selectedFolder.Files.Count + selectedFolder.SubFolders.Count > 0 Then
+            If previousDir = "" Or LCase(fso.GetAbsolutePathName(selectedDir)) <> LCase(fso.GetAbsolutePathName(previousDir)) Then
+              candidateDir = fso.BuildPath(selectedDir, "TokenScope")
+              suffix = 2
+              Do While fso.FileExists(candidateDir)
+                candidateDir = fso.BuildPath(selectedDir, "TokenScope (" & suffix & ")")
+                suffix = suffix + 1
+              Loop
+
+              Do While fso.FolderExists(candidateDir)
+                Set candidateFolder = fso.GetFolder(candidateDir)
+                If candidateFolder.Files.Count + candidateFolder.SubFolders.Count = 0 Then Exit Do
+                candidateDir = fso.BuildPath(selectedDir, "TokenScope (" & suffix & ")")
+                suffix = suffix + 1
+              Loop
+
+              Session.Property("INSTALLDIR") = candidateDir
+            End If
+          End If
+        End If
+      ]]>
+    </CustomAction>
+
+    <InstallUISequence>
+      <Custom Action="TokenScopeEnsureSafeInstallDir" Before="ExecuteAction">NOT Installed</Custom>
+    </InstallUISequence>
+
+    <InstallExecuteSequence>
+      <Custom Action="TokenScopeEnsureSafeInstallDir" Before="CostInitialize">NOT Installed</Custom>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>

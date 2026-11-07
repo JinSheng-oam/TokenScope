@@ -149,6 +149,7 @@ fn antigravity_session_keeps_untimed_tokens_and_separates_source_activity() {
     let activity = AntigravityActivity {
         known_turns: 2,
         unknown_turns: 1,
+        dated_unmeasured: vec![],
         models: vec![("gemini-2.5-pro".into(), 2)],
     };
     store
@@ -205,4 +206,62 @@ fn antigravity_session_keeps_untimed_tokens_and_separates_source_activity() {
     // otherwise every historical conversation shows up with a zero total and
     // an empty model split.
     assert!(selected.session_usage.sessions.is_empty());
+}
+
+#[test]
+fn antigravity_model_activity_uses_response_times_for_bounded_ranges() {
+    let mut store = store();
+    let session = session_key("antigravity", b"conversation-timed").unwrap();
+    let source = checkpoint("antigravity", "c".repeat(64), "sha256:timed", 4_000);
+    let make = |id, time, precision| {
+        record(
+            id,
+            "antigravity",
+            session.clone(),
+            Some("gemini"),
+            precision,
+            time,
+        )
+    };
+    let activity = AntigravityActivity {
+        known_turns: 6,
+        unknown_turns: 0,
+        dated_unmeasured: vec![("gemini".into(), 1_750, 1), ("gemini".into(), 2_000, 1)],
+        models: vec![("gemini".into(), 6)],
+    };
+    store
+        .reconcile_source_with_activity(
+            None,
+            &source,
+            [
+                make('a', Some(1_000), Precision::Aggregate),
+                make('b', Some(2_000), Precision::Exact),
+                make('c', None, Precision::Aggregate),
+                make('d', Some(1_500), Precision::Estimated),
+            ],
+            4_000,
+            Some(&activity),
+        )
+        .unwrap();
+
+    let rows = |range, from_ms, to_ms| {
+        store
+            .dashboard_snapshot(DashboardQuery {
+                range,
+                from_ms,
+                to_ms,
+                daily_ranges: &[],
+                generated_at_ms: 4_000,
+                time_zone: "UTC".into(),
+                time_zone_valid: true,
+                session_offset: 0,
+            })
+            .unwrap()
+            .model_activity
+    };
+    assert_eq!(rows("all", None, None)[0].response_count, 6);
+    let selected = rows("custom", Some(1_000), Some(2_000));
+    assert_eq!(selected[0].response_count, 2);
+    assert_eq!(selected[0].time_scope, "selected_range");
+    assert!(rows("custom", Some(2_001), Some(3_000)).is_empty());
 }

@@ -26,6 +26,35 @@ impl LocalStore {
             .map_err(Into::into)
     }
 
+    /// Read the immutable rates used by the active catalog.
+    pub fn active_model_price_catalog(&self) -> Result<(Option<i64>, Vec<ModelPriceEntry>)> {
+        let state = self.model_price_catalog_state()?;
+        let entries = match state.active_version {
+            Some(version) => load_entries(&self.conn, &version)?,
+            None => Vec::new(),
+        };
+        Ok((state.last_success_ms, entries))
+    }
+
+    pub fn pricing_preferences(&self) -> Result<PricingPreferences> {
+        self.conn
+            .path()
+            .filter(|path| !path.is_empty())
+            .map_or_else(
+                || Ok(PricingPreferences::default()),
+                |path| PricingPreferences::read(std::path::Path::new(path)),
+            )
+    }
+
+    pub fn backfill_unpriced_model_costs(&mut self, observed_at_ms: i64) -> Result<usize> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let count = backfill_unpriced_records(&tx, observed_at_ms)?;
+        tx.commit()?;
+        Ok(count)
+    }
+
     pub fn mark_model_price_attempt(&mut self, attempted_at_ms: i64) -> Result<()> {
         if attempted_at_ms < 0 {
             return Err(StoreError::InvalidInput("model price attempt time"));
@@ -124,7 +153,7 @@ impl LocalStore {
             "UPDATE model_price_state SET active_version=?1,etag=?2,last_attempt_ms=?3,last_success_ms=?3 WHERE singleton=1",
             params![price_version, etag, fetched_at_ms],
         )?;
-        let backfilled_records = backfill_unpriced_records(&tx, price_version, fetched_at_ms)?;
+        let backfilled_records = backfill_unpriced_records(&tx, fetched_at_ms)?;
         tx.commit()?;
         Ok(ModelPriceInstallReport {
             price_version: price_version.to_owned(),
@@ -134,11 +163,7 @@ impl LocalStore {
     }
 }
 
-fn backfill_unpriced_records(
-    tx: &Transaction<'_>,
-    version: &str,
-    observed_at_ms: i64,
-) -> Result<usize> {
+fn backfill_unpriced_records(tx: &Transaction<'_>, observed_at_ms: i64) -> Result<usize> {
     let owner: Option<String> = tx
         .query_row(
             "SELECT device_id FROM local_identity WHERE singleton=1",
@@ -149,13 +174,13 @@ fn backfill_unpriced_records(
     let Some(owner) = owner else {
         return Ok(0);
     };
-    let mut books = PriceBookCache::for_version(tx, version)?;
+    let mut books = PriceBookCache::new(tx)?;
     let mut last_id = String::new();
     let mut changed = 0usize;
     loop {
         let ids = {
             let mut statement = tx.prepare(
-                "SELECT record_id FROM usage_records WHERE owner_device_id=?1 AND scope='device_local' AND is_deleted=0 AND estimated_cost_microusd IS NULL AND unclassified_tokens=0 AND tool_id IN ('codex','claude','antigravity','deepseek-harness') AND record_id>?2 ORDER BY record_id LIMIT ?3",
+                "SELECT record_id FROM usage_records WHERE owner_device_id=?1 AND scope='device_local' AND is_deleted=0 AND estimated_cost_microusd IS NULL AND (unclassified_tokens=0 OR tool_id='antigravity') AND tool_id IN ('codex','claude','antigravity','deepseek-harness') AND record_id>?2 ORDER BY record_id LIMIT ?3",
             )?;
             let rows = statement
                 .query_map(params![owner, last_id, BACKFILL_BATCH_SIZE], |row| {
@@ -190,8 +215,14 @@ fn backfill_unpriced_records(
 mod calculation;
 #[path = "pricing_catalog.rs"]
 mod pricing_catalog;
+#[path = "pricing_preferences.rs"]
+mod pricing_preferences;
+pub use pricing_preferences::PricingPreferences;
 #[cfg(test)]
 #[path = "pricing_tests.rs"]
 mod pricing_tests;
 pub(super) use calculation::PriceBookCache;
 use pricing_catalog::{load_entries, validate_catalog, validate_catalog_metadata};
+
+#[path = "pricing_remote.rs"]
+mod pricing_remote;

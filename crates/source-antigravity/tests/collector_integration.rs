@@ -45,6 +45,23 @@ fn native_generation_usage_is_attributed_and_uses_real_step_time() {
         params![usage_blob("gemini-3-flash-a", "response-native", 600)],
     )
     .unwrap();
+    let mut tokenless = blob("gemini-3-flash-a");
+    tokenless.extend(scalar(2, 8));
+    conn.execute(
+        "INSERT INTO steps(idx,step_type,metadata) VALUES(8,15,?1)",
+        params![field(1, &timestamp)],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO gen_metadata(idx,data,size) VALUES(8,?1,0)",
+        params![tokenless],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO gen_metadata(idx,data,size) VALUES(9,?1,0)",
+        params![blob("gemini-3-flash-a")],
+    )
+    .unwrap();
     drop(conn);
 
     let mut store = store();
@@ -69,6 +86,21 @@ fn native_generation_usage_is_attributed_and_uses_real_step_time() {
     assert_eq!(record.usage.unclassified_tokens, 1132);
     assert_eq!(record.usage.total().unwrap(), 3272);
     assert_eq!(record.event_at_ms, Some(1_800_000_000_250));
+    let snapshot = store
+        .dashboard_snapshot(tokenscope_local_store::DashboardQuery {
+            range: "custom",
+            from_ms: Some(1_800_000_000_250),
+            to_ms: Some(1_800_000_000_251),
+            daily_ranges: &[],
+            generated_at_ms: 1_800_000_000_251,
+            time_zone: "UTC".into(),
+            time_zone_valid: true,
+            session_offset: 0,
+        })
+        .unwrap();
+    assert_eq!(snapshot.model_activity[0].response_count, 2);
+    assert_eq!(snapshot.local.total_tokens, 3272);
+    assert_eq!(store.antigravity_activity_summary().unwrap().known_turns, 3);
 }
 
 #[test]

@@ -3,6 +3,7 @@ mod ingest;
 mod migration;
 mod models;
 mod pricing;
+pub use pricing::PricingPreferences;
 mod quota;
 mod records;
 mod sync;

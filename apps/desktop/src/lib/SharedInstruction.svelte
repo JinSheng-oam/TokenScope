@@ -5,10 +5,12 @@
   let {
     source = null,
     unsaved = $bindable(false),
+    configured = $bindable(false),
     onClose = undefined,
   }: {
     source?: string | null;
     unsaved?: boolean;
+    configured?: boolean;
     onClose?: () => void;
   } = $props();
 
@@ -41,10 +43,12 @@
 
   $effect(() => {
     unsaved = dirty;
+    configured = Boolean(view && view.draft?.trim());
   });
 
   onDestroy(() => {
     unsaved = false;
+    configured = false;
   });
 
   async function run(kind: string, args: Record<string, unknown> = {}, updateDraft = false) {

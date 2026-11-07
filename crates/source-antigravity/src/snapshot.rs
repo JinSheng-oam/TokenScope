@@ -77,7 +77,7 @@ fn read_step_timestamps(conn: &Connection) -> Result<StepTimestamps> {
             timestamps.by_index.insert(idx, time);
         }
         timestamps.timeline.push(time);
-        if timestamps.by_index.len() > MAX_TURNS_PER_DB as usize {
+        if timestamps.timeline.len() > MAX_TURNS_PER_DB as usize {
             return Err(AntigravityError::Invalid("step timestamp limit exceeded"));
         }
     }
@@ -114,11 +114,13 @@ pub(super) fn read_db(
     let mut records = Vec::new();
     let mut missing_usage = BTreeMap::new();
     let mut seen_responses = std::collections::HashMap::<String, CanonicalRecord>::new();
+    let mut dated_unmeasured = BTreeMap::new();
+    let mut unmeasured_responses = HashMap::<String, (String, Option<i64>)>::new();
     let mut timeline_pos = 0usize;
     while let Some(row) = rows.next()? {
         let position = timeline_pos;
         timeline_pos += 1;
-        if known_turns + unknown_turns >= MAX_TURNS_PER_DB {
+        if known_turns + unknown_turns + unmeasured_responses.len() as u64 >= MAX_TURNS_PER_DB {
             return Err(AntigravityError::Invalid(
                 "conversation turn limit exceeded",
             ));
@@ -134,14 +136,19 @@ pub(super) fn read_db(
         let model = extract_model_name(&blob)?;
         let usage = extract_usage(&blob)?;
         let response_id = extract_response_id(&blob)?;
+        let explicit_time = if usage.is_some() || model.is_some() {
+            proto_varint_field(&blob, 2)?
+                .and_then(|idx| i64::try_from(idx).ok())
+                .and_then(|idx| step_timestamps.by_index.get(&idx).copied())
+        } else {
+            None
+        };
         let native_record = if let Some(usage) = usage {
             let native_id = response_id
                 .clone()
                 .unwrap_or_else(|| format!("row:{}", row_idx.unwrap_or(known_turns as i64)));
-            let step_idx = proto_varint_field(&blob, 2)?.and_then(|idx| i64::try_from(idx).ok());
-            let event_at_ms = step_idx
-                .and_then(|idx| step_timestamps.by_index.get(&idx).copied())
-                .or_else(|| step_timestamps.timeline.get(position).copied().flatten());
+            let event_at_ms =
+                explicit_time.or_else(|| step_timestamps.timeline.get(position).copied().flatten());
             Some(make_record(
                 &stem,
                 device,
@@ -177,18 +184,47 @@ pub(super) fn read_db(
                 unknown_turns += 1;
             }
         } else if let Some(model) = model {
-            *counts.entry(model.clone()).or_insert(0) += 1;
-            *missing_usage.entry(model).or_insert(0) += 1;
-            if counts.len() > MAX_MODELS_PER_DB {
-                return Err(AntigravityError::Invalid("model cardinality limit"));
+            if let Some(id) = response_id {
+                if let Some((old_model, old_time)) = unmeasured_responses.get_mut(&id) {
+                    if *old_model != model
+                        || old_time.zip(explicit_time).is_some_and(|(a, b)| a != b)
+                    {
+                        return Err(AntigravityError::Invalid(
+                            "conflicting duplicate response id",
+                        ));
+                    }
+                    *old_time = old_time.or(explicit_time);
+                } else {
+                    unmeasured_responses.insert(id, (model, explicit_time));
+                }
+            } else {
+                *counts.entry(model.clone()).or_insert(0) += 1;
+                *missing_usage.entry(model.clone()).or_insert(0) += 1;
+                if let Some(time) = explicit_time {
+                    *dated_unmeasured.entry((model, time)).or_insert(0) += 1;
+                }
+                known_turns += 1;
             }
-            known_turns += 1;
         } else {
             unknown_turns += 1;
         }
         if counts.len() > MAX_MODELS_PER_DB {
             return Err(AntigravityError::Invalid("model cardinality limit"));
         }
+    }
+    for (id, (model, time)) in unmeasured_responses {
+        if seen_responses.contains_key(&id) {
+            continue;
+        }
+        *counts.entry(model.clone()).or_insert(0) += 1;
+        *missing_usage.entry(model.clone()).or_insert(0) += 1;
+        if let Some(time) = time {
+            *dated_unmeasured.entry((model, time)).or_insert(0) += 1;
+        }
+        known_turns += 1;
+    }
+    if counts.len() > MAX_MODELS_PER_DB {
+        return Err(AntigravityError::Invalid("model cardinality limit"));
     }
     Ok(Snapshot {
         stem,
@@ -199,6 +235,7 @@ pub(super) fn read_db(
         skipped_rows,
         records,
         missing_usage,
+        dated_unmeasured,
     })
 }
 
@@ -255,6 +292,12 @@ pub(super) fn source_fingerprint(snapshot: &Snapshot, estimates: bool) -> String
     for (model, count) in &snapshot.counts {
         h.update((model.len() as u32).to_be_bytes());
         h.update(model.as_bytes());
+        h.update(count.to_be_bytes());
+    }
+    for ((model, time), count) in &snapshot.dated_unmeasured {
+        h.update((model.len() as u32).to_be_bytes());
+        h.update(model.as_bytes());
+        h.update(time.to_be_bytes());
         h.update(count.to_be_bytes());
     }
     for record in &snapshot.records {

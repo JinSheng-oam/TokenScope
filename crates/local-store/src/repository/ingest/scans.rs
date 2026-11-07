@@ -457,6 +457,10 @@ impl LocalStore {
                 tx.execute("INSERT INTO antigravity_model_activity(source_key,model_id,response_count) VALUES(?1,?2,?3)",
                     params![next.source_key,model,db_int(*count)?])?;
             }
+            let mut insert = tx.prepare("INSERT INTO antigravity_dated_unmeasured_activity(source_key,model_id,event_at_ms,response_count) VALUES(?1,?2,?3,?4)")?;
+            for (model, time, count) in &a.dated_unmeasured {
+                insert.execute(params![next.source_key, model, time, db_int(*count)?])?;
+            }
         }
         if let Some(session) = retire_session {
             let keys = {

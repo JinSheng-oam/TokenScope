@@ -231,6 +231,20 @@ pub(super) fn query_agent_session_analysis(
     if range == "custom" && (start_date.is_none() || end_date.is_none()) {
         return Err("自定义范围需要开始和结束日期".into());
     }
+    let filter_cache_key = format!(
+        "{}|{range}|{}|{}",
+        app.state::<DashboardWatch>()
+            .revision
+            .load(Ordering::Acquire),
+        start_date.unwrap_or_default(),
+        end_date.unwrap_or_default()
+    );
+    let cached_filter_options = app
+        .state::<DashboardWatch>()
+        .session_filter_options
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(&filter_cache_key).cloned());
     let db = database_path(app)?;
     if !db.is_file() {
         return Err("本地数据库尚未初始化，请确认 Agent 已成功启动".into());
@@ -246,6 +260,9 @@ pub(super) fn query_agent_session_analysis(
         .arg(session_offset.to_string())
         .arg("--db")
         .arg(&db);
+    if cached_filter_options.is_some() {
+        command.arg("--skip-session-filter-options");
+    }
     let session_limit = session_limit.unwrap_or(50);
     if !(1..=200).contains(&session_limit) {
         return Err("每页会话数必须在 1 到 200 之间".into());
@@ -310,9 +327,18 @@ pub(super) fn query_agent_session_analysis(
             String::from_utf8_lossy(&stderr).trim()
         ));
     }
-    let response: SessionAnalysisResponse = serde_json::from_slice(&stdout)
+    let mut response: SessionAnalysisResponse = serde_json::from_slice(&stdout)
         .map_err(|e| format!("Agent 返回的会话数据格式无效：{e}"))?;
     response.validate().map_err(|e| e.to_string())?;
+    let watch = app.state::<DashboardWatch>();
+    if let Some(options) = cached_filter_options {
+        response.analysis.filter_options = options;
+    } else if let Ok(mut cache) = watch.session_filter_options.lock() {
+        if cache.len() >= 16 {
+            cache.clear();
+        }
+        cache.insert(filter_cache_key, response.analysis.filter_options.clone());
+    }
     Ok(response)
 }
 

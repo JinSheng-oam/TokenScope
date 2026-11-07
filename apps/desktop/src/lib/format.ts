@@ -1,3 +1,5 @@
+import { USD_DISPLAY, type DisplayCurrency } from './displayCurrency';
+
 export function formatNumber(value: number | null | undefined): string {
   return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 }).format(value ?? 0);
 }
@@ -13,11 +15,11 @@ export function formatToolLabel(toolId: string): string {
   return toolLabels[toolId] ?? toolId;
 }
 
-export function formatCost(microUsd: number | null | undefined): string {
+export function formatCost(microUsd: number | null | undefined, display: DisplayCurrency = USD_DISPLAY): string {
   if (microUsd === null || microUsd === undefined) return '暂无价格数据';
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency', currency: 'USD', maximumFractionDigits: 4,
-  }).format(microUsd / 1_000_000);
+  return new Intl.NumberFormat(display.code === 'CNY' ? 'zh-CN' : 'en-US', {
+    style: 'currency', currency: display.code, maximumFractionDigits: 4,
+  }).format((microUsd / 1_000_000) * display.multiplier);
 }
 
 export function formatPercent(basisPoints: number | null | undefined): string {

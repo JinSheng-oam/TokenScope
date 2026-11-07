@@ -224,3 +224,112 @@ fn already_priced_records_keep_the_original_snapshot_version() {
         Some(expected_version.as_str())
     );
 }
+
+#[test]
+fn antigravity_backfill_uses_reference_without_reclassifying_tokens() {
+    let mut store = store();
+    let mut usage = record('f', "internal-model-alias");
+    usage.tool_id = "antigravity".into();
+    usage.precision = Precision::Aggregate;
+    usage.usage = TokenBreakdown {
+        unclassified_tokens: 1_000_000,
+        cache_read_tokens: 1_000_000,
+        ..TokenBreakdown::default()
+    };
+    let mut source = checkpoint("antigravity", 1_000);
+    source.tool_id = "antigravity".into();
+    store
+        .apply_scan(None, &source, &[usage.clone()], 1_000, false)
+        .unwrap();
+
+    let mut reference = entry("gemini-3-flash-preview", 500_000_000, 3_000_000_000);
+    reference.provider_id = "google".into();
+    reference.cache_read_rate_nanos = Some(50_000_000);
+    install(&mut store, 'f', &[reference]);
+
+    let saved = store.get_record(&usage.record_id).unwrap().unwrap().record;
+    assert_eq!(saved.estimated_cost_microusd, Some(550_000));
+    assert_eq!(saved.usage, usage.usage);
+    assert_eq!(saved.precision, Precision::Aggregate);
+}
+
+#[test]
+fn manual_price_and_exact_match_preference_apply_to_backfill() {
+    let dir = std::env::temp_dir().join(format!(
+        "tokenscope-pricing-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+    ));
+    std::fs::create_dir(&dir).unwrap();
+    let path = dir.join("test.db");
+    let mut db = LocalStore::open(&path).unwrap();
+    db.init_identity(&LocalIdentity {
+        device_id: "pricing-device".into(),
+        display_name: "Test device".into(),
+        time_zone: "UTC".into(),
+    })
+    .unwrap();
+    let alias = record('a', "proxy/openai/gpt-5.4");
+    let exact = record('b', "gpt-5.4");
+    let mut preferences = PricingPreferences {
+        keyword_matching: false,
+        manual_entries: Vec::new(),
+    };
+    preferences.write(&path).unwrap();
+    install(
+        &mut db,
+        'a',
+        &[entry("gpt-5.4", 2_000_000_000, 8_000_000_000)],
+    );
+    db.apply_scan(
+        None,
+        &checkpoint("source", 1_000),
+        &[alias.clone(), exact.clone()],
+        1_000,
+        false,
+    )
+    .unwrap();
+    assert!(db
+        .get_record(&alias.record_id)
+        .unwrap()
+        .unwrap()
+        .record
+        .estimated_cost_microusd
+        .is_none());
+    let original = db
+        .get_record(&exact.record_id)
+        .unwrap()
+        .unwrap()
+        .record
+        .estimated_cost_microusd;
+    assert!(original.is_some());
+
+    preferences
+        .manual_entries
+        .push(entry("proxy/openai/gpt-5.4", 1_000_000_000, 2_000_000_000));
+    preferences.write(&path).unwrap();
+    assert_eq!(PricingPreferences::read(&path).unwrap(), preferences);
+    assert_eq!(db.backfill_unpriced_model_costs(2_000).unwrap(), 1);
+    let saved = db.get_record(&alias.record_id).unwrap().unwrap().record;
+    assert!(saved.estimated_cost_microusd.is_some());
+    assert!(saved.price_version.unwrap().starts_with("manual:"));
+    assert_eq!(
+        db.get_record(&exact.record_id)
+            .unwrap()
+            .unwrap()
+            .record
+            .estimated_cost_microusd,
+        original
+    );
+    drop(db);
+    for name in ["test.db", "test.pricing.json", "test.db-wal", "test.db-shm"] {
+        let file = dir.join(name);
+        if file.exists() {
+            std::fs::remove_file(file).unwrap();
+        }
+    }
+    std::fs::remove_dir(dir).unwrap();
+}

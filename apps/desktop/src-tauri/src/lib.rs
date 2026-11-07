@@ -8,6 +8,7 @@ mod diagnostics;
 mod hub;
 mod instruction_sync;
 mod lifecycle;
+mod model_pricing;
 mod paths;
 mod session_activity;
 mod settings;
@@ -77,6 +78,8 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            model_pricing::get_model_price_catalog,
+            model_pricing::save_model_pricing_preferences,
             agent::start_agent,
             agent::stop_agent,
             agent::get_agent_status,

@@ -67,6 +67,24 @@ export function createSessionController(dependencies: SessionControllerDependenc
   const state = writable<SessionControllerState>({ ...INITIAL_STATE, pageSize: restorePageSize() });
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let requestSequence = 0;
+  let pendingKey: string | undefined;
+  let loadedKey: string | undefined;
+  let knownDataRevision: number | undefined;
+
+  function requestKey(current: SessionControllerState, range: DashboardRange): string {
+    return JSON.stringify({
+      range,
+      startDate: range === 'custom' ? dependencies.customStart() : '',
+      endDate: range === 'custom' ? dependencies.customEnd() : '',
+      offset: current.offset,
+      pageSize: current.pageSize,
+      search: current.search.trim(),
+      toolId: current.toolFilter,
+      modelId: current.modelFilter,
+      projectId: current.projectFilter,
+      dataRevision: knownDataRevision ?? null,
+    });
+  }
 
   function update(patch: Partial<SessionControllerState>) {
     state.update((current) => ({ ...current, ...patch }));
@@ -79,13 +97,16 @@ export function createSessionController(dependencies: SessionControllerDependenc
 
   function resetForRangeChange() {
     requestSequence += 1;
+    pendingKey = undefined;
+    loadedKey = undefined;
     clearDebounce();
-    update({ offset: 0 });
+    update({ offset: 0, loading: false });
   }
 
   function schedule() {
     requestSequence += 1;
-    update({ offset: 0 });
+    pendingKey = undefined;
+    update({ offset: 0, loading: false });
     clearDebounce();
     debounceTimer = setTimeout(() => {
       debounceTimer = undefined;
@@ -114,15 +135,21 @@ export function createSessionController(dependencies: SessionControllerDependenc
       // Persisting the preference is best-effort.
     }
     requestSequence += 1;
+    pendingKey = undefined;
     clearDebounce();
     update({ pageSize: size, offset: 0 });
     void load();
   }
 
-  async function load() {
+  async function load(force = false, dataRevision?: number) {
+    if (dataRevision !== undefined) knownDataRevision = dataRevision;
     if (!dependencies.isRuntimeAvailable() || !dependencies.isActive()) return;
-    const sequence = ++requestSequence;
     const current = get(state);
+    const range = dependencies.range();
+    const key = requestKey(current, range);
+    if (!force && (key === pendingKey || key === loadedKey)) return;
+    const sequence = ++requestSequence;
+    pendingKey = key;
     update({ loading: true, error: '' });
     const filters = {
       search: current.search,
@@ -131,7 +158,6 @@ export function createSessionController(dependencies: SessionControllerDependenc
       projectId: current.projectFilter,
       pageSize: current.pageSize,
     };
-    const range = dependencies.range();
     const fetchPage = dependencies.loadPage ?? getSessionAnalysis;
     const loadPage = (offset: number) => fetchPage(
       range,
@@ -154,12 +180,16 @@ export function createSessionController(dependencies: SessionControllerDependenc
       }
       if (sequence !== requestSequence) return;
       update({ analysis: result });
+      loadedKey = requestKey(get(state), range);
     } catch (error) {
       if (sequence === requestSequence) {
         update({ error: error instanceof Error ? error.message : String(error) });
       }
     } finally {
-      if (sequence === requestSequence) update({ loading: false });
+      if (sequence === requestSequence) {
+        if (pendingKey === key) pendingKey = undefined;
+        update({ loading: false });
+      }
     }
   }
 
@@ -204,6 +234,7 @@ export function createSessionController(dependencies: SessionControllerDependenc
         pendingDeleteKey: '',
         actionMessage: `会话已从本机统计移除（${formatNumber(deletedRecords)} 条记录）；原应用聊天未改动。`,
       });
+      loadedKey = undefined;
       await dependencies.refreshDashboard(false);
     } catch (error) {
       update({ actionError: error instanceof Error ? error.message : String(error) });

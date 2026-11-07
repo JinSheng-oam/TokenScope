@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { displayCurrency } from './displayCurrency';
   import { formatCost, formatNumber, formatToolLabel, percentOf, relativeTime } from '../lib/format';
   import type { DashboardSnapshot, UsageBreakdown, UsageTotals } from '../lib/types';
 
@@ -51,7 +52,7 @@
               </td>
               <td class="tabular"><strong>{formatNumber(tool.total_tokens)}</strong></td>
               <td class="tabular">{formatNumber(tool.record_count)}</td>
-              <td class="tabular">{formatCost(tool.estimated_cost_microusd)}</td>
+              <td class="tabular">{formatCost(tool.estimated_cost_microusd, $displayCurrency)}</td>
               <td class="tabular">
                 <div class="table-track-cell">
                   <div class="rank-track">

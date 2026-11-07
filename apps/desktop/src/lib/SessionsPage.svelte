@@ -1,4 +1,5 @@
 <script lang="ts">
+  import "./sessionTable.css";
   import CustomSelect from './CustomSelect.svelte';
   import { formatNumber, formatToolLabel, relativeTime } from '../lib/format';
   import { icons } from '../lib/icons';
@@ -38,7 +39,6 @@
   const pageSizeOptions = SESSION_PAGE_SIZES.map((n) => ({
     key: String(n),
     label: `${n} 条 / 页`,
-    subtext: n === 6 ? '单屏' : undefined,
   }));
   export let pendingSessionDeleteKey: string;
   export let deletingSessionKey: string;
@@ -55,7 +55,7 @@
   export let onRequestSessionDelete: (session: SessionUsage) => void;
   export let onCancelSessionDelete: () => void;
   export let onConfirmSessionDelete: (session: SessionUsage) => Promise<void>;
-  export let onSelectRange: (range: DashboardRange) => void;
+  export let onShowAllDates: () => void;
   export let onLoadSessionAnalysis: () => Promise<void>;
 
   export let sessionActivity: SessionActivity[] = [];
@@ -107,6 +107,17 @@
       .filter((o) => !o.label.startsWith('prj_') && o.label !== '项目名称未提供')
       .map((o) => ({ key: o.key, label: o.label, count: o.session_count })),
   ];
+
+  const skeletonRowTemplates = [
+    { nameW: '66%', chipW: '68px', sourceW: '78px', modelW: '64%', model2W: '52%', tokW: '72px', subW: '56px', recW: '36px', tagW: '58px', respW: '34px', timeW: '52px' },
+    { nameW: '52%', chipW: '56px', sourceW: '68px', modelW: '70%', model2W: '', tokW: '64px', subW: '52px', recW: '32px', tagW: '54px', respW: '30px', timeW: '48px' },
+    { nameW: '74%', chipW: '74px', sourceW: '82px', modelW: '58%', model2W: '46%', tokW: '76px', subW: '58px', recW: '40px', tagW: '62px', respW: '38px', timeW: '56px' },
+    { nameW: '48%', chipW: '62px', sourceW: '72px', modelW: '62%', model2W: '', tokW: '60px', subW: '50px', recW: '30px', tagW: '54px', respW: '28px', timeW: '46px' },
+    { nameW: '60%', chipW: '66px', sourceW: '78px', modelW: '68%', model2W: '48%', tokW: '68px', subW: '54px', recW: '34px', tagW: '58px', respW: '32px', timeW: '50px' },
+    { nameW: '56%', chipW: '58px', sourceW: '70px', modelW: '54%', model2W: '', tokW: '62px', subW: '52px', recW: '32px', tagW: '54px', respW: '30px', timeW: '48px' },
+  ];
+
+  $: visibleSkeletonRows = skeletonRowTemplates.slice(0, Math.min(Math.max(sessionPageSize, 4), 6));
 </script>
 
 <div class="page-header">
@@ -117,13 +128,29 @@
   <div class="panel-head">
     <div>
       <h2>会话 Token 使用</h2>
-      <p>{#if sessionPage}显示 {formatNumber(sessionPageStart)}–{formatNumber(sessionPageEnd)} / {formatNumber(sessionPage.total)} 个匹配会话{:else if sessionLoading}正在查询会话…{:else}当前范围：{rangeLabel}{/if}</p>
+      <p>
+        {#if sessionPage}
+          显示 {formatNumber(sessionPageStart)}–{formatNumber(sessionPageEnd)} / {formatNumber(sessionPage.total)} 个匹配会话
+          {#if sessionLoading}
+            <span class="session-head-sync">
+              <span class="session-head-pulse" aria-hidden="true"></span>正在同步…
+            </span>
+          {/if}
+        {:else if sessionLoading}
+          <span class="session-head-status">
+            <span class="session-head-pulse" aria-hidden="true"></span>正在查询会话…
+          </span>
+        {:else}
+          当前范围：{rangeLabel}
+        {/if}
+      </p>
     </div>
     <div class="session-page-size">
       <span class="session-page-size-label">每页</span>
       <CustomSelect
         value={String(sessionPageSize)}
         options={pageSizeOptions}
+        align="right"
         ariaLabel="设置每页会话数量"
         onChange={(val) => onSetSessionPageSize(Number(val))}
       />
@@ -179,11 +206,21 @@
     </div>
     <div class="session-filter-meta">
       <span>多模型或多项目会话按“曾使用该项”匹配；Token 显示整段会话合计。</span>
-      <span class="session-filter-count" role="status">
-        {#if sessionLoading}
-          <span class="session-loading-inline">更新中…</span>
+      <span class="session-filter-count" role="status" aria-live="polite">
+        {#if sessionLoading && !sessionPage}
+          <span class="session-loading-inline">
+            <span class="session-inline-spinner" aria-hidden="true"></span>
+            <span>正在检索匹配的会话…</span>
+          </span>
+        {:else}
+          {#if sessionLoading}
+            <span class="session-loading-inline">
+              <span class="session-inline-spinner" aria-hidden="true"></span>
+              <span>更新中…</span>
+            </span>
+          {/if}
+          <span>匹配 {formatNumber(sessionPage?.total ?? 0)} 个会话</span>
         {/if}
-        匹配 {formatNumber(sessionPage?.total ?? 0)} 个会话
       </span>
     </div>
   </div>
@@ -217,7 +254,10 @@
         仅对本页 {sortedSessions.length} 条排序
       </span>
     </div>
-    <div class="table-wrap">
+    <div class="table-wrap" class:is-refreshing={sessionLoading} aria-busy={sessionLoading}>
+      {#if sessionLoading}
+        <div class="session-table-progress" aria-hidden="true"></div>
+      {/if}
       <table class="session-table">
         <thead>
           <tr>
@@ -412,7 +452,112 @@
       </div>
     </div>
   {:else if sessionLoading && !sessionAnalysis}
-    <div class="session-empty-state" role="status">正在读取本机会话统计…</div>
+    <div class="session-loading-skeleton" role="status" aria-live="polite">
+      <div class="session-loading-banner">
+        <div class="session-loading-banner-main">
+          <span class="loading-spinner-ring" aria-hidden="true">
+            <span class="loading-spinner-core"></span>
+          </span>
+          <div class="session-loading-banner-text">
+            <strong>正在读取本机会话统计…</strong>
+            <span>聚合多模型 Token、缓存命中率与响应事件</span>
+          </div>
+        </div>
+        <span class="loading-stage-pill" aria-hidden="true">SQLite WAL 索引扫描</span>
+      </div>
+
+      <div class="session-sort-bar is-skeleton" aria-hidden="true">
+        <span class="session-sort-label">排序</span>
+        {#each sortOptions as opt, idx}
+          <span class="session-sort-chip" class:selected={idx === 0}>
+            {opt.label}{#if idx === 0}<span class="sort-arrow">↓</span>{/if}
+          </span>
+        {/each}
+        <span class="session-sort-hint">
+          <span class="sk-bone" style="width: 112px; height: 11px;"></span>
+        </span>
+      </div>
+
+      <div class="table-wrap is-skeleton-table" aria-hidden="true">
+        <div class="session-table-progress"></div>
+        <table class="session-table">
+          <thead>
+            <tr>
+              <th class="th-session">会话</th>
+              <th class="th-source">来源</th>
+              <th class="th-models">模型使用</th>
+              <th class="th-tokens tabular">Token 使用</th>
+              <th class="th-precision">精度与记录</th>
+              <th class="th-responses tabular">响应次数</th>
+              <th class="th-time tabular">最近事件</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each visibleSkeletonRows as sk, idx}
+              <tr class="session-skeleton-row" style={`--delay: ${idx * 65}ms`}>
+                <td class="session-info-cell">
+                  <div class="session-name-row">
+                    <span class="sk-bone sk-session-title" style={`width: ${sk.nameW}; --delay: ${idx * 65}ms`}></span>
+                  </div>
+                  <div class="session-meta-subline">
+                    <span class="sk-bone sk-session-id" style={`width: 58px; --delay: ${idx * 65 + 30}ms`}></span>
+                    <span class="sk-bone sk-session-chip" style={`width: ${sk.chipW}; --delay: ${idx * 65 + 50}ms`}></span>
+                  </div>
+                </td>
+                <td class="session-source-cell">
+                  <span class="sk-bone sk-source-pill" style={`width: ${sk.sourceW}; --delay: ${idx * 65 + 40}ms`}></span>
+                </td>
+                <td class="session-models-cell">
+                  <div class="session-models-list">
+                    <div class="session-model-row">
+                      <span class="sk-bone sk-model-name" style={`width: ${sk.modelW}; --delay: ${idx * 65 + 60}ms`}></span>
+                      <span class="sk-bone sk-model-num" style={`width: 48px; --delay: ${idx * 65 + 80}ms`}></span>
+                    </div>
+                    {#if sk.model2W}
+                      <div class="session-model-row">
+                        <span class="sk-bone sk-model-name sub" style={`width: ${sk.model2W}; --delay: ${idx * 65 + 90}ms`}></span>
+                        <span class="sk-bone sk-model-num sub" style={`width: 38px; --delay: ${idx * 65 + 110}ms`}></span>
+                      </div>
+                    {/if}
+                  </div>
+                </td>
+                <td class="tabular session-token-cell">
+                  <div class="session-sk-right">
+                    <span class="sk-bone sk-token-num" style={`width: ${sk.tokW}; --delay: ${idx * 65 + 70}ms`}></span>
+                    <span class="sk-bone sk-sub-note" style={`width: ${sk.subW}; --delay: ${idx * 65 + 95}ms`}></span>
+                  </div>
+                </td>
+                <td class="session-precision-cell">
+                  <div class="session-sk-left">
+                    <span class="sk-bone sk-rec-num" style={`width: ${sk.recW}; --delay: ${idx * 65 + 85}ms`}></span>
+                    <span class="sk-bone sk-precision-pill" style={`width: ${sk.tagW}; --delay: ${idx * 65 + 105}ms`}></span>
+                  </div>
+                </td>
+                <td class="tabular session-response-cell">
+                  <div class="session-sk-right">
+                    <span class="sk-bone sk-resp-num" style={`width: ${sk.respW}; --delay: ${idx * 65 + 100}ms`}></span>
+                    <span class="sk-bone sk-sub-note" style={`width: 48px; --delay: ${idx * 65 + 120}ms`}></span>
+                  </div>
+                </td>
+                <td class="session-time-cell">
+                  <div class="session-sk-right">
+                    <span class="sk-bone sk-time-val" style={`width: ${sk.timeW}; --delay: ${idx * 65 + 115}ms`}></span>
+                  </div>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="session-pagination is-skeleton" aria-hidden="true">
+        <span class="sk-bone" style="width: 260px; height: 11px;"></span>
+        <div>
+          <span class="sk-bone sk-page-btn"></span>
+          <span class="sk-bone sk-page-btn"></span>
+        </div>
+      </div>
+    </div>
   {:else if sessionPage && sessionPage.total === 0 && hasSessionFilters}
     <div class="session-empty-state">
       <strong>没有匹配的会话</strong>
@@ -423,7 +568,7 @@
     <div class="session-empty-state">
       <strong>这个时间范围内没有会话用量</strong>
       <p>切换到“全部”查看历史会话。</p>
-      <button class="btn-secondary" disabled={range === 'all'} onclick={() => onSelectRange('all')}>查看全部日期</button>
+      <button class="btn-secondary" disabled={range === 'all'} onclick={onShowAllDates}>查看全部日期</button>
     </div>
   {:else if sessionError}
     <div class="session-empty-state">

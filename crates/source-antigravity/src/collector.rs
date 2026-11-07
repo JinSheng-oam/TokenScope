@@ -151,6 +151,11 @@ fn collect_antigravity_with_policy(
         let activity = AntigravityActivity {
             known_turns: snapshot.known_turns,
             unknown_turns: snapshot.unknown_turns,
+            dated_unmeasured: snapshot
+                .dated_unmeasured
+                .iter()
+                .map(|((model, time), count)| (model.clone(), *time, *count))
+                .collect(),
             models: snapshot
                 .counts
                 .iter()

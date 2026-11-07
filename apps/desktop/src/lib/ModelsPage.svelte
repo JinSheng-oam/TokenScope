@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { displayCurrency } from './displayCurrency';
   import { formatCost, formatNumber, formatToolLabel, percentOf } from '../lib/format';
   import type { ModelSortBy } from '../lib/dashboardView';
   import type { DashboardSnapshot, UsageBreakdown } from '../lib/types';
 
   export let snapshot: DashboardSnapshot;
+  export let deviceScope: string;
   export let sortedModels: UsageBreakdown[];
   export let topModelTotal: number;
   export let modelSortBy: ModelSortBy;
@@ -58,7 +60,7 @@
               <span class="rank-value tabular">{formatNumber(item.total_tokens)}</span>
               {#if item.estimated_cost_microusd != null}
                 <span class="panel-tag" style="font-size: 10.5px; font-weight: 500;">
-                  {formatCost(item.estimated_cost_microusd)}
+                  {formatCost(item.estimated_cost_microusd, $displayCurrency)}
                 </span>
               {/if}
               <span class="rank-share tabular">{percentOf(item.total_tokens, allModelTokens).toFixed(1)}%</span>
@@ -94,10 +96,14 @@
     <div>
       <h2>模型响应与调用量</h2>
     </div>
-    <span class="precision-chip quota">响应活动账本</span>
+    {#if deviceScope === 'all'}
+      <span class="precision-chip muted">仅本机</span>
+    {/if}
   </div>
 
-  {#if snapshot.model_activity.length > 0}
+  {#if deviceScope !== 'all' && deviceScope !== 'local'}
+    <div class="empty-box">暂无该设备的调用数据。</div>
+  {:else if snapshot.model_activity.length > 0}
     <div class="table-wrap">
       <table>
         <thead>

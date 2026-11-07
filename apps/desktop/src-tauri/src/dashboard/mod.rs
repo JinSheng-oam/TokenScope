@@ -19,6 +19,9 @@ pub(crate) async fn delete_session(
         if let Ok(mut cache) = app.state::<DashboardWatch>().cache.lock() {
             cache.clear();
         }
+        if let Ok(mut cache) = app.state::<DashboardWatch>().session_filter_options.lock() {
+            cache.clear();
+        }
         Ok(response)
     })
     .await

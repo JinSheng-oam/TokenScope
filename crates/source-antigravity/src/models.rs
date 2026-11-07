@@ -19,6 +19,7 @@ pub(super) struct Snapshot {
     pub(super) unknown_turns: u64,
     pub(super) skipped_rows: u64,
     pub(super) records: Vec<CanonicalRecord>,
+    pub(super) dated_unmeasured: BTreeMap<(String, i64), u64>,
     pub(super) missing_usage: BTreeMap<String, u64>,
 }
 

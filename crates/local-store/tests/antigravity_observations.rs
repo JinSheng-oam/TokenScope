@@ -28,6 +28,7 @@ fn activity() -> AntigravityActivity {
     AntigravityActivity {
         known_turns: 3,
         unknown_turns: 1,
+        dated_unmeasured: vec![],
         models: vec![("gemini-pro".into(), 2), ("claude-sonnet".into(), 1)],
     }
 }
@@ -68,6 +69,7 @@ fn activity_changes_replace_counts_not_add() {
     let replaced = AntigravityActivity {
         known_turns: 1,
         unknown_turns: 0,
+        dated_unmeasured: vec![],
         models: vec![("gemini-pro".into(), 1)],
     };
     s.reconcile_source_with_activity(Some(&initial), &next, Vec::new(), 200, Some(&replaced))
@@ -139,6 +141,7 @@ fn invalid_activity_does_not_commit_checkpoint() {
     let bad = AntigravityActivity {
         known_turns: 100,
         unknown_turns: 0,
+        dated_unmeasured: vec![],
         models: vec![("gemini-pro".into(), 1)],
     };
     assert!(s

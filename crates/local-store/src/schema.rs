@@ -1,6 +1,6 @@
 //! Schema v1 is append-only at the migration layer. No destructive schema reset.
 
-pub const VERSION: i64 = 10;
+pub const VERSION: i64 = 11;
 pub const MIGRATION_001: &str = r#"
 CREATE TABLE schema_migrations (
   version INTEGER PRIMARY KEY,
@@ -319,4 +319,16 @@ CREATE TABLE model_price_state (
   FOREIGN KEY(active_version) REFERENCES model_price_catalogs(price_version) ON DELETE RESTRICT
 );
 INSERT INTO model_price_state(singleton) VALUES(1);
+"#;
+
+pub const MIGRATION_011: &str = r#"
+CREATE TABLE antigravity_dated_unmeasured_activity (
+  source_key TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  event_at_ms INTEGER NOT NULL CHECK(event_at_ms >= 0),
+  response_count INTEGER NOT NULL CHECK(response_count > 0),
+  PRIMARY KEY(source_key, model_id, event_at_ms),
+  FOREIGN KEY(source_key, model_id) REFERENCES antigravity_model_activity(source_key, model_id) ON DELETE CASCADE
+);
+CREATE INDEX ix_antigravity_dated_unmeasured_time ON antigravity_dated_unmeasured_activity(event_at_ms);
 "#;

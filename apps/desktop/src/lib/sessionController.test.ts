@@ -38,6 +38,26 @@ function getState(controller: ReturnType<typeof createSessionController>) {
 describe('session controller', () => {
   afterEach(() => vi.useRealTimers());
 
+  it('deduplicates identical reads and reloads when dashboard data changes', async () => {
+    let resolveFirst!: (value: SessionAnalysisPage) => void;
+    const loadPage = vi.fn<MockSessionLoader>()
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockResolvedValue(analysis(8));
+    const sessions = controller(loadPage);
+
+    const first = sessions.load(false, 4);
+    const duplicate = sessions.load(false, 4);
+    expect(loadPage).toHaveBeenCalledTimes(1);
+    resolveFirst(analysis(7));
+    await Promise.all([first, duplicate]);
+
+    await sessions.load(false, 4);
+    expect(loadPage).toHaveBeenCalledTimes(1);
+    await sessions.load(false, 5);
+    expect(loadPage).toHaveBeenCalledTimes(2);
+    expect(getState(sessions).analysis?.page.total).toBe(8);
+  });
+
   it('does not let a stale response replace a newer filter result', async () => {
     let resolveFirst!: (value: SessionAnalysisPage) => void;
     const loadPage = vi.fn<MockSessionLoader>()

@@ -31,6 +31,15 @@
     "active": true,
     "targets": "all",
     "useLocalToolsDir": true,
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/installer-hooks.nsh"
+      },
+      "wix": {
+        "componentRefs": ["TokenScopeInstallDirectoryGuardMarker"],
+        "fragmentPaths": ["./windows/wix/installer-directory-guard.wxs"]
+      }
+    },
     "publisher": "TokenScope",
     "category": "Utility",
     "shortDescription": "本地优先的 AI Token 用量监控",

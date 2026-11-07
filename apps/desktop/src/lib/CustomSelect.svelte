@@ -15,16 +15,27 @@
   export let placeholder: string = '请选择';
   export let ariaLabel: string = '选择框';
   export let disabled: boolean = false;
+  export let align: 'left' | 'right' = 'left';
   export let onChange: ((val: string) => void) | undefined = undefined;
 
   let isOpen = false;
+  let autoRight = false;
   let containerRef: HTMLDivElement | null = null;
   const listboxId = `select-listbox-${Math.random().toString(36).slice(2, 9)}`;
 
   $: selectedOption = options.find((opt) => opt.key === value);
+  $: isRightAligned = align === 'right' || autoRight;
+
+  function updateAlignment() {
+    if (containerRef && typeof window !== 'undefined') {
+      const rect = containerRef.getBoundingClientRect();
+      autoRight = window.innerWidth - rect.left < 180;
+    }
+  }
 
   function toggleOpen() {
     if (disabled) return;
+    if (!isOpen) updateAlignment();
     isOpen = !isOpen;
   }
 
@@ -41,6 +52,7 @@
       isOpen = false;
     } else if (event.key === 'Enter' || event.key === ' ') {
       if (!isOpen) {
+        updateAlignment();
         isOpen = true;
         event.preventDefault();
       }
@@ -96,7 +108,7 @@
   </button>
 
   {#if isOpen}
-    <div id={listboxId} class="select-dropdown" role="listbox" aria-label={ariaLabel}>
+    <div id={listboxId} class="select-dropdown" class:align-right={isRightAligned} role="listbox" aria-label={ariaLabel}>
       <div class="options-scroll">
         {#each options as opt}
           {@const isSelected = opt.key === value}
@@ -228,9 +240,10 @@
     position: absolute;
     top: calc(100% + 4px);
     left: 0;
+    right: 0;
     width: 100%;
-    min-width: 150px;
-    max-width: 320px;
+    min-width: 100%;
+    box-sizing: border-box;
     background-color: var(--bg-card);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
@@ -273,7 +286,7 @@
     padding: 6px 8px;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     background: transparent;
     border: none;
     border-radius: 4px;
@@ -283,6 +296,7 @@
     line-height: 1.4;
     text-align: left;
     cursor: pointer;
+    white-space: nowrap;
     transition: background-color var(--transition-fast), color var(--transition-fast);
   }
 

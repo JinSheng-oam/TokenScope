@@ -243,18 +243,42 @@ impl LocalStore {
                 time_scope: "selected_range".into(),
             });
         }
-        let mut stmt = self.conn.prepare(
-            "SELECT model_id,SUM(response_count) FROM antigravity_model_activity \
-             GROUP BY model_id ORDER BY 2 DESC,1",
-        )?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        // The source snapshot has counts but no event times. On bounded ranges,
+        // only actual responses with a recorded event time can be attributed.
+        let all_time = from_ms.is_none() && to_ms.is_none();
+        let sql = if all_time {
+            "SELECT model_id,SUM(response_count) FROM antigravity_model_activity
+             GROUP BY model_id ORDER BY 2 DESC,1"
+        } else {
+            "SELECT model_id,SUM(response_count) FROM (
+               SELECT COALESCE(model_id,'unknown-model') AS model_id,COUNT(*) AS response_count
+               FROM usage_records
+               WHERE tool_id='antigravity' AND scope='device_local' AND is_deleted=0
+                 AND precision IN ('exact','aggregate') AND event_at_ms IS NOT NULL
+                 AND (?1 IS NULL OR event_at_ms >= ?1) AND (?2 IS NULL OR event_at_ms < ?2)
+               GROUP BY model_id
+               UNION ALL
+               SELECT model_id,response_count FROM antigravity_dated_unmeasured_activity
+               WHERE (?1 IS NULL OR event_at_ms >= ?1) AND (?2 IS NULL OR event_at_ms < ?2)
+             ) GROUP BY model_id ORDER BY 2 DESC,1"
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let bounds: &[&dyn rusqlite::ToSql] = if all_time { &[] } else { &[&from_ms, &to_ms] };
+        let rows = stmt.query_map(bounds, |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?;
         for row in rows {
             let (model_id, response_count) = row?;
             activity.push(ModelActivityBreakdown {
                 tool_id: "antigravity".into(),
                 model_id,
                 response_count: pos_u64(response_count)?,
-                time_scope: "all_time".into(),
+                time_scope: if all_time {
+                    "all_time"
+                } else {
+                    "selected_range"
+                }
+                .into(),
             });
         }
         activity.sort_by(|a, b| {

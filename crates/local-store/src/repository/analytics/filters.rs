@@ -27,14 +27,11 @@ impl LocalStore {
                 FROM (
                     SELECT DISTINCT tool_id,session_id,project_id AS project_key
                     FROM session_links WHERE project_id IS NOT NULL
-                    UNION
-                    SELECT DISTINCT l.tool_id,l.session_id,'no-project'
-                    FROM session_links l
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM session_links p
-                        WHERE p.tool_id=l.tool_id AND p.session_id=l.session_id
-                            AND p.project_id IS NOT NULL
-                    )
+                    UNION ALL
+                    SELECT tool_id,session_id,'no-project'
+                    FROM session_links
+                    GROUP BY tool_id,session_id
+                    HAVING COUNT(project_id)=0
                 )
             ) AS facets
             GROUP BY dimension,facet_key

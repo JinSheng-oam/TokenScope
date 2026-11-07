@@ -1,14 +1,15 @@
 //! Explicitly requested local editing of coding-agent instructions and skills.
 //! Content never enters the collector, database, logs, or synchronization.
 use serde::{Deserialize, Serialize};
-use std::{
-    env, fs,
-    io::Write,
-    path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{fs, path::PathBuf};
 
-const MAX_FILE: usize = 1024 * 1024;
+mod file_io;
+mod paths;
+use file_io::{read, save};
+pub(crate) use file_io::{read_path, save_path};
+use paths::check_target;
+use paths::valid_instruction_name;
+pub(crate) use paths::{display_path, is_link, resolve, roots, valid_skill_name};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct CustomizationId {
@@ -37,150 +38,6 @@ pub(crate) struct Root {
     pub(crate) names: &'static [&'static str],
 }
 
-fn home() -> Result<PathBuf, String> {
-    env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .map(PathBuf::from)
-        .ok_or_else(|| "无法确定用户目录".into())
-}
-fn configured(var: &str, fallback: PathBuf) -> PathBuf {
-    env::var_os(var)
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or(fallback)
-}
-pub(crate) fn roots(provider: &str) -> Result<Vec<Root>, String> {
-    let h = home()?;
-    let shared = configured("DSH_AGENTS_HOME", h.join(".agents"));
-    let codex = configured("CODEX_HOME", h.join(".codex"));
-    let claude = configured("CLAUDE_CONFIG_DIR", h.join(".claude"));
-    let gemini = h.join(".gemini");
-    let dsh = configured("DSH_HOME", h.join(".dsh"));
-    let skill = |id, path: PathBuf| Root {
-        id,
-        path,
-        kind: "skill",
-        names: &[],
-    };
-    let instructions = |id, path: PathBuf, names| Root {
-        id,
-        path,
-        kind: "instruction",
-        names,
-    };
-    Ok(match provider {
-        "codex" => vec![
-            skill("shared-skills", h.join(".agents/skills")),
-            skill("codex-skills", codex.join("skills")),
-            instructions(
-                "codex-instructions",
-                codex,
-                &["AGENTS.md", "AGENTS.override.md"],
-            ),
-        ],
-        "claude" => vec![
-            skill("claude-skills", claude.join("skills")),
-            instructions("claude-instructions", claude, &["CLAUDE.md"]),
-        ],
-        "antigravity" => vec![
-            skill("antigravity-skills", gemini.join("config/skills")),
-            instructions(
-                "gemini-instructions",
-                gemini.clone(),
-                &["AGENTS.md", "GEMINI.md"],
-            ),
-            instructions(
-                "gemini-config-instructions",
-                gemini.join("config"),
-                &["AGENTS.md", "GEMINI.md"],
-            ),
-        ],
-        "deepseek" => vec![
-            skill("dsh-skills", dsh.join("skills")),
-            skill("dsh-shared-skills", shared.join("skills")),
-            instructions("dsh-instructions", dsh, &["AGENTS.md"]),
-            instructions("dsh-shared-instructions", shared, &["AGENTS.md"]),
-        ],
-        _ => return Err("不支持的工具".into()),
-    })
-}
-pub(crate) fn valid_skill_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 128
-        && name != ".system"
-        && name != "."
-        && name != ".."
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-pub(crate) fn valid_instruction_name(name: &str) -> bool {
-    let trimmed = name.trim();
-    if trimmed.is_empty() || trimmed.len() > 128 {
-        return false;
-    }
-    if !trimmed.to_ascii_lowercase().ends_with(".md") {
-        return false;
-    }
-    let stem = &trimmed[..trimmed.len() - 3];
-    if stem.is_empty() || stem == "." || stem == ".." {
-        return false;
-    }
-    !stem.contains('/')
-        && !stem.contains('\\')
-        && !stem.contains(':')
-        && stem
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
-}
-pub(crate) fn resolve(id: &CustomizationId) -> Result<(Root, PathBuf), String> {
-    let root = roots(&id.provider)?
-        .into_iter()
-        .find(|r| r.id == id.root)
-        .ok_or("不支持的文件位置")?;
-    let path = if root.kind == "skill" {
-        if !valid_skill_name(&id.name) {
-            return Err("无效的 skill 名称".into());
-        }
-        let active = root.path.join(&id.name).join("SKILL.md");
-        let disabled = root.path.join(&id.name).join("SKILL.md.disabled");
-        if disabled.is_file() && !active.is_file() {
-            disabled
-        } else {
-            active
-        }
-    } else {
-        if !root.names.contains(&id.name.as_str()) && !valid_instruction_name(&id.name) {
-            return Err("不支持的指令文件".into());
-        }
-        root.path.join(&id.name)
-    };
-    // Follow an explicitly listed skill/instruction link to its actual target.
-    // Replacing the link itself would silently break skill-manager deployments.
-    Ok((root, canonical_target(&path)?))
-}
-fn canonical_target(path: &Path) -> Result<PathBuf, String> {
-    let path = if path.exists() {
-        fs::canonicalize(path).map_err(|e| format!("解析文件位置失败：{e}"))?
-    } else if path.parent().is_some_and(Path::exists) {
-        let parent = fs::canonicalize(path.parent().ok_or("无效路径")?)
-            .map_err(|e| format!("解析文件位置失败：{e}"))?;
-        parent.join(path.file_name().ok_or("无效路径")?)
-    } else {
-        path.to_path_buf()
-    };
-    Ok(path)
-}
-pub(crate) fn is_link(path: &Path) -> bool {
-    fs::symlink_metadata(path)
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
-}
-fn check_target(root: &Root, path: &Path) -> Result<(), String> {
-    if (root.kind == "skill" && is_link(path.parent().ok_or("无效路径")?)) || is_link(path) {
-        return Err("此文件或 skill 目录是符号链接，请在原位置管理".into());
-    }
-    Ok(())
-}
 fn entry(
     id: CustomizationId,
     root: &Root,
@@ -199,14 +56,6 @@ fn entry(
         linked,
         enabled,
         instruction_entry,
-    }
-}
-pub(crate) fn display_path(path: &Path) -> String {
-    let text = path.to_string_lossy();
-    if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{unc}")
-    } else {
-        text.strip_prefix(r"\\?\").unwrap_or(&text).to_owned()
     }
 }
 fn list(provider: &str) -> Result<Vec<CustomizationEntry>, String> {
@@ -288,122 +137,6 @@ fn list(provider: &str) -> Result<Vec<CustomizationEntry>, String> {
     });
     Ok(result)
 }
-fn read(id: &CustomizationId) -> Result<Option<String>, String> {
-    let (root, path) = resolve(id)?;
-    read_path(&root, &path)
-}
-pub(crate) fn read_path(root: &Root, path: &Path) -> Result<Option<String>, String> {
-    check_target(root, path)?;
-    match fs::metadata(path) {
-        Ok(meta) if meta.is_file() && meta.len() <= MAX_FILE as u64 => fs::read_to_string(path)
-            .map(Some)
-            .map_err(|e| format!("读取文件失败：{e}")),
-        Ok(_) => Err("文件不是普通文件或超过 1 MiB".into()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("读取文件失败：{e}")),
-    }
-}
-
-#[cfg(windows)]
-fn replace_file(from: &Path, to: &Path, exists: bool) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn MoveFileExW(from: *const u16, to: *const u16, flags: u32) -> i32;
-        fn ReplaceFileW(
-            replaced: *const u16,
-            replacement: *const u16,
-            backup: *const u16,
-            flags: u32,
-            exclude: *mut std::ffi::c_void,
-            reserved: *mut std::ffi::c_void,
-        ) -> i32;
-    }
-    let from: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
-    let to: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();
-    // ReplaceFileW preserves the existing target's security attributes. For a
-    // new file, MoveFileExW without REPLACE_EXISTING rejects a racing creator.
-    let result = if exists {
-        unsafe {
-            ReplaceFileW(
-                to.as_ptr(),
-                from.as_ptr(),
-                std::ptr::null(),
-                0,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            )
-        }
-    } else {
-        unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0x8) }
-    };
-    if result == 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
-#[cfg(not(windows))]
-fn replace_file(from: &Path, to: &Path, exists: bool) -> std::io::Result<()> {
-    if exists {
-        fs::rename(from, to)
-    } else {
-        fs::hard_link(from, to)
-    }
-}
-
-fn save(id: &CustomizationId, expected: Option<String>, content: String) -> Result<(), String> {
-    let (root, path) = resolve(id)?;
-    save_path(&root, &path, expected, content)
-}
-pub(crate) fn save_path(
-    root: &Root,
-    path: &Path,
-    expected: Option<String>,
-    content: String,
-) -> Result<(), String> {
-    if content.len() > MAX_FILE {
-        return Err("文件超过 1 MiB".into());
-    }
-    if read_path(root, path)? != expected {
-        return Err("文件已在外部更改，请重新加载后再保存".into());
-    }
-    let parent = path.parent().ok_or("无效路径")?;
-    fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
-    check_target(root, path)?;
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| "系统时间无效")?
-        .as_nanos();
-    let temp = parent.join(format!(".tokenscope-{}-{stamp}.tmp", std::process::id()));
-    let result = (|| {
-        let mut opts = fs::OpenOptions::new();
-        opts.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
-        }
-        let mut file = opts
-            .open(&temp)
-            .map_err(|e| format!("创建临时文件失败：{e}"))?;
-        if let Ok(meta) = fs::metadata(path) {
-            file.set_permissions(meta.permissions())
-                .map_err(|e| format!("设置文件权限失败：{e}"))?;
-        }
-        file.write_all(content.as_bytes())
-            .and_then(|_| file.sync_all())
-            .map_err(|e| format!("写入文件失败：{e}"))?;
-        drop(file);
-        if read_path(root, path)? != expected {
-            return Err("文件已在外部更改，请重新加载后再保存".into());
-        }
-        replace_file(&temp, path, expected.is_some()).map_err(|e| format!("保存文件失败：{e}"))
-    })();
-    let _ = fs::remove_file(&temp);
-    result
-}
-
 #[tauri::command]
 pub(crate) async fn list_customizations(
     provider: String,
@@ -600,7 +333,13 @@ pub(crate) async fn toggle_skill_enabled(
 
 #[cfg(test)]
 mod tests {
+    use super::paths::canonical_target;
     use super::*;
+    use std::{
+        env,
+        path::Path,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn windows_extended_paths_are_friendly_for_display() {

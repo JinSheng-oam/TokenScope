@@ -5,13 +5,18 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::Read;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 use tokenscope_local_store::{LocalStore, ModelPriceEntry};
 
 const CATALOG_URL: &str = "https://models.dev/api.json";
+const CATALOG_VERSION_PREFIX: &str = "models.dev:base-v4:";
 const MAX_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
 const SUCCESS_REFRESH_MS: i64 = 24 * 60 * 60 * 1000;
 const RETRY_REFRESH_MS: i64 = 60 * 60 * 1000;
+static MANUAL_PRICES_APPLIED: Mutex<Vec<ModelPriceEntry>> = Mutex::new(Vec::new());
+static LEGACY_REFRESH_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 
 enum CatalogResponse {
     NotModified(Option<String>),
@@ -24,6 +29,7 @@ enum CatalogResponse {
 
 pub(super) fn refresh_if_due(store: &mut LocalStore) {
     let now = chrono::Utc::now().timestamp_millis();
+    apply_manual_prices(store, now);
     let state = match store.model_price_catalog_state() {
         Ok(state) => state,
         Err(error) => {
@@ -37,7 +43,15 @@ pub(super) fn refresh_if_due(store: &mut LocalStore) {
     let attempt_is_recent = state
         .last_attempt_ms
         .is_some_and(|saved| now.saturating_sub(saved) < RETRY_REFRESH_MS);
-    if success_is_fresh || attempt_is_recent {
+    let current_format = state
+        .active_version
+        .as_deref()
+        .is_some_and(|version| version.starts_with(CATALOG_VERSION_PREFIX));
+    // A saved attempt from the old format cannot tell us whether this version tried.
+    let first_upgrade_attempt = state.active_version.is_some()
+        && !current_format
+        && !LEGACY_REFRESH_ATTEMPTED.swap(true, Ordering::Relaxed);
+    if !first_upgrade_attempt && ((current_format && success_is_fresh) || attempt_is_recent) {
         return;
     }
     if let Err(error) = store.mark_model_price_attempt(now) {
@@ -45,7 +59,7 @@ pub(super) fn refresh_if_due(store: &mut LocalStore) {
         return;
     }
 
-    match fetch_catalog(state.etag.as_deref(), state.active_version.is_some()) {
+    match fetch_catalog(state.etag.as_deref(), current_format) {
         Ok(CatalogResponse::NotModified(etag)) => {
             if let Err(error) = store.mark_model_price_not_modified(now, etag.as_deref()) {
                 eprintln!("TokenScope price catalog refresh failed: {error}");
@@ -64,6 +78,25 @@ pub(super) fn refresh_if_due(store: &mut LocalStore) {
         },
         Err(error) => eprintln!("TokenScope public model prices unavailable: {error}"),
     }
+}
+
+fn apply_manual_prices(store: &mut LocalStore, now: i64) {
+    let Ok(preferences) = store.pricing_preferences() else {
+        return;
+    };
+    let Ok(mut applied) = MANUAL_PRICES_APPLIED.lock() else {
+        return;
+    };
+    if *applied == preferences.manual_entries {
+        return;
+    }
+    if !preferences.manual_entries.is_empty() {
+        if let Err(error) = store.backfill_unpriced_model_costs(now) {
+            eprintln!("TokenScope manual price backfill failed: {error}");
+            return;
+        }
+    }
+    *applied = preferences.manual_entries;
 }
 
 fn fetch_catalog(
@@ -158,10 +191,19 @@ fn parse_catalog(root: &Value) -> Result<Vec<ModelPriceEntry>, String> {
             let Some(cost) = model.get("cost").and_then(Value::as_object) else {
                 continue;
             };
-            if has_unsupported_pricing(cost) {
+            // Import published base rates. Usage records do not reliably carry the billing tier.
+            let model_id = model.get("id").and_then(Value::as_str).unwrap_or(model_key);
+            let reference = provider_id == "google"
+                && matches!(
+                    model_id,
+                    "gemini-3-flash-preview"
+                        | "gemini-3.6-flash"
+                        | "gemini-3.7-flash"
+                        | "gemini-3.8-flash"
+                );
+            if has_unsupported_pricing(cost, reference) {
                 continue;
             }
-            let model_id = model.get("id").and_then(Value::as_str).unwrap_or(model_key);
             let entry = ModelPriceEntry {
                 provider_id: provider_id.to_owned(),
                 model_id: model_id.to_owned(),
@@ -191,11 +233,21 @@ fn parse_catalog(root: &Value) -> Result<Vec<ModelPriceEntry>, String> {
     Ok(entries.into_values().collect())
 }
 
-fn has_unsupported_pricing(cost: &serde_json::Map<String, Value>) -> bool {
+fn has_unsupported_pricing(cost: &serde_json::Map<String, Value>, text_reference: bool) -> bool {
     cost.keys().any(|key| {
+        // The reference is explicitly a text rate; its separate audio rate does not apply.
+        if text_reference && key == "input_audio" {
+            return false;
+        }
         !matches!(
             key.as_str(),
-            "input" | "output" | "cache_read" | "cache_write" | "reasoning"
+            "input"
+                | "output"
+                | "cache_read"
+                | "cache_write"
+                | "reasoning"
+                | "tiers"
+                | "context_over_200k"
         )
     })
 }
@@ -283,7 +335,7 @@ fn decimal_to_nanos(raw: &str) -> Option<i64> {
 fn price_version(entries: &[ModelPriceEntry]) -> Result<String, serde_json::Error> {
     let encoded = serde_json::to_vec(entries)?;
     let digest = Sha256::digest(encoded);
-    Ok(format!("models.dev:{digest:x}"))
+    Ok(format!("{CATALOG_VERSION_PREFIX}{digest:x}"))
 }
 
 #[cfg(test)]
@@ -302,7 +354,7 @@ mod tests {
     }
 
     #[test]
-    fn parser_keeps_exact_ids_and_skips_tiered_prices() {
+    fn parser_keeps_base_rates_for_tiered_models_and_skips_unsupported_rates() {
         let catalog = json!({
             "openai": {"id":"openai","models": {
                 "gpt-5.4": {"id":"gpt-5.4","cost":{"input":1.25,"output":10,"cache_read":0.125}},
@@ -314,7 +366,7 @@ mod tests {
             }}
         });
         let entries = parse_catalog(&catalog).unwrap();
-        assert_eq!(entries.len(), 2);
+        assert_eq!(entries.len(), 3);
         let openai = entries
             .iter()
             .find(|entry| entry.provider_id == "openai")
@@ -325,7 +377,11 @@ mod tests {
             .unwrap();
         assert_eq!(openai.input_rate_nanos, Some(1_250_000_000));
         assert_eq!(google.input_rate_nanos, Some(0));
-        assert!(!entries.iter().any(|entry| entry.model_id == "tiered"));
+        let tiered = entries
+            .iter()
+            .find(|entry| entry.model_id == "tiered")
+            .unwrap();
+        assert_eq!(tiered.input_rate_nanos, Some(1_000_000_000));
         assert!(!entries.iter().any(|entry| entry.model_id == "audio"));
         assert_ne!(
             price_version(&entries).unwrap(),

@@ -7,6 +7,7 @@ mod repository;
 pub mod schema;
 
 pub use error::{Result, StoreError};
+pub use repository::PricingPreferences;
 pub use repository::{
     AntigravityActivity, AntigravityActivitySummary, AntigravityQuota, ApplyReport, CodexQuota,
     DailyUsage, DashboardObservations, DashboardQuery, DashboardSnapshot, LocalIdentity,

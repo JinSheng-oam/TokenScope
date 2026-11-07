@@ -34,7 +34,7 @@ impl LocalStore {
             return Err(StoreError::UnsupportedSchema(version));
         }
         let migration_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7,8,9,10)",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version BETWEEN 1 AND 11",
             [],
             |r| r.get(0),
         )?;
@@ -269,8 +269,25 @@ impl LocalStore {
             tx.execute_batch("PRAGMA user_version=10;")?;
             tx.commit()?;
         }
+        if version <= 10 {
+            let (count, highest): (i64, i64) = conn.query_row(
+                "SELECT COUNT(*),MAX(version) FROM schema_migrations",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            if count != 10 || highest != 10 {
+                return Err(StoreError::DatabaseInconsistent(
+                    "legacy migration metadata invalid before v11",
+                ));
+            }
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(schema::MIGRATION_011)?;
+            tx.execute("INSERT INTO schema_migrations(version,applied_at_ms) VALUES(11,CAST(strftime('%s','now') AS INTEGER)*1000)",[])?;
+            tx.execute_batch("PRAGMA user_version=11;")?;
+            tx.commit()?;
+        }
         let count: i64 = conn.query_row(
-            "SELECT count(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7,8,9,10)",
+            "SELECT count(*) FROM schema_migrations WHERE version BETWEEN 1 AND 11",
             [],
             |r| r.get(0),
         )?;
@@ -416,7 +433,9 @@ mod readonly_tests {
         }
         conn.execute_batch("PRAGMA user_version=8;
             INSERT INTO usage_records(record_id,owner_device_id,tool_id,scope,input_uncached_tokens,precision,record_revision,payload_hash,observed_at_ms,updated_at_ms)
-            VALUES('existing','device','codex','device_local',123,'exact',1,'hash',0,0);").unwrap();
+            VALUES('existing','device','codex','device_local',123,'exact',1,'hash',0,0);
+            INSERT INTO antigravity_activity_sources VALUES('existing-source',2,0,0);
+            INSERT INTO antigravity_model_activity VALUES('existing-source','gemini',2);").unwrap();
         let store = LocalStore::migrate(conn).unwrap();
         assert_eq!(store.schema_version().unwrap(), schema::VERSION);
         assert_eq!(
@@ -430,6 +449,7 @@ mod readonly_tests {
                 .unwrap(),
             123
         );
+        assert_eq!(store.antigravity_activity_summary().unwrap().known_turns, 2);
         assert_eq!(store.dashboard_revisions().unwrap(), (0, 0));
         store
             .conn

@@ -22,12 +22,15 @@ pub(super) fn validate_catalog(
     etag: Option<&str>,
 ) -> Result<()> {
     validate_catalog_metadata(fetched_at_ms, etag)?;
-    if version.len() != 75
-        || !version.starts_with("models.dev:")
-        || !version[11..].bytes().all(|byte| byte.is_ascii_hexdigit())
-        || entries.is_empty()
-        || entries.len() > 50_000
-    {
+    let valid_version = version
+        .strip_prefix("models.dev:base-v4:")
+        .or_else(|| version.strip_prefix("models.dev:base-v3:"))
+        .or_else(|| version.strip_prefix("models.dev:base-v2:"))
+        .or_else(|| version.strip_prefix("models.dev:"))
+        .is_some_and(|digest| {
+            digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        });
+    if !valid_version || entries.is_empty() || entries.len() > 50_000 {
         return Err(StoreError::InvalidInput("model price catalog"));
     }
     let mut identities = HashSet::with_capacity(entries.len());

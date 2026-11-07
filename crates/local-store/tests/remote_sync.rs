@@ -182,3 +182,87 @@ fn webdav_device_batch_apply_and_cursor_tracking() {
     assert_eq!(cursors.len(), 1);
     assert_eq!(cursors[0], ("remote-mac-01".to_string(), 2));
 }
+
+#[test]
+fn remote_models_estimate_keyword_aliases_without_rewriting_peer_costs() {
+    use tokenscope_core_domain::RevisionedRecord;
+    use tokenscope_local_store::{ModelPriceEntry, RemoteUsageChange};
+
+    let mut db = setup();
+    db.install_model_price_catalog(
+        &format!("models.dev:base-v4:{}", "a".repeat(64)),
+        &[ModelPriceEntry {
+            provider_id: "deepseek".into(),
+            model_id: "deepseek-v4-flash".into(),
+            input_rate_nanos: Some(1_000_000_000),
+            output_rate_nanos: Some(2_000_000_000),
+            cache_read_rate_nanos: None,
+            cache_write_rate_nanos: None,
+            reasoning_rate_nanos: None,
+        }],
+        None,
+        1_000,
+    )
+    .unwrap();
+
+    let mut raw = rec("remote-alias", 10);
+    raw.owner_device_id = "remote-pc-001".into();
+    raw.estimated_cost_microusd = None;
+    raw.price_version = None;
+    raw.model_id = Some("magpie/command/deepseek/deepseek-v4.1-flash".into());
+    let mut priced = rec("remote-alias-priced", 10);
+    priced.owner_device_id.clone_from(&raw.owner_device_id);
+    priced.model_id.clone_from(&raw.model_id);
+    priced.estimated_cost_microusd = Some(20);
+    db.apply_remote_changes(
+        &[raw, priced]
+            .into_iter()
+            .enumerate()
+            .map(|(i, record)| RemoteUsageChange {
+                change_seq: (i + 1) as u64,
+                owner_device_id: record.owner_device_id.clone(),
+                envelope: RevisionedRecord::from_store(record, 1).unwrap(),
+            })
+            .collect::<Vec<_>>(),
+        2,
+    )
+    .unwrap();
+
+    let snapshot = db
+        .dashboard_snapshot(tokenscope_local_store::DashboardQuery {
+            range: "all",
+            from_ms: None,
+            to_ms: None,
+            daily_ranges: &[],
+            generated_at_ms: 1_000,
+            time_zone: "UTC".into(),
+            time_zone_valid: true,
+            session_offset: 0,
+        })
+        .unwrap();
+    assert_eq!(snapshot.remote.estimated_cost_microusd, Some(34));
+    assert_eq!(snapshot.remote.priced_records, 2);
+    assert_eq!(snapshot.remote.unpriced_records, 0);
+    assert_eq!(
+        snapshot.remote_by_device[0].usage.estimated_cost_microusd,
+        Some(34)
+    );
+    assert_eq!(
+        snapshot.remote_by_device[0].estimated_cost_microusd,
+        Some(34)
+    );
+    for rows in [
+        &snapshot.remote_by_model,
+        &snapshot.remote_by_tool,
+        &snapshot.remote_by_project,
+    ] {
+        assert_eq!(rows[0].estimated_cost_microusd, Some(34));
+        assert_eq!(rows[0].record_count, 2);
+    }
+    assert_eq!(
+        db.remote_usage_totals(None, None, None)
+            .unwrap()
+            .estimated_cost_microusd,
+        Some(20)
+    );
+}

@@ -187,6 +187,8 @@ pub struct AntigravityActivity {
     pub known_turns: u64,
     pub unknown_turns: u64,
     pub models: Vec<(String, u64)>,
+    /// Model, response time, and count for identified responses without usage.
+    pub dated_unmeasured: Vec<(String, i64, u64)>,
 }
 impl AntigravityActivity {
     pub(super) fn validate(&self) -> Result<()> {
@@ -214,6 +216,26 @@ impl AntigravityActivity {
         }
         if sum != self.known_turns {
             return Err(StoreError::InvalidInput("activity count mismatch"));
+        }
+        if self.dated_unmeasured.len() > 50_000 {
+            return Err(StoreError::InvalidInput("dated activity cardinality"));
+        }
+        let mut timestamps = HashSet::new();
+        let mut remaining: std::collections::HashMap<_, _> = self
+            .models
+            .iter()
+            .map(|(model, count)| (model.as_str(), *count))
+            .collect();
+        for (model, time, count) in &self.dated_unmeasured {
+            if *time < 0 || *count == 0 || !timestamps.insert((model, time)) {
+                return Err(StoreError::InvalidInput("dated activity time/count"));
+            }
+            let available = remaining
+                .get_mut(model.as_str())
+                .ok_or(StoreError::InvalidInput("dated activity model"))?;
+            *available = available
+                .checked_sub(*count)
+                .ok_or(StoreError::InvalidInput("dated activity count mismatch"))?;
         }
         db_int(self.known_turns)?;
         db_int(self.unknown_turns)?;

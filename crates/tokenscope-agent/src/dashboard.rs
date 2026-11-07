@@ -26,6 +26,7 @@ pub struct SessionAnalysisOptions<'a> {
     pub project_id: Option<&'a str>,
     pub start_date: Option<&'a str>,
     pub end_date: Option<&'a str>,
+    pub include_filter_options: bool,
 }
 
 fn now_ms() -> Result<i64, Box<dyn std::error::Error>> {
@@ -205,7 +206,7 @@ pub fn read_session_analysis(
         now,
         None,
     )?;
-    Ok(store.session_analysis_page(
+    Ok(store.session_analysis_page_with_filter_options(
         &identity.device_id,
         resolved.from_ms,
         resolved.to_ms,
@@ -215,6 +216,7 @@ pub fn read_session_analysis(
         options.tool_id,
         options.model_id,
         options.project_id,
+        options.include_filter_options,
     )?)
 }
 

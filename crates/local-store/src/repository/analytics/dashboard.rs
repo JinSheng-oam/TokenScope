@@ -54,7 +54,7 @@ impl LocalStore {
                 value
             }};
         }
-        let snapshot = DashboardSnapshot {
+        let mut snapshot = DashboardSnapshot {
             data_revision,
             schema_version: schema::VERSION,
             generated_at_ms,
@@ -130,6 +130,10 @@ impl LocalStore {
             ),
             sync_status: timed!("sync_status", self.sync_outbox_status(generated_at_ms)?),
         };
+        timed!(
+            "remote_pricing",
+            self.estimate_remote_dashboard_costs(&mut snapshot, from_ms, to_ms)?
+        );
         transaction.commit()?;
         Ok(snapshot)
     }

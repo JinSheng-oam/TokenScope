@@ -1,4 +1,5 @@
 <script lang="ts">
+  import CustomSelect from './CustomSelect.svelte';
   import SharedInstruction from './SharedInstruction.svelte';
   let showShared = false;
   let sharedDirty = false;
@@ -73,6 +74,7 @@
   let skillRoot = providers[0].roots[0].id;
   let instructionName = '';
   let instructionRoot = '';
+  let instructionPreset = '';
   let request = 0;
 
   // AI assistant state
@@ -94,8 +96,23 @@
   let copiedPath = false;
 
   $: filteredInstructions = instructions.filter(
-    (entry) => !filterQuery.trim() || entry.id.name.toLowerCase().includes(filterQuery.toLowerCase().trim())
+    (entry) => (entry.exists || !entry.instructionEntry)
+      && (!filterQuery.trim() || entry.id.name.toLowerCase().includes(filterQuery.toLowerCase().trim()))
   );
+  $: instructionPresets = instructions.filter(
+    (entry) => entry.id.root === instructionRoot && entry.instructionEntry && !entry.exists
+  );
+  $: instructionRootOptions = instructions
+    .map((entry) => entry.id.root)
+    .filter((root, index, roots) => roots.indexOf(root) === index)
+    .map((root) => ({ key: root, label: instructionRootLabel(root) }));
+  $: instructionPresetOptions = instructionPresets.map((entry) => ({ key: entry.id.name, label: entry.id.name }));
+  $: providerRootOptions = currentProvider.roots.map((root) => ({ key: root.id, label: root.label }));
+  $: sourceSkillOptions = (inspection?.candidates ?? []).map((item) => ({
+    key: item.path,
+    label: item.name,
+    subtext: item.path || '仓库根目录',
+  }));
   $: filteredSkills = skills.filter(
     (entry) => !filterQuery.trim() || entry.id.name.toLowerCase().includes(filterQuery.toLowerCase().trim())
   );
@@ -125,7 +142,11 @@
     }
   }
 
-  $: dirty = sharedDirty || selected !== null && content !== (original ?? '');
+  function normalizeLines(val: string | null | undefined): string {
+    return (val ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  }
+
+  $: dirty = (showShared && sharedDirty) || (selected !== null && normalizeLines(content) !== normalizeLines(original));
   $: instructions = entries.filter((entry) => entry.kind === 'instruction');
   $: skills = entries.filter((entry) => entry.kind === 'skill');
   $: currentProvider = providers.find((p) => p.id === provider)!;
@@ -362,6 +383,7 @@
   }
 
   async function select(entry: Entry) {
+    if (selected?.id.root === entry.id.root && selected?.id.name === entry.id.name) return;
     if (!canLeave() || !entry.editable) return;
     const current = ++request;
     busy = true; error = ''; notice = '';
@@ -370,7 +392,7 @@
       if (current !== request) return;
       selected = entry;
       original = value;
-      content = value ?? '';
+      content = value ? normalizeLines(value) : '';
       creating = false;
       creatingInstruction = false;
       importing = false;
@@ -385,8 +407,11 @@
     if (!selected || busy) return;
     busy = true; error = ''; notice = '';
     try {
-      await invoke('save_customization', { id: selected.id, expected: original, content });
-      original = content; selected = { ...selected, exists: true };
+      const toSave = original && original.includes('\r\n') ? content.replace(/\r?\n/g, '\r\n') : content;
+      await invoke('save_customization', { id: selected.id, expected: original, content: toSave });
+      original = toSave;
+      content = normalizeLines(toSave);
+      selected = { ...selected, exists: true };
       notice = '已保存到工具的本地文件。';
       const result = await invoke<Entry[]>('list_customizations', { provider });
       entries = result;
@@ -468,6 +493,7 @@
     original = null;
     content = '';
     instructionName = '';
+    instructionPreset = '';
     const instRoots = entries.filter((e) => e.kind === 'instruction').map((e) => e.id.root);
     instructionRoot = instRoots[0] || `${provider}-instructions`;
     creatingInstruction = true;
@@ -617,7 +643,7 @@
     try {
       notice = await invoke<string>('update_skill_source', { id: selected.id });
       const value = await invoke<string | null>('read_customization', { id: selected.id });
-      original = value; content = value ?? ''; updateInfo = null;
+      original = value; content = value ? normalizeLines(value) : ''; updateInfo = null;
       entries = await invoke<Entry[]>('list_customizations', { provider });
     } catch (e) { error = String(e); }
     finally { busy = false; }
@@ -629,12 +655,12 @@
   });
 </script>
 
-<div class="custom-page">
+<div class="custom-page" class:fit-workspace={!showShared && !showAiConfig}>
   <div class="custom-heading">
     <div class="heading-text">
       <h1>Agent 配置与技能管理</h1>
     </div>
-    <div class="head-right-actions"><button class="ai-toggle-btn" aria-expanded={showShared} disabled={!runtimeAvailable} onclick={() => { if (showShared && sharedDirty && !window.confirm("放弃未保存的统一指令？")) return; showShared = !showShared; if (!showShared) sharedDirty = false; }}>统一指令</button>
+    <div class="head-right-actions"><button class="ai-toggle-btn" class:active={showShared} aria-expanded={showShared} disabled={!runtimeAvailable} onclick={() => { if (showShared && sharedDirty && !window.confirm("放弃未保存的统一指令？")) return; showShared = !showShared; if (!showShared) sharedDirty = false; }}><span class="ai-status-dot" class:configured={!sharedDirty}></span><span class="ai-btn-icon">{@html icons.edit}</span><span>统一指令</span></button>
       <button
         class="ai-toggle-btn"
         class:active={showAiConfig}
@@ -652,7 +678,7 @@
     </div>
   </div>
 
-  {#if showShared}<SharedInstruction bind:unsaved={sharedDirty} source={selected?.kind === "instruction" ? content : null} />{/if}
+  {#if showShared}<SharedInstruction bind:unsaved={sharedDirty} source={selected?.kind === "instruction" ? content : null} onClose={() => { if (sharedDirty && !window.confirm("放弃未保存的统一指令？")) return; showShared = false; sharedDirty = false; }} />{/if}
   {#if showAiConfig}
     <div class="ai-config-panel" role="region" aria-label="AI 助手配置">
       <div class="ai-config-head">
@@ -784,13 +810,16 @@
             disabled={busy}
             onclick={() => void refresh()}
             title="刷新本地文件与 Skill 状态"
-            aria-label="刷新"
+            aria-label="刷新文件列表"
           >
             <span class:spin={busy}>{@html icons.refresh}</span>
           </button>
         </div>
 
         <div class="catalog-search-box">
+          <svg class="search-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" />
+          </svg>
           <input
             type="search"
             class="catalog-search-input"
@@ -809,84 +838,86 @@
           {/if}
         </div>
 
-        <div class="group-title instructions-head">
-          <div class="group-title-left">
-            <span>指令文件</span>
-            <span class="count-badge">{filteredInstructions.length}</span>
-          </div>
-          <button class="btn-ghost-sm" disabled={busy} onclick={beginCreateInstruction}>+ 新建指令</button>
-        </div>
-
-        {#each filteredInstructions as entry}
-          {@const info = instructionInfo(entry)}
-          <button
-            type="button"
-            class="file-row"
-            class:active={selected?.id.root === entry.id.root && selected?.id.name === entry.id.name}
-            disabled={busy || !entry.editable}
-            title={info.detail}
-            aria-label={`${entry.id.name}，${info.label}。${info.detail}`}
-            onclick={() => void select(entry)}
-          >
-            <div class="file-row-main">
-              <span class="file-type-icon">📄</span>
-              <div class="instruction-name-col">
-                <strong class="file-name" title={entry.id.name}>{entry.id.name}</strong>
-                <span class={`instruction-badge ${info.tone}`}>{info.label}</span>
-              </div>
+        <div class="catalog-items">
+          <div class="group-title instructions-head">
+            <div class="group-title-left">
+              <span>指令文件</span>
+              <span class="count-badge">{filteredInstructions.length}</span>
             </div>
-            <span class="file-sub-root">{instructionRootLabel(entry.id.root)} · {entry.exists ? '已保存' : '未创建'}</span>
-          </button>
-        {:else}
-          {#if filterQuery}
-            <p class="empty-list">未匹配到指令</p>
-          {/if}
-        {/each}
-
-        <div class="group-title skills-head">
-          <div class="group-title-left">
-            <span>Skills</span>
-            <span class="count-badge">{filteredSkills.length}</span>
+            <button class="btn-ghost-sm" disabled={busy} onclick={beginCreateInstruction} aria-label="新建指令">新建</button>
           </div>
-          <div class="catalog-actions">
-            <button class="btn-ghost-sm" disabled={busy} onclick={beginImport}>添加</button>
-            <button class="btn-ghost-sm" disabled={busy} onclick={beginCreate}>新建</button>
-          </div>
-        </div>
 
-        {#each filteredSkills as entry}
-          <button
-            type="button"
-            class="file-row"
-            class:active={selected?.id.root === entry.id.root && selected?.id.name === entry.id.name}
-            class:row-disabled={!entry.enabled}
-            disabled={busy || !entry.editable}
-            title={entry.editable ? entry.path : '符号链接请在原位置管理'}
-            onclick={() => void select(entry)}
-          >
-            <div class="file-row-main">
-              <span class="file-type-icon">🧩</span>
-              <div class="skill-name-col">
-                <strong class="file-name" title={entry.id.name}>{entry.id.name}</strong>
-                <div class="skill-tags-row">
-                  {#if !entry.enabled}
-                    <span class="status-badge disabled">已停用</span>
-                  {/if}
-                  {#if entry.linked}
-                    <span class="link-badge">软链接</span>
-                  {/if}
+          {#each filteredInstructions as entry}
+            {@const info = instructionInfo(entry)}
+            <button
+              type="button"
+              class="file-row"
+              class:active={selected?.id.root === entry.id.root && selected?.id.name === entry.id.name}
+              disabled={busy || !entry.editable}
+              title={info.detail}
+              aria-label={`${entry.id.name}，${info.label}。${info.detail}`}
+              onclick={() => void select(entry)}
+            >
+              <div class="file-row-main">
+                <span class="file-type-icon">📄</span>
+                <div class="instruction-name-col">
+                  <strong class="file-name" title={entry.id.name}>{entry.id.name}</strong>
+                  <span class={`instruction-badge ${info.tone}`}>{info.label}</span>
                 </div>
               </div>
+              <span class="file-sub-root">{instructionRootLabel(entry.id.root)} · {entry.exists ? '已保存' : '未创建'}</span>
+            </button>
+          {:else}
+            {#if filterQuery}
+              <p class="empty-list">未匹配到指令</p>
+            {/if}
+          {/each}
+
+          <div class="group-title skills-head">
+            <div class="group-title-left">
+              <span>Skills</span>
+              <span class="count-badge">{filteredSkills.length}</span>
             </div>
-            <span class="file-sub-root">{entry.editable ? entry.id.root : '无法访问目标文件'}</span>
-          </button>
-        {:else}
-          <p class="empty-list">{filterQuery ? '未匹配到相关 Skill' : '尚未发现全局 skill。'}</p>
-        {/each}
+            <div class="catalog-actions">
+              <button class="btn-ghost-sm" disabled={busy} onclick={beginImport} aria-label="添加 Skill">添加</button>
+              <button class="btn-ghost-sm" disabled={busy} onclick={beginCreate} aria-label="新建 Skill">新建</button>
+            </div>
+          </div>
+
+          {#each filteredSkills as entry}
+            <button
+              type="button"
+              class="file-row"
+              class:active={selected?.id.root === entry.id.root && selected?.id.name === entry.id.name}
+              class:row-disabled={!entry.enabled}
+              disabled={busy || !entry.editable}
+              title={entry.editable ? entry.path : '符号链接请在原位置管理'}
+              onclick={() => void select(entry)}
+            >
+              <div class="file-row-main">
+                <span class="file-type-icon">🧩</span>
+                <div class="skill-name-col">
+                  <strong class="file-name" title={entry.id.name}>{entry.id.name}</strong>
+                  <div class="skill-tags-row">
+                    {#if !entry.enabled}
+                      <span class="status-badge disabled">已停用</span>
+                    {/if}
+                    {#if entry.linked}
+                      <span class="link-badge">软链接</span>
+                    {/if}
+                  </div>
+                </div>
+              </div>
+              <span class="file-sub-root">{entry.editable ? entry.id.root : '无法访问目标文件'}</span>
+            </button>
+          {:else}
+            <p class="empty-list">{filterQuery ? '未匹配到相关 Skill' : '尚未发现全局 skill。'}</p>
+          {/each}
+        </div>
       </section>
 
       <!-- Editor Area (Right Column) -->
-      <section class="editor" aria-label="文件编辑器">
+      <section class="editor" class:has-selection={selected} aria-label="文件编辑器">
         {#if importing}
           <div class="editor-head">
             <div>
@@ -899,19 +930,16 @@
             <input id="source-url" bind:value={sourceInput} oninput={() => inspection = null} placeholder="https://skills.sh/owner/repo/skill 或 GitHub URL" />
             <div><button class="btn-secondary" disabled={busy || !sourceInput.trim()} onclick={() => void inspectSource()}>{busy ? '读取中…' : '预览来源'}</button></div>
             {#if inspection}
-              <label for="source-skill">选择 skill</label>
-              <select id="source-skill" bind:value={candidatePath} onchange={chooseCandidate}>
-                {#each inspection.candidates as item}
-                  <option value={item.path}>{item.name} · {item.path || '仓库根目录'}</option>
-                {/each}
-              </select>
+              <span>选择 skill</span>
+              <CustomSelect
+                bind:value={candidatePath}
+                options={sourceSkillOptions}
+                ariaLabel="选择要安装的 Skill"
+                onChange={() => chooseCandidate()}
+              />
               <details><summary>查看 SKILL.md 预览</summary><pre>{inspection.candidates.find((c) => c.path === candidatePath)?.preview}</pre></details>
-              <label for="import-root">安装位置</label>
-              <select id="import-root" bind:value={skillRoot}>
-                {#each currentProvider.roots as root}
-                  <option value={root.id}>{root.label}</option>
-                {/each}
-              </select>
+              <span>安装位置</span>
+              <CustomSelect bind:value={skillRoot} options={providerRootOptions} ariaLabel="选择 Skill 安装位置" />
               <label for="import-name">安装名称</label>
               <input id="import-name" bind:value={skillName} maxlength="64" />
               <p class="source-hint">{inspection.source.url} · {inspection.revision.slice(0, 12)}。请确认来源可信，skill 可能包含脚本。</p>
@@ -932,14 +960,38 @@
             </div>
           </div>
           <div class="create-form">
-            <label for="instr-root">保存目录</label>
-            <select id="instr-root" bind:value={instructionRoot}>
-              {#each instructions.map((e) => e.id.root).filter((v, i, a) => a.indexOf(v) === i) as rootId}
-                <option value={rootId}>{instructionRootLabel(rootId)}</option>
-              {/each}
-            </select>
-            <label for="instr-name">指令文件名 (必须以 .md 结尾)</label>
-            <input id="instr-name" bind:value={instructionName} placeholder={provider === 'codex' ? 'AGENTS.md 或 CUSTOM_RULES.md' : '例如 RULES.md'} maxlength="64" />
+            {#if instructionRootOptions.length > 1}
+              <span>保存目录</span>
+              <CustomSelect
+                bind:value={instructionRoot}
+                options={instructionRootOptions}
+                ariaLabel="选择指令文件保存目录"
+                onChange={() => { instructionName = ''; instructionPreset = ''; }}
+              />
+            {:else if instructionRootOptions.length === 1}
+              <div class="create-form-location">
+                <span>保存目录</span>
+                <strong>{instructionRootOptions[0].label}</strong>
+              </div>
+            {/if}
+            {#if instructionPresets.length > 0}
+              <span>入口预设</span>
+              <CustomSelect
+                bind:value={instructionPreset}
+                options={instructionPresetOptions}
+                placeholder="选择预设入口"
+                ariaLabel="选择指令入口预设"
+                onChange={(value) => instructionName = value}
+              />
+            {/if}
+            <label for="instr-name">文件名</label>
+            <input
+              id="instr-name"
+              bind:value={instructionName}
+              oninput={() => instructionPreset = ''}
+              placeholder="选择入口预设或输入自定义 .md 文件名"
+              maxlength="64"
+            />
             <p class="source-hint">{instructionDraftHelp()}</p>
             <div class="form-btn-row">
               <button class="btn-primary" disabled={busy || !instructionName.trim()} onclick={() => void createInstruction()}>开始编辑草稿</button>
@@ -954,12 +1006,8 @@
             </div>
           </div>
           <div class="create-form">
-            <label for="skill-root">保存位置</label>
-            <select id="skill-root" bind:value={skillRoot}>
-              {#each currentProvider.roots as root}
-                <option value={root.id}>{root.label}</option>
-              {/each}
-            </select>
+            <span>保存位置</span>
+            <CustomSelect bind:value={skillRoot} options={providerRootOptions} ariaLabel="选择 Skill 保存位置" />
             <label for="skill-name">名称</label>
             <input id="skill-name" bind:value={skillName} placeholder="例如 code-review" maxlength="64" />
             <div class="form-btn-row">
@@ -999,9 +1047,10 @@
                   class="copy-path-btn"
                   onclick={() => { if (selected) void copyPath(selected.path); }}
                   title="复制文件绝对路径"
+                  aria-label={copiedPath ? "路径已复制" : "复制路径"}
                 >
                   {#if copiedPath}
-                    <span class="copy-success">已复制</span>
+                    <span class="copy-success" role="status">已复制</span>
                   {:else}
                     <span>复制路径</span>
                   {/if}
@@ -1334,8 +1383,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--border-subtle);
+    min-height: 30px;
   }
 
   .ai-config-title {
@@ -1475,6 +1523,7 @@
 
   .ai-field input:focus {
     border-color: var(--brand-primary);
+    box-shadow: 0 0 0 2px var(--brand-subtle);
     background: var(--bg-card);
     outline: none;
   }
@@ -1608,7 +1657,7 @@
   /* Workspace Layout */
   .workspace {
     display: grid;
-    grid-template-columns: 290px minmax(0, 1fr);
+    grid-template-columns: clamp(245px, 30%, 290px) minmax(0, 1fr);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
     background: var(--bg-card);
@@ -1620,15 +1669,25 @@
   /* Catalog (Left Column) */
   .catalog {
     border-right: 1px solid var(--border-subtle);
+    min-width: 0;
+    min-height: 0;
     padding: 12px;
-    max-height: 76vh;
+    max-height: 70vh;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: var(--bg-card);
+  }
+
+  .catalog-items {
+    min-height: 0;
+    padding: 2px 3px 2px 2px;
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: var(--border-strong) transparent;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    background: var(--bg-card);
+    gap: 6px;
   }
 
   .catalog-head {
@@ -1660,13 +1719,13 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: 30px;
+    height: 30px;
     padding: 0;
     border: 1px solid var(--border-subtle);
     background: var(--bg-secondary);
     color: var(--text-muted);
-    border-radius: var(--radius-xs);
+    border-radius: var(--radius-sm);
     cursor: pointer;
     transition: all var(--transition-fast);
   }
@@ -1692,15 +1751,29 @@
 
   .catalog-search-input {
     width: 100%;
-    height: 28px;
-    padding: 0 24px 0 8px;
+    height: 34px;
+    padding: 0 32px;
     font: inherit;
     font-size: 11.5px;
     color: var(--text-primary);
     background: var(--bg-secondary);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-xs);
+    border-radius: var(--radius-sm);
     transition: all var(--transition-fast);
+  }
+
+  .search-icon {
+    position: absolute;
+    top: 9px;
+    left: 10px;
+    width: 16px;
+    height: 16px;
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+
+  .catalog-search-input::-webkit-search-cancel-button {
+    appearance: none;
   }
 
   .catalog-search-input:focus {
@@ -1731,6 +1804,7 @@
   }
 
   .group-title {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1762,15 +1836,15 @@
   }
 
   .btn-ghost-sm {
-    height: 22px;
-    padding: 0 6px;
+    min-height: 28px;
+    padding: 0 9px;
     font: inherit;
     font-size: 10.5px;
     font-weight: 500;
     color: var(--brand-strong);
     background: var(--brand-subtle);
     border: 1px solid var(--brand-border);
-    border-radius: var(--radius-xs);
+    border-radius: var(--radius-sm);
     cursor: pointer;
     transition: all var(--transition-fast);
     white-space: nowrap;
@@ -1789,6 +1863,7 @@
   }
 
   .file-row {
+    flex-shrink: 0;
     position: relative;
     display: flex;
     flex-direction: column;
@@ -2075,14 +2150,14 @@
   .copy-path-btn {
     display: inline-flex;
     align-items: center;
-    height: 20px;
-    padding: 0 6px;
+    min-height: 28px;
+    padding: 0 9px;
     font: inherit;
     font-size: 10px;
     color: var(--text-muted);
     background: var(--bg-secondary);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-xs);
+    border-radius: var(--radius-sm);
     cursor: pointer;
     transition: all var(--transition-fast);
     flex-shrink: 0;
@@ -2160,7 +2235,29 @@
     color: var(--text-secondary);
   }
 
-  .create-form input, .create-form select {
+  .create-form :global(.select-dropdown) {
+    max-width: none;
+  }
+
+  .create-form-location {
+    min-height: 34px;
+    padding: 0 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--text-muted);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+  }
+
+  .create-form-location strong {
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+
+  .create-form input {
     height: 32px;
     padding: 0 10px;
     font: inherit;
@@ -2171,7 +2268,7 @@
     border-radius: var(--radius-sm);
   }
 
-  .create-form input:focus, .create-form select:focus {
+  .create-form input:focus {
     border-color: var(--brand-primary);
     outline: none;
   }
@@ -2501,6 +2598,20 @@
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
+  }
+
+  @media (min-width: 901px) and (min-height: 620px) {
+    .fit-workspace { height: 100%; }
+    .fit-workspace .workspace {
+      flex: 1;
+      min-height: 0;
+      grid-template-rows: minmax(0, 1fr);
+    }
+    .fit-workspace .catalog { max-height: none; }
+    .fit-workspace .editor { min-height: 0; }
+    .fit-workspace .editor.has-selection { overflow: hidden; }
+    .fit-workspace .editor.has-selection .editor-textarea-wrap,
+    .fit-workspace .editor.has-selection textarea { min-height: 0; }
   }
 
   @media (max-width: 900px) {

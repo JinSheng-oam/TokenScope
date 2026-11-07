@@ -23,6 +23,7 @@
   import { toIsoDate, type HeatmapCell } from './lib/heatmap';
   import { createHubController } from './lib/hubController';
   import { createWebDavController } from './lib/webdavController';
+  import appIcon from '../src-tauri/icons/tokenscope-v1/128x128.png';
   import { icons } from './lib/icons';
   import { createSessionController } from './lib/sessionController';
   import { createSettingsController } from './lib/settingsController';
@@ -470,9 +471,7 @@
   <!-- Sidebar -->
   <aside class="sidebar">
     <div class="brand-row" title="TokenScope">
-      <div class="brand-prism">
-        {@html icons.sparkle}
-      </div>
+      <img class="brand-icon" src={appIcon} alt="" width="28" height="28" />
       <div class="brand-title">
         TokenScope
       </div>

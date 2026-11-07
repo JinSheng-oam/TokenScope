@@ -64,18 +64,16 @@ pub(super) fn collect(
             }
             let v: serde_json::Value = serde_json::from_slice(&line.bytes)?;
             let typ = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
-            if !matches!(typ, "session_meta" | "turn_context" | "token_usage_record")
-                && !(typ == "event_msg"
+            if !(matches!(typ, "session_meta" | "turn_context" | "token_usage_record")
+                || (typ == "event_msg"
                     && v.pointer("/payload/type").and_then(|x| x.as_str()) == Some("token_count"))
-                && !(typ == "response_item"
-                    && v.pointer("/payload/role").and_then(|x| x.as_str()) == Some("user"))
+                || (typ == "response_item"
+                    && v.pointer("/payload/role").and_then(|x| x.as_str()) == Some("user")))
             {
                 continue;
             }
-            if v.get("type").and_then(|x| x.as_str()) == Some("session_meta") {
-                if header.is_none() {
-                    header = Some(v.clone());
-                }
+            if v.get("type").and_then(|x| x.as_str()) == Some("session_meta") && header.is_none() {
+                header = Some(v.clone());
             }
             if v.get("type").and_then(|x| x.as_str()) == Some("token_usage_record") {
                 if let Some(id) = v.pointer("/payload/response_id").and_then(|x| x.as_str()) {

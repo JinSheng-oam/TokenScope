@@ -1980,6 +1980,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "tokenscope-local-ipc",
  "tokenscope-local-store",
  "tokenscope-source-antigravity",
@@ -2020,6 +2021,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tokenscope-core-domain",
 ]
 

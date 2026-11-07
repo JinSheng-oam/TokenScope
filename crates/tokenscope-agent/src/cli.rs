@@ -4,7 +4,7 @@ use crate::{
     daemon::{self, DaemonOptions},
     dashboard, diagnostics, identity,
     lock::AgentLock,
-    quota, sync,
+    pricing, quota, sync,
 };
 use std::{env, path::PathBuf};
 use tokenscope_local_ipc::{DashboardResponse, SessionAnalysisResponse};
@@ -370,6 +370,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if !daemon {
         if codex || claude || antigravity || deepseek_harness {
+            pricing::refresh_if_due(&mut store);
             collect_once(
                 &mut store,
                 &CollectionOptions {

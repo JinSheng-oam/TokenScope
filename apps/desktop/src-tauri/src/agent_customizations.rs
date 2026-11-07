@@ -189,8 +189,7 @@ fn entry(
     enabled: bool,
 ) -> CustomizationEntry {
     let editable = check_target(root, &path).is_ok();
-    let instruction_entry =
-        root.kind == "instruction" && root.names.iter().any(|name| *name == id.name.as_str());
+    let instruction_entry = root.kind == "instruction" && root.names.contains(&id.name.as_str());
     CustomizationEntry {
         id,
         path: display_path(&path),

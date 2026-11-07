@@ -1,4 +1,5 @@
 use super::models::SourceCheckpoint;
+use super::pricing::PriceBookCache;
 use super::LocalStore;
 use crate::error::{db_int, pos_u64, Result, StoreError};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -186,25 +187,27 @@ pub(super) fn tombstone_source_records(
 
 pub(super) fn upsert_source_record(
     tx: &rusqlite::Transaction<'_>,
-    rec: &CanonicalRecord,
-    hash: &str,
+    rec: &mut CanonicalRecord,
     source_key: &str,
     owner: &str,
     observed_at_ms: i64,
+    price_books: &mut PriceBookCache<'_>,
 ) -> Result<RecordChange> {
     if rec.owner_device_id != owner {
         return Err(StoreError::IdentityMismatch);
     }
-    let previous: Option<(String, String, String, i64)> = tx.query_row(
-                "SELECT owner_device_id,tool_id,payload_hash,record_revision FROM usage_records WHERE record_id=?1",
-                [&rec.record_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))
-            ).optional()?;
+    let previous = read_record(tx, &rec.record_id)?;
+    if let Some(previous) = &previous {
+        if previous.record.owner_device_id != owner || previous.record.tool_id != rec.tool_id {
+            return Err(StoreError::RecordOwnershipConflict);
+        }
+    }
+    price_books
+        .price_record_with_previous(rec, previous.as_ref().map(|envelope| &envelope.record))?;
+    let hash = payload_hash(rec)?;
     let change;
     match previous {
-        Some((old_owner, old_tool, old_hash, revision)) => {
-            if old_owner != owner || old_tool != rec.tool_id {
-                return Err(StoreError::RecordOwnershipConflict);
-            }
+        Some(previous) => {
             let mut sources = tx.prepare(
                 "SELECT source_key FROM record_sources WHERE record_id=?1 AND tool_id=?2",
             )?;
@@ -218,16 +221,17 @@ pub(super) fn upsert_source_record(
                     "record lacks source provenance",
                 ));
             }
-            if old_hash != hash {
+            if previous.payload_hash != hash {
                 // Once multiple observers claim a logical record, require
                 // upstream arbitration. Never oscillate between values.
                 if found.len() != 1 || found[0] != source_key {
                     return Err(StoreError::SourceArbitrationConflict);
                 }
-                let newer = revision
+                let newer = i64::try_from(previous.record_revision)
+                    .map_err(|_| StoreError::RevisionOverflow)?
                     .checked_add(1)
                     .ok_or(StoreError::RevisionOverflow)?;
-                write_record(tx, rec, newer, hash, observed_at_ms)?;
+                write_record(tx, rec, newer, &hash, observed_at_ms)?;
                 enqueue(tx, &rec.record_id, newer, observed_at_ms)?;
                 change = RecordChange::Revised;
             } else {
@@ -235,7 +239,7 @@ pub(super) fn upsert_source_record(
             }
         }
         None => {
-            write_record(tx, rec, 1, hash, observed_at_ms)?;
+            write_record(tx, rec, 1, &hash, observed_at_ms)?;
             enqueue(tx, &rec.record_id, 1, observed_at_ms)?;
             change = RecordChange::Inserted;
         }

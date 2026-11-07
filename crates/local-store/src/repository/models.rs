@@ -20,6 +20,34 @@ pub struct LocalIdentity {
     pub time_zone: String,
 }
 
+/// One exact provider/model price row from an immutable public catalog version.
+/// Rates are USD per million tokens, scaled by 1e9 to avoid floating-point math.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelPriceEntry {
+    pub provider_id: String,
+    pub model_id: String,
+    pub input_rate_nanos: Option<i64>,
+    pub output_rate_nanos: Option<i64>,
+    pub cache_read_rate_nanos: Option<i64>,
+    pub cache_write_rate_nanos: Option<i64>,
+    pub reasoning_rate_nanos: Option<i64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelPriceCatalogState {
+    pub active_version: Option<String>,
+    pub etag: Option<String>,
+    pub last_attempt_ms: Option<i64>,
+    pub last_success_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelPriceInstallReport {
+    pub price_version: String,
+    pub model_count: usize,
+    pub backfilled_records: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceCheckpoint {
     pub tool_id: String,

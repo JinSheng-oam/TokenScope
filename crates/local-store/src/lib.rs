@@ -10,10 +10,11 @@ pub use error::{Result, StoreError};
 pub use repository::{
     AntigravityActivity, AntigravityActivitySummary, AntigravityQuota, ApplyReport, CodexQuota,
     DailyUsage, DashboardObservations, DashboardQuery, DashboardSnapshot, LocalIdentity,
-    LocalStore, ModelActivityBreakdown, OutboxEntry, ProjectName, ReconcileReport,
-    RemoteDailyUsage, RemoteDeviceUsage, RemoteUsageBreakdown, RemoteUsageChange,
-    RemoteUsageTotals, SessionAnalysisPage, SessionFilterOption, SessionFilterOptions,
-    SessionUsage, SessionUsagePage, SourceCheckpoint, SourceHealth, SyncOutboxStatus,
-    ToolUsageOverview, UsageBreakdown, UsageOverview, UsageTotals,
+    LocalStore, ModelActivityBreakdown, ModelPriceCatalogState, ModelPriceEntry,
+    ModelPriceInstallReport, OutboxEntry, ProjectName, ReconcileReport, RemoteDailyUsage,
+    RemoteDeviceUsage, RemoteUsageBreakdown, RemoteUsageChange, RemoteUsageTotals,
+    SessionAnalysisPage, SessionFilterOption, SessionFilterOptions, SessionUsage, SessionUsagePage,
+    SourceCheckpoint, SourceHealth, SyncOutboxStatus, ToolUsageOverview, UsageBreakdown,
+    UsageOverview, UsageTotals,
 };
 pub const MODULE_ID: &str = "local-store";

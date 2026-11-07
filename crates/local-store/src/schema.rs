@@ -1,6 +1,6 @@
 //! Schema v1 is append-only at the migration layer. No destructive schema reset.
 
-pub const VERSION: i64 = 9;
+pub const VERSION: i64 = 10;
 pub const MIGRATION_001: &str = r#"
 CREATE TABLE schema_migrations (
   version INTEGER PRIMARY KEY,
@@ -288,4 +288,35 @@ CREATE TRIGGER dashboard_webdav_sync_cursors_update AFTER UPDATE ON webdav_sync_
  BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
 CREATE TRIGGER dashboard_webdav_sync_cursors_delete AFTER DELETE ON webdav_sync_cursors
  BEGIN UPDATE dashboard_revisions SET observation_revision=observation_revision+1 WHERE singleton=1; END;
+"#;
+
+// Public model prices are local reference snapshots. They are not user data and
+// never enter usage sync; each usage record keeps the immutable version used.
+pub const MIGRATION_010: &str = r#"
+CREATE TABLE model_price_catalogs (
+  price_version TEXT PRIMARY KEY CHECK(length(price_version) BETWEEN 1 AND 128),
+  fetched_at_ms INTEGER NOT NULL CHECK(fetched_at_ms >= 0),
+  model_count INTEGER NOT NULL CHECK(model_count > 0)
+);
+CREATE TABLE model_price_rates (
+  price_version TEXT NOT NULL,
+  provider_id TEXT NOT NULL CHECK(length(provider_id) BETWEEN 1 AND 128),
+  model_id TEXT NOT NULL CHECK(length(model_id) BETWEEN 1 AND 256),
+  input_rate_nanos INTEGER CHECK(input_rate_nanos >= 0),
+  output_rate_nanos INTEGER CHECK(output_rate_nanos >= 0),
+  cache_read_rate_nanos INTEGER CHECK(cache_read_rate_nanos >= 0),
+  cache_write_rate_nanos INTEGER CHECK(cache_write_rate_nanos >= 0),
+  reasoning_rate_nanos INTEGER CHECK(reasoning_rate_nanos >= 0),
+  PRIMARY KEY(price_version,provider_id,model_id),
+  FOREIGN KEY(price_version) REFERENCES model_price_catalogs(price_version) ON DELETE RESTRICT
+);
+CREATE TABLE model_price_state (
+  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+  active_version TEXT,
+  etag TEXT,
+  last_attempt_ms INTEGER CHECK(last_attempt_ms >= 0),
+  last_success_ms INTEGER CHECK(last_success_ms >= 0),
+  FOREIGN KEY(active_version) REFERENCES model_price_catalogs(price_version) ON DELETE RESTRICT
+);
+INSERT INTO model_price_state(singleton) VALUES(1);
 "#;

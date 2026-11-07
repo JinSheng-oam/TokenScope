@@ -34,7 +34,7 @@ impl LocalStore {
             return Err(StoreError::UnsupportedSchema(version));
         }
         let migration_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7,8,9)",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7,8,9,10)",
             [],
             |r| r.get(0),
         )?;
@@ -252,8 +252,25 @@ impl LocalStore {
             tx.execute_batch("PRAGMA user_version=9;")?;
             tx.commit()?;
         }
+        if version <= 9 {
+            let (count, highest): (i64, i64) = conn.query_row(
+                "SELECT COUNT(*),MAX(version) FROM schema_migrations",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            if count != 9 || highest != 9 {
+                return Err(StoreError::DatabaseInconsistent(
+                    "legacy migration metadata invalid before v10",
+                ));
+            }
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(schema::MIGRATION_010)?;
+            tx.execute("INSERT INTO schema_migrations(version,applied_at_ms) VALUES(10,CAST(strftime('%s','now') AS INTEGER)*1000)",[])?;
+            tx.execute_batch("PRAGMA user_version=10;")?;
+            tx.commit()?;
+        }
         let count: i64 = conn.query_row(
-            "SELECT count(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7,8,9)",
+            "SELECT count(*) FROM schema_migrations WHERE version IN (1,2,3,4,5,6,7,8,9,10)",
             [],
             |r| r.get(0),
         )?;

@@ -1,4 +1,5 @@
 use super::super::models::{AntigravityActivity, ApplyReport, ReconcileReport, SourceCheckpoint};
+use super::super::pricing::PriceBookCache;
 use super::super::records::{
     load_checkpoint, load_suppressed_sessions, read_record, upsert_source_record, RecordChange,
 };
@@ -6,7 +7,7 @@ use super::super::LocalStore;
 use crate::error::{db_int, pos_u64, Result, StoreError};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use std::collections::HashSet;
-use tokenscope_core_domain::{payload_hash, CanonicalRecord, TokenBreakdown};
+use tokenscope_core_domain::{CanonicalRecord, TokenBreakdown};
 impl LocalStore {
     pub fn checkpoint(&self, tool_id: &str, source_key: &str) -> Result<Option<SourceCheckpoint>> {
         load_checkpoint(&self.conn, tool_id, source_key)
@@ -138,7 +139,7 @@ impl LocalStore {
             if let Some(n) = rec.usage.reasoning_tokens {
                 db_int(n)?;
             }
-            canonical.push((payload_hash(&rec)?, rec));
+            canonical.push(rec);
         }
         let tx = self
             .conn
@@ -155,10 +156,11 @@ impl LocalStore {
             )
             .optional()?;
         let owner = owner.ok_or(StoreError::NotInitialized)?;
+        let mut price_books = PriceBookCache::new(&tx)?;
         let suppressed = load_suppressed_sessions(&tx, &next.tool_id)?;
         let suppress_source = suppressed.contains(&next.source_key);
         let mut report = ApplyReport::default();
-        for (hash, rec) in canonical {
+        for mut rec in canonical {
             if rec.owner_device_id != owner {
                 return Err(StoreError::IdentityMismatch);
             }
@@ -170,8 +172,14 @@ impl LocalStore {
             {
                 continue;
             }
-            match upsert_source_record(&tx, &rec, &hash, &next.source_key, &owner, observed_at_ms)?
-            {
+            match upsert_source_record(
+                &tx,
+                &mut rec,
+                &next.source_key,
+                &owner,
+                observed_at_ms,
+                &mut price_books,
+            )? {
                 RecordChange::Inserted => report.inserted += 1,
                 RecordChange::Revised => report.revised += 1,
                 RecordChange::Unchanged => report.unchanged += 1,
@@ -300,6 +308,7 @@ impl LocalStore {
             )
             .optional()?
             .ok_or(StoreError::NotInitialized)?;
+        let mut price_books = PriceBookCache::new(&tx)?;
         let suppressed = load_suppressed_sessions(&tx, &next.tool_id)?;
         let mut suppress_source = suppressed.contains(&next.source_key);
         if let Some(session) = retire_session {
@@ -317,7 +326,7 @@ impl LocalStore {
         )?;
         let mut report = ReconcileReport::default();
         for record in records {
-            let rec = record.normalized()?;
+            let mut rec = record.normalized()?;
             if rec.tool_id != next.tool_id || rec.is_deleted {
                 return Err(StoreError::InvalidInput("source reconciliation record"));
             }
@@ -351,9 +360,14 @@ impl LocalStore {
             if changed != 1 {
                 return Err(StoreError::DuplicateBatchRecord);
             }
-            let hash = payload_hash(&rec)?;
-            match upsert_source_record(&tx, &rec, &hash, &next.source_key, &owner, observed_at_ms)?
-            {
+            match upsert_source_record(
+                &tx,
+                &mut rec,
+                &next.source_key,
+                &owner,
+                observed_at_ms,
+                &mut price_books,
+            )? {
                 RecordChange::Inserted => report.applied.inserted += 1,
                 RecordChange::Revised => report.applied.revised += 1,
                 RecordChange::Unchanged => report.applied.unchanged += 1,
@@ -397,14 +411,13 @@ impl LocalStore {
             record.usage = TokenBreakdown::default();
             record.estimated_cost_microusd = None;
             record.price_version = None;
-            let hash = payload_hash(&record)?;
             match upsert_source_record(
                 &tx,
-                &record,
-                &hash,
+                &mut record,
                 &next.source_key,
                 &owner,
                 observed_at_ms,
+                &mut price_books,
             )? {
                 RecordChange::Revised => report.tombstoned += 1,
                 _ => {

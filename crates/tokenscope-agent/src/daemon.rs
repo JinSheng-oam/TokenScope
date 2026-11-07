@@ -1,7 +1,7 @@
 use crate::{
     background_quota::QuotaWorkers,
     collection::{collect_once, CollectionOptions},
-    session_control, shutdown, sync,
+    pricing, session_control, shutdown, sync,
 };
 use std::{
     path::Path,
@@ -72,11 +72,18 @@ pub(super) fn run(
             eprintln!("TokenScope session control warning: {error}");
         }
         quotas.persist_pending(store);
-        match collect_once(store, collection) {
-            Ok(()) => consecutive_failures = 0,
-            Err(err) => {
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                eprintln!("TokenScope scan error (retry #{consecutive_failures}): {err}");
+        if collection.codex
+            || collection.claude
+            || collection.antigravity
+            || collection.deepseek_harness
+        {
+            pricing::refresh_if_due(store);
+            match collect_once(store, collection) {
+                Ok(()) => consecutive_failures = 0,
+                Err(err) => {
+                    consecutive_failures = consecutive_failures.saturating_add(1);
+                    eprintln!("TokenScope scan error (retry #{consecutive_failures}): {err}");
+                }
             }
         }
         quotas.persist_pending(store);

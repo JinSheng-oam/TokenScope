@@ -1,6 +1,6 @@
 use super::{
     model::{BodyReader, PreciseScan, V2Cursor},
-    usage::{clean_title, codex_project_metadata, legacy_difference, record, usage},
+    usage::{clean_title, codex_project_metadata, legacy_difference, record, usage, RecordInput},
     MAX_BATCH, VERSION,
 };
 use crate::{
@@ -310,13 +310,15 @@ fn scan_precise_mode(
             };
             let response_model = explicit_response_model(p).or_else(|| model.clone());
             let r = record(
-                &source_session,
-                &header_session,
-                device_id,
-                native.as_bytes(),
-                response_model,
-                project_id.clone(),
-                ts,
+                RecordInput {
+                    source_session: &source_session,
+                    logical_session: &header_session,
+                    device: device_id,
+                    native_key: native.as_bytes(),
+                    model: response_model,
+                    project_id: project_id.clone(),
+                    at: ts,
+                },
                 token,
             )?;
             if !ids.insert(r.record_id.clone()) {
@@ -354,13 +356,15 @@ fn scan_precise_mode(
                                     let ts = event_ms(&v)?
                                         .ok_or(CodexError::Invalid("missing legacy timestamp"))?;
                                     let r = record(
-                                        &source_session,
-                                        &header_session,
-                                        device_id,
-                                        format!("legacy:{legacy_seq}").as_bytes(),
-                                        model.clone(),
-                                        project_id.clone(),
-                                        ts,
+                                        RecordInput {
+                                            source_session: &source_session,
+                                            logical_session: &header_session,
+                                            device: device_id,
+                                            native_key: format!("legacy:{legacy_seq}").as_bytes(),
+                                            model: model.clone(),
+                                            project_id: project_id.clone(),
+                                            at: ts,
+                                        },
                                         delta,
                                     )?;
                                     if legacy.len() >= MAX_BATCH {

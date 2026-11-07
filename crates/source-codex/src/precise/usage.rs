@@ -156,19 +156,20 @@ pub(super) fn legacy_difference(
     })
 }
 
-pub(super) fn record(
-    source_session: &str,
-    logical_session: &str,
-    device: &str,
-    native_key: &[u8],
-    model: Option<String>,
-    project_id: Option<String>,
-    at: i64,
-    tokens: TokenBreakdown,
-) -> Result<CanonicalRecord> {
+pub(super) struct RecordInput<'a> {
+    pub(super) source_session: &'a str,
+    pub(super) logical_session: &'a str,
+    pub(super) device: &'a str,
+    pub(super) native_key: &'a [u8],
+    pub(super) model: Option<String>,
+    pub(super) project_id: Option<String>,
+    pub(super) at: i64,
+}
+
+pub(super) fn record(input: RecordInput<'_>, tokens: TokenBreakdown) -> Result<CanonicalRecord> {
     let rec = CanonicalRecord {
-        record_id: stable_record_id("codex", source_session.as_bytes(), native_key)?,
-        owner_device_id: device.to_owned(),
+        record_id: stable_record_id("codex", input.source_session.as_bytes(), input.native_key)?,
+        owner_device_id: input.device.to_owned(),
         tool_id: "codex".into(),
         scope: UsageScope::DeviceLocal,
         precision: if tokens.unclassified_tokens == 0 {
@@ -177,10 +178,10 @@ pub(super) fn record(
             Precision::Aggregate
         },
         account_id: None,
-        model_id: model,
-        project_id,
-        session_id: Some(session_key("codex", logical_session.as_bytes())?),
-        event_at_ms: Some(at),
+        model_id: input.model,
+        project_id: input.project_id,
+        session_id: Some(session_key("codex", input.logical_session.as_bytes())?),
+        event_at_ms: Some(input.at),
         usage: tokens,
         estimated_cost_microusd: None,
         price_version: None,

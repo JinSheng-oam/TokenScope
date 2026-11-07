@@ -1,4 +1,7 @@
 <script lang="ts">
+  import SharedInstruction from './SharedInstruction.svelte';
+  let showShared = false;
+  let sharedDirty = false;
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { icons } from './icons';
@@ -122,7 +125,7 @@
     }
   }
 
-  $: dirty = selected !== null && content !== (original ?? '');
+  $: dirty = sharedDirty || selected !== null && content !== (original ?? '');
   $: instructions = entries.filter((entry) => entry.kind === 'instruction');
   $: skills = entries.filter((entry) => entry.kind === 'skill');
   $: currentProvider = providers.find((p) => p.id === provider)!;
@@ -630,9 +633,8 @@
   <div class="custom-heading">
     <div class="heading-text">
       <h1>Agent 配置与技能管理</h1>
-      <p>编辑工具指令入口与辅助规则文件，管理 Skill 启停、来源和更新。</p>
     </div>
-    <div class="head-right-actions">
+    <div class="head-right-actions"><button class="ai-toggle-btn" aria-expanded={showShared} disabled={!runtimeAvailable} onclick={() => { if (showShared && sharedDirty && !window.confirm("放弃未保存的统一指令？")) return; showShared = !showShared; if (!showShared) sharedDirty = false; }}>统一指令</button>
       <button
         class="ai-toggle-btn"
         class:active={showAiConfig}
@@ -643,20 +645,20 @@
         <span class="ai-btn-icon">{@html icons.sparkle}</span>
         <span>AI 助手配置</span>
       </button>
-      <span class="local-badge" title="所有指令与 Skill 均只读写本机环境文件，不上传云端">
+      <span class="local-badge" title="普通指令与 Skill 仅操作本机文件；统一指令有独立同步设置">
         {@html icons.shield}
         <span>仅操作本机文件</span>
       </span>
     </div>
   </div>
 
+  {#if showShared}<SharedInstruction bind:unsaved={sharedDirty} source={selected?.kind === "instruction" ? content : null} />{/if}
   {#if showAiConfig}
     <div class="ai-config-panel" role="region" aria-label="AI 助手配置">
       <div class="ai-config-head">
         <div class="ai-config-title">
           <span class="ai-config-icon">{@html icons.sparkle}</span>
           <strong>AI 助手服务配置</strong>
-          <span class="ai-config-sub">用于 Skill 代码智能分析与中文使用指南生成</span>
           {#if hasAiConfig}
             <span class="ai-saved-pill">已配置</span>
           {:else}
@@ -745,11 +747,6 @@
       </div>
     </div>
   {/if}
-
-  <div class="privacy-banner">
-    <span class="banner-icon">{@html icons.info}</span>
-    <p>内容直接读写工具原有文件，不进入 TokenScope 数据库或同步。支持第三方 Skill 纳管更新；Skill 停用后编码工具将不再扫描载入。</p>
-  </div>
 
   <div class="provider-tabs-wrap">
     <div class="provider-tabs" role="group" aria-label="选择工具">
@@ -894,7 +891,7 @@
           <div class="editor-head">
             <div>
               <h2>从来源添加 skill</h2>
-              <p>支持 skills.sh 页面和 GitHub 仓库或子目录；只下载文件，不执行脚本。</p>
+              <p>支持 skills.sh 和 GitHub 链接。</p>
             </div>
           </div>
           <div class="create-form">
@@ -931,7 +928,7 @@
           <div class="editor-head">
             <div>
               <h2>新建指令文件草稿</h2>
-              <p>保存前不会写入磁盘。工具入口文件可被自动读取；其他 Markdown 通常需要由入口文件引用。</p>
+              <p>辅助 Markdown 需要由入口文件引用。</p>
             </div>
           </div>
           <div class="create-form">
@@ -954,7 +951,6 @@
           <div class="editor-head">
             <div>
               <h2>新建 skill</h2>
-              <p>创建一个包含 SKILL.md 的目录。</p>
             </div>
           </div>
           <div class="create-form">
@@ -1108,7 +1104,6 @@
                 <strong>🔗 纳入更新管理 (绑定来源仓库)</strong>
                 <button class="btn-compact" onclick={() => adopting = false}>✕</button>
               </div>
-              <p class="adopt-desc">将其他工具安装或本地存在的 Skill 纳入 TokenScope 统一管理，绑定来源后即可自动检查版本并一键更新。</p>
               <div class="adopt-form">
                 <label for="adopt-source">GitHub 仓库或 skills.sh 地址：</label>
                 <input
@@ -1207,7 +1202,6 @@
           <div class="editor-empty">
             <div class="empty-icon-box">{@html icons.tools}</div>
             <h2>选择文件开始编辑</h2>
-            <p>在左侧选择全局指令或 Skill 进行查看与修改，亦可新建指令、新建 Skill 或一键安装 GitHub 开源技能。</p>
           </div>
         {/if}
       </section>
@@ -1238,12 +1232,6 @@
     letter-spacing: -0.02em;
     margin: 0 0 4px;
     color: var(--text-primary);
-  }
-
-  .heading-text p {
-    margin: 0;
-    font-size: 12px;
-    color: var(--text-muted);
   }
 
   .head-right-actions {
@@ -1368,12 +1356,6 @@
   .ai-config-icon :global(svg) {
     width: 100%;
     height: 100%;
-  }
-
-  .ai-config-sub {
-    font-size: 11.5px;
-    font-weight: normal;
-    color: var(--text-muted);
   }
 
   .ai-saved-pill, .ai-unsaved-pill {
@@ -1573,39 +1555,6 @@
     height: 28px;
     padding: 0 12px;
     font-size: 11.5px;
-  }
-
-  /* Privacy Banner */
-  .privacy-banner {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    font-size: 11.5px;
-    line-height: 1.45;
-    color: var(--text-muted);
-  }
-
-  .banner-icon {
-    display: inline-flex;
-    width: 14px;
-    height: 14px;
-    flex-shrink: 0;
-    color: var(--text-secondary);
-  }
-
-  .banner-icon :global(svg) {
-    width: 100%;
-    height: 100%;
-  }
-
-  .privacy-banner p {
-    margin: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   /* Provider Segmented Capsule */
@@ -2298,12 +2247,6 @@
     color: #d97706;
   }
 
-  .adopt-desc {
-    margin: 0;
-    font-size: 11px;
-    color: var(--text-muted);
-  }
-
   .adopt-form {
     display: flex;
     flex-direction: column;
@@ -2509,14 +2452,6 @@
     font-size: 14px;
     color: var(--text-primary);
     margin: 0;
-  }
-
-  .editor-empty p {
-    font-size: 11.5px;
-    color: var(--text-muted);
-    max-width: 42ch;
-    margin: 0;
-    line-height: 1.5;
   }
 
   .btn-compact {

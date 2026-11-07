@@ -111,7 +111,6 @@
 
 <div class="page-header">
   <h1>会话分析</h1>
-  <p>按工具、模型和项目筛选；可搜索会话名称、ID、模型或项目标识。仅查询本机统计，不读取聊天正文。</p>
 </div>
 
 <section class="panel-card">
@@ -417,19 +416,18 @@
   {:else if sessionPage && sessionPage.total === 0 && hasSessionFilters}
     <div class="session-empty-state">
       <strong>没有匹配的会话</strong>
-      <p>调整搜索内容或分类条件，或清除筛选查看当前范围的全部会话。</p>
+      <p>调整或清除筛选条件。</p>
       <button class="btn-secondary" onclick={onClearSessionFilters}>清除筛选</button>
     </div>
   {:else if sessionPage}
     <div class="session-empty-state">
       <strong>这个时间范围内没有会话用量</strong>
-      <p>切换到“全部”可查看历史记录，以及来源未提供事件时间的用量。</p>
+      <p>切换到“全部”查看历史会话。</p>
       <button class="btn-secondary" disabled={range === 'all'} onclick={() => onSelectRange('all')}>查看全部日期</button>
     </div>
   {:else if sessionError}
     <div class="session-empty-state">
       <strong>会话数据暂时无法读取</strong>
-      <p>请重试查询；本机统计数据不会因此被更改。</p>
       <button class="btn-secondary" disabled={sessionLoading} onclick={() => void onLoadSessionAnalysis()}>重试</button>
     </div>
   {:else}

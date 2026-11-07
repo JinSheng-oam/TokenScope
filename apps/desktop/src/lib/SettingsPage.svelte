@@ -91,14 +91,13 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
 </script>
 
 <div class="page-header">
-            <h1>系统设置与偏好</h1>
-            <p>控制系统常驻生命周期、主题外观、更新速率与本地采集行为</p>
+            <h1>系统设置</h1>
           </div>
 
           <!-- Theme Settings -->
           <section class="panel-card" style="margin-bottom: 16px;">
             <div class="panel-head">
-              <h2>界面主题外观</h2>
+              <h2>主题</h2>
               <span class="panel-tag">Linear Craft</span>
             </div>
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
@@ -131,7 +130,6 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
             <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-subtle);">
               <div>
                 <div style="font-size: 13px; font-weight: 600; color: var(--text-primary);">核心指标数字滚动动效</div>
-                <p style="margin: 2px 0 0; font-size: 11.5px; color: var(--text-muted);">开启后，使用总览顶部 4 项 Token 指标在加载与实时更新时呈现滚轮计数过渡</p>
               </div>
               <button
                 class="btn-secondary"
@@ -148,8 +146,7 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
           <section class="panel-card" style="margin-bottom: 16px;">
             <div class="panel-head">
               <div>
-                <h2>数据更新速率</h2>
-                <p>Agent 检测到新用量后会即时推送；这里控制兜底全量刷新的间隔，越短越及时，查询开销也越高。</p>
+                <h2>刷新间隔</h2>
               </div>
               <span class="precision-chip aggregate">{refreshLabel(refreshIntervalMs)}</span>
             </div>
@@ -165,17 +162,13 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
                 </button>
               {/each}
             </div>
-            <p class="refresh-hint">
-              当前{refreshIntervalMs > 0 ? `每 ${refreshLabel(refreshIntervalMs)} 兜底刷新一次` : '仅依赖 Agent 事件推送'}；顶栏刷新按钮始终可用。
-            </p>
           </section>
 
           <!-- Autostart & Lifecycle -->
           <section class="panel-card" style="margin-bottom: 16px;">
             <div class="panel-head">
               <div>
-                <h2>系统登录时自启动 (--background)</h2>
-                <p>遵循 ADR-0005 规范：启动后仅在系统托盘静默常驻，不创建 WebView，内存占用 ≤25 MiB</p>
+                <h2>登录时在后台启动</h2>
               </div>
               <button
                 class="btn-primary"
@@ -194,8 +187,7 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
           <section class="panel-card" style="margin-bottom: 16px;">
             <div class="panel-head">
               <div>
-                <h2>本地 Agent 守护进程状态</h2>
-                <p>负责 SQLite 本地写入、各工具日志监听解析与 Hub 凭证通信</p>
+                <h2>采集状态</h2>
               </div>
               <span class="precision-chip" class:exact={agent?.running} class:danger={!agent?.running}>
                 {agent?.running ? 'RUNNING' : 'STOPPED'}
@@ -232,7 +224,6 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
             <div class="panel-head">
               <div>
                 <h2>系统诊断</h2>
-                <p>只读检查数据库、设备身份、Schema、采集检查点、同步队列和磁盘余量</p>
               </div>
               <button
                 class="btn-primary"
@@ -304,13 +295,6 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
 
   .refresh-options .btn-secondary {
     min-width: 76px;
-  }
-
-  .refresh-hint {
-    margin: 12px 0 0;
-    color: var(--text-muted);
-    font-size: 11.5px;
-    line-height: 1.55;
   }
 
   .diagnostic-panel {

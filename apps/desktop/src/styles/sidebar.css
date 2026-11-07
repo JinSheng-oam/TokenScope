@@ -57,23 +57,6 @@
   color: var(--text-primary);
 }
 
-.brand-title small {
-  display: block;
-  margin-top: 2px;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  color: var(--text-muted);
-}
-
-.nav-caption {
-  padding: 0 10px 6px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--text-muted);
-}
-
 .sidebar nav {
   display: flex;
   flex-direction: column;

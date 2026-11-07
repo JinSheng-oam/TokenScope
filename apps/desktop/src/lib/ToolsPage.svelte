@@ -13,7 +13,6 @@
 <div class="page-header">
   <div>
     <h1>工具分析</h1>
-    <p>已接入 AI 工具的原生解析器监控、扫描健康状态与用量汇总</p>
   </div>
 </div>
 
@@ -21,7 +20,6 @@
   <div class="panel-head">
     <div>
       <h2>工具用量详细矩阵</h2>
-      <p>按本机 AI 编程助手与命令行工具分类汇总用量与估算支出</p>
     </div>
     <span class="panel-tag">{activeTools.length} 个本地来源</span>
   </div>
@@ -77,7 +75,6 @@
   <div class="panel-head">
     <div>
       <h2>采集器健康度与检查点</h2>
-      <p>各工具最近扫描与完整事务写入时间戳</p>
     </div>
     <span class="panel-tag">{completeCount} / {snapshot.source_health.length} 状态正常</span>
   </div>

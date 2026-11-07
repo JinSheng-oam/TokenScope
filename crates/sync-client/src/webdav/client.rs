@@ -70,7 +70,11 @@ impl WebDavClient {
         &self.base_url
     }
 
-    fn auth_request(&self, method: Method, url: &url::Url) -> reqwest::blocking::RequestBuilder {
+    pub(super) fn auth_request(
+        &self,
+        method: Method,
+        url: &url::Url,
+    ) -> reqwest::blocking::RequestBuilder {
         self.http.request(method, url.clone()).basic_auth(
             &self.credentials.username,
             Some(&*self.credentials.password),

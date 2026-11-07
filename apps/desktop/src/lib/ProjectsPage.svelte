@@ -191,7 +191,6 @@
   <div class="panel-head">
     <div>
       <h2>项目用量矩阵</h2>
-      <p>自动合并同名多路径项目；名称会同步到已配对设备，不包含完整目录路径</p>
     </div>
     <div class="panel-head-actions">
       <span class="panel-tag">{displayProjects.length} 个项目条目</span>
@@ -299,9 +298,6 @@
   {:else}
     <div class="session-empty-state" style="min-height: 160px; padding: 32px 20px;">
       <strong>当前范围尚未解析出项目标识</strong>
-      <p style="max-width: 60ch; line-height: 1.6; margin-top: 6px;">
-        TokenScope 会从 VSCode、Cursor、Claude Code、Codex 或 Antigravity 的会话元数据中读取项目名称，并在已配对设备间同步；完整目录路径不会上传。
-      </p>
     </div>
   {/if}
 </section>

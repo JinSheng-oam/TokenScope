@@ -6,6 +6,7 @@ mod ai_assistant;
 mod dashboard;
 mod diagnostics;
 mod hub;
+mod instruction_sync;
 mod lifecycle;
 mod paths;
 mod session_activity;
@@ -40,6 +41,7 @@ pub fn run() {
                 eprintln!("TokenScope Agent startup warning: {error}");
             }
             spawn_dashboard_watch(app.handle().clone());
+            instruction_sync::start_polling(app.handle().clone());
             spawn_dashboard_warmup(app.handle().clone());
             // Login autostart runs the collector and tray only. No WebView is
             // created until the user chooses Open, keeping idle memory lower.
@@ -109,6 +111,7 @@ pub fn run() {
             hub::rename_hub_device,
             hub::rotate_hub_device_token,
             hub::disconnect_hub_device,
+            instruction_sync::shared_instruction,
             webdav::test_webdav_connection,
             webdav::save_webdav_config,
             webdav::get_webdav_config,

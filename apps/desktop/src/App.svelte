@@ -469,17 +469,15 @@
 <div class="app-shell">
   <!-- Sidebar -->
   <aside class="sidebar">
-    <div class="brand-row" title="TokenScope · Local Analytics">
+    <div class="brand-row" title="TokenScope">
       <div class="brand-prism">
         {@html icons.sparkle}
       </div>
       <div class="brand-title">
         TokenScope
-        <small>Local Analytics</small>
       </div>
     </div>
 
-    <div class="nav-caption">工作空间</div>
     <nav aria-label="主导航">
       {#each navItems as item}
         <button
@@ -583,7 +581,6 @@
               >
                 <div class="scope-opt-main">
                   <span class="scope-opt-title">全部设备汇总</span>
-                  <span class="scope-opt-sub">本机 + 所有已同步远端设备累加</span>
                 </div>
                 <span class="scope-opt-badge tabular">
                   {formatCompactTokens((snapshot?.local.total_tokens ?? 0) + (snapshot?.remote.total_tokens ?? 0))}
@@ -600,7 +597,6 @@
               >
                 <div class="scope-opt-main">
                   <span class="scope-opt-title">本机 · {snapshot?.identity?.display_name ?? 'This device'}</span>
-                  <span class="scope-opt-sub">仅当前物理设备有效记录</span>
                 </div>
                 <span class="scope-opt-badge tabular">
                   {formatCompactTokens(snapshot?.local.total_tokens ?? 0)}
@@ -714,7 +710,7 @@
               <span class="loading-spinner-ring" aria-hidden="true">
                 <span class="loading-spinner-core"></span>
               </span>
-              <p>正在连接本地守护进程并读取 SQLite 快照…</p>
+              <p>正在加载用量…</p>
             </div>
             <span class="loading-stage-pill" aria-hidden="true">WAL 并发只读通道</span>
           </div>

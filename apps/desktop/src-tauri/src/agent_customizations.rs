@@ -34,7 +34,7 @@ pub(crate) struct Root {
     pub(crate) id: &'static str,
     pub(crate) path: PathBuf,
     pub(crate) kind: &'static str,
-    names: &'static [&'static str],
+    pub(crate) names: &'static [&'static str],
 }
 
 fn home() -> Result<PathBuf, String> {
@@ -170,7 +170,7 @@ fn canonical_target(path: &Path) -> Result<PathBuf, String> {
     };
     Ok(path)
 }
-fn is_link(path: &Path) -> bool {
+pub(crate) fn is_link(path: &Path) -> bool {
     fs::symlink_metadata(path)
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false)
@@ -292,7 +292,7 @@ fn read(id: &CustomizationId) -> Result<Option<String>, String> {
     let (root, path) = resolve(id)?;
     read_path(&root, &path)
 }
-fn read_path(root: &Root, path: &Path) -> Result<Option<String>, String> {
+pub(crate) fn read_path(root: &Root, path: &Path) -> Result<Option<String>, String> {
     check_target(root, path)?;
     match fs::metadata(path) {
         Ok(meta) if meta.is_file() && meta.len() <= MAX_FILE as u64 => fs::read_to_string(path)
@@ -356,7 +356,7 @@ fn save(id: &CustomizationId, expected: Option<String>, content: String) -> Resu
     let (root, path) = resolve(id)?;
     save_path(&root, &path, expected, content)
 }
-fn save_path(
+pub(crate) fn save_path(
     root: &Root,
     path: &Path,
     expected: Option<String>,

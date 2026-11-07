@@ -231,7 +231,7 @@ import { formatCompactTokens, resolveSessionActivityState, findActivityForSessio
         </span>
       {/if}
       {#if snapshot.unassigned.total_tokens > 0}
-        <span>隔离保护：未归属 {formatNumber(snapshot.unassigned.total_tokens)} Token</span>
+        <span>未归属 {formatNumber(snapshot.unassigned.total_tokens)} Token</span>
       {:else if untimedRecordCount === 0}
         <span class="integrity-clean-badge">时间戳与归属校验完整 · 共 {formatNumber(local?.record_count)} 笔有效记录</span>
       {/if}
@@ -590,7 +590,6 @@ import { formatCompactTokens, resolveSessionActivityState, findActivityForSessio
               <div class="panel-head">
                 <div>
                   <h2>工具用量分布</h2>
-                  <p>{deviceScope === 'all' ? '按工具汇总全部设备真实用量' : deviceScope === 'local' ? '按工具归属汇总本机真实用量' : `按工具汇总 ${deviceScopeLabel} 用量`}</p>
                 </div>
                 <button class="panel-tag" onclick={() => (onNavigateTools())}>查看明细 →</button>
               </div>
@@ -626,7 +625,6 @@ import { formatCompactTokens, resolveSessionActivityState, findActivityForSessio
               <div class="panel-head">
                 <div>
                   <h2>最近会话</h2>
-                  <p>按最近事件排序；显示整段会话的累计 Token 用量</p>
                 </div>
                 <button class="panel-tag" onclick={onNavigateSessions}>查看全部 →</button>
               </div>
@@ -696,7 +694,6 @@ import { formatCompactTokens, resolveSessionActivityState, findActivityForSessio
               <div class="panel-head">
                 <div>
                   <h2>采集源状态</h2>
-                  <p>最近一次检查点与来源覆盖情况</p>
                 </div>
                 <button class="panel-tag" onclick={onNavigateTools}>运行明细 →</button>
               </div>

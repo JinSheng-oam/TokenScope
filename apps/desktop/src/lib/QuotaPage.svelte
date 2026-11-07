@@ -44,14 +44,12 @@
 
 <div class="page-header">
   <h1>额度与活动</h1>
-  <p>Codex 通过本机 Codex app-server 读取；Antigravity 通过仅限回环地址的 RPC 读取。额度、响应次数与 Token 用量分别统计。</p>
 </div>
 
 <section class="panel-card quota-section">
   <div class="panel-head">
     <div>
       <h2>Codex 可用额度</h2>
-      <p>由 Codex 本地 app-server 返回；查看本页时按需自动更新</p>
     </div>
     <div class="quota-header-actions">
       <span class="precision-chip quota">CODEX APP-SERVER</span>
@@ -138,7 +136,6 @@
   <div class="panel-head">
     <div>
       <h2>Antigravity 可用额度</h2>
-      <p>来自本机 127.0.0.1 RPC；未知值保留为“未知”，不按 0 处理</p>
     </div>
     <div class="quota-header-actions">
       {#if hiddenStaleCount > 0}
@@ -224,7 +221,6 @@
   <div class="panel-head">
     <div>
       <h2>Antigravity Token 用量</h2>
-      <p>仅显示来源提供的生成 Token 计数；系统提示计数若存在则列为聚合，额度不会换算成 Token</p>
     </div>
     {#if quotaPrecision}
       <span class={`precision-chip ${quotaPrecision.className}`}>{quotaPrecision.label}</span>
@@ -243,6 +239,6 @@
       <p class="usage-note">{formatNumber(antigravityUsage.untimed_records)} 条记录没有可靠事件时间，因此不会进入所选日期范围和日趋势。</p>
     {/if}
   {:else}
-    <div class="empty-box">当前范围没有可计量的 Antigravity Token 记录。不会根据响应次数或额度推算用量。</div>
+    <div class="empty-box">当前范围无 Antigravity Token 记录。</div>
   {/if}
 </section>

@@ -83,7 +83,6 @@
 <div class="page-header">
   <div>
     <h1>多设备网络</h1>
-    <p>基于 WebDAV 云盘或自建私有 Hub 的去中心化同步状态；严格限定 device_local 物理单机归属</p>
   </div>
 </div>
 
@@ -115,8 +114,7 @@
 <!-- Device Topology Matrix -->
 <div class="panel-head" style="margin-top: 8px;">
   <div>
-    <h2>设备拓扑与在线节点</h2>
-    <p>最近活跃代表最后一次访问同步服务的时间戳；非持久心跳长连接</p>
+    <h2>设备列表</h2>
   </div>
   <span class="panel-tag">{remoteDevices.length + 1} 台注册设备</span>
 </div>
@@ -186,7 +184,7 @@
 
 {#if otherRemoteDevices.length === 0}
   <div class="device-empty-banner">
-    <span>当前仅有本机节点。您可以在下方配置 WebDAV 云盘（如坚果云、Nextcloud）或自建 Hub，将多台工作机连接至同一同步源，自动汇聚全端 Token。</span>
+    <span>在其他设备上配置相同的 WebDAV 或 Hub。</span>
   </div>
 {/if}
 
@@ -194,8 +192,7 @@
 <section class="panel-card" style="margin-bottom: 20px;">
   <div class="panel-head">
     <div>
-      <h2>远端设备维度透视</h2>
-      <p>穿透查看指定远端设备的工具、模型与项目贡献分布</p>
+      <h2>远端设备用量</h2>
     </div>
     <div style="display: flex; align-items: center; gap: 8px; min-width: 220px;">
       <span style="font-size: 11px; color: var(--text-secondary); white-space: nowrap;">选择设备：</span>
@@ -220,8 +217,7 @@
   {#if otherRemoteDevices.length === 0}
     <div class="drilldown-empty-state">
       <div class="drilldown-empty-icon">{@html icons.devices}</div>
-      <h4>等待远端设备数据接入</h4>
-      <p>当前网络仅检测到本机节点。在您的其它工作机（如 MacBook、家用电脑或服务器）上配置相同的 WebDAV 云盘，数据自动双向同步后，即可在此穿透分析各设备的工具、模型与 Token 消耗。</p>
+      <h4>暂无远端设备用量</h4>
     </div>
   {:else}
   <div class="two-col-grid" style="margin-bottom: 0;">
@@ -286,8 +282,7 @@
 <section class="panel-card">
   <div class="panel-head" style="margin-bottom: 16px;">
     <div>
-      <h2>多设备同步服务配置</h2>
-      <p>凭证严格加密存储在操作系统原生安全密码库（Keyring），SQLite 零残留</p>
+      <h2>同步设置</h2>
     </div>
     <div class="sync-provider-tabs">
       <button
@@ -321,12 +316,9 @@
           <div class="sync-intro-icon">{@html icons.cloud}</div>
           <div class="sync-intro-text">
             <div class="sync-intro-title-row">
-              <strong>去中心化 WebDAV 云盘同步</strong>
-              <span class="sync-security-pill">{@html icons.lock} Keyring 原生加密</span>
+              <strong>WebDAV 同步</strong>
+              <span class="sync-security-pill">{@html icons.lock} 系统凭证库</span>
             </div>
-            <p>
-              各设备独立上报增量批次、拉取其他节点，无单点故障与写冲突。支持坚果云、Nextcloud、Alist、InfiniCLOUD、群晖等标准 WebDAV。
-            </p>
           </div>
         </div>
 

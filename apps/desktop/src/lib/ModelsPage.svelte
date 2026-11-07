@@ -14,7 +14,6 @@
 <div class="page-header">
   <div>
     <h1>模型排行与用量分析</h1>
-    <p>来源未提供模型标识的 Token 会单独列出并计入总量；不猜测具体模型</p>
   </div>
   <div class="range-capsule" role="group" aria-label="模型列表排序模式">
     <button
@@ -40,7 +39,6 @@
   <div class="panel-head">
     <div>
       <h2>模型消耗总榜</h2>
-      <p>按{modelSortBy === 'tokens' ? 'Token 用量' : '估算支出'}降序排列；支持全模型用量追踪</p>
     </div>
     <span class="panel-tag">{sortedModels.length} 个模型分组</span>
   </div>
@@ -95,7 +93,6 @@
   <div class="panel-head">
     <div>
       <h2>模型响应与调用量</h2>
-      <p>按来源展示可验证的响应次数；不同来源的时间范围会分别标注</p>
     </div>
     <span class="precision-chip quota">响应活动账本</span>
   </div>
@@ -140,6 +137,6 @@
       </table>
     </div>
   {:else}
-    <div class="empty-box">暂无可验证的模型响应次数；历史聚合 Token 记录不会被当作调用次数。</div>
+    <div class="empty-box">暂无响应次数记录。</div>
   {/if}
 </section>

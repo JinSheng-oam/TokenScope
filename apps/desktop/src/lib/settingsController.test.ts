@@ -40,6 +40,46 @@ describe('settings controller', () => {
     });
   });
 
+  it('waits for the actual startup state before allowing a change', async () => {
+    let resolveRead!: (enabled: boolean) => void;
+    const api = {
+      getAutostartEnabled: vi.fn(() => new Promise<boolean>((resolve) => { resolveRead = resolve; })),
+      setAutostartEnabled: vi.fn().mockResolvedValue(false),
+    };
+    const settings = createSettingsController(() => true, {
+      api, initialTheme: () => 'system', initThemeListener: () => () => {},
+    });
+    settings.mount();
+    expect(state(settings)).toMatchObject({ autostartLoaded: false, autostartBusy: true });
+    await settings.toggleAutostart();
+    expect(api.setAutostartEnabled).not.toHaveBeenCalled();
+
+    resolveRead(true);
+    await vi.waitFor(() => expect(state(settings)).toMatchObject({ autostartLoaded: true, autostartEnabled: true, autostartBusy: false }));
+    await settings.toggleAutostart();
+    expect(api.setAutostartEnabled).toHaveBeenCalledWith(false);
+  });
+
+  it('reports an unknown state on failure and can reload the system setting', async () => {
+    const api = {
+      getAutostartEnabled: vi.fn().mockRejectedValueOnce(new Error('读取失败')).mockResolvedValue(true),
+      setAutostartEnabled: vi.fn().mockRejectedValue(new Error('写入失败')),
+    };
+    const settings = createSettingsController(() => true, {
+      api, initialTheme: () => 'dark', initThemeListener: () => () => {},
+    });
+    settings.mount();
+    await vi.waitFor(() => expect(state(settings)).toMatchObject({ autostartLoaded: false, autostartError: '读取失败' }));
+    await settings.toggleAutostart();
+    expect(api.setAutostartEnabled).not.toHaveBeenCalled();
+    await settings.refreshAutostart();
+    expect(state(settings)).toMatchObject({ autostartLoaded: true, autostartEnabled: true, autostartError: '' });
+    await settings.toggleAutostart();
+    expect(state(settings)).toMatchObject({ autostartLoaded: false, autostartError: '写入失败' });
+    await settings.refreshAutostart();
+    expect(state(settings)).toMatchObject({ autostartLoaded: true, autostartEnabled: true, autostartError: '' });
+  });
+
   it('persists a supported refresh interval and ignores unknown values', () => {
     const values = new Map<string, string>();
     vi.stubGlobal('window', {

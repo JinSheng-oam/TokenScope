@@ -83,7 +83,14 @@
           onclick={() => void select(entry)}
         >
           <div class="file-row-main">
-            <span class="file-type-icon">📄</span>
+            <span class="file-type-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="8" y1="13" x2="16" y2="13" />
+                <line x1="8" y1="17" x2="13" y2="17" />
+              </svg>
+            </span>
             <div class="instruction-name-col">
               <strong class="file-name" title={entry.id.name}>{entry.id.name}</strong>
               <span class={`instruction-badge ${info.tone}`}>{info.label}</span>
@@ -119,7 +126,13 @@
           onclick={() => void select(entry)}
         >
           <div class="file-row-main">
-            <span class="file-type-icon">🧩</span>
+            <span class="file-type-icon skill-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                <polyline points="2 17 12 22 22 17" />
+                <polyline points="2 12 12 17 22 12" />
+              </svg>
+            </span>
             <div class="skill-name-col">
               <strong class="file-name" title={entry.id.name}>{entry.id.name}</strong>
               <div class="skill-tags-row">
@@ -132,7 +145,7 @@
               </div>
             </div>
           </div>
-          <span class="file-sub-root">{entry.editable ? entry.id.root : '无法访问目标文件'}</span>
+          <span class="file-sub-root">{entry.editable ? instructionRootLabel(entry.id.root) : '无法访问目标文件'}</span>
         </button>
       {:else}
         <p class="empty-list">{filterQuery ? '未匹配到相关 Skill' : '尚未发现全局 skill。'}</p>
@@ -387,63 +400,68 @@
 
   .file-row-main {
     display: flex;
-    align-items: flex-start;
-    gap: 6px;
+    align-items: center;
+    gap: 7px;
     width: 100%;
     min-width: 0;
   }
 
-  .instruction-name-col {
+  .instruction-name-col,
+  .skill-name-col {
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 4px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
     flex: 1;
     min-width: 0;
   }
 
   .file-type-icon {
-    font-size: 12px;
+    width: 14px;
+    height: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
     flex-shrink: 0;
-    line-height: 1.4;
+  }
+
+  .file-type-icon svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .file-row.active .file-type-icon {
+    color: var(--brand-primary);
   }
 
   .file-name {
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 600;
     color: var(--text-primary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
     min-width: 0;
-    line-height: 1.4;
+    line-height: 1.35;
   }
 
   .file-sub-root {
     font-size: 10.5px;
     color: var(--text-muted);
-    padding-left: 18px;
+    padding-left: 21px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     width: 100%;
   }
 
-  .skill-name-col {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    flex: 1;
-    min-width: 0;
-  }
-
   .skill-tags-row {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 4px;
-    flex-wrap: wrap;
-    margin-top: 1px;
+    flex-shrink: 0;
   }
 
   .empty-list {

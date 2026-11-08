@@ -1,14 +1,91 @@
 //! Reconcile all rollouts of a logical thread as one authoritative source.
 use super::{scanner::scan_precise_body, PreciseReport, VERSION};
-use crate::{decompress_rollout, is_zstd_rollout, mtime_ns, now_ms, CodexError, Result};
+use crate::{is_zstd_rollout, mtime_ns, now_ms, rollout::MAX_DECOMPRESSED, CodexError, Result};
+use serde::Deserialize;
+use serde_json::{value::RawValue, Value};
 use std::{
+    cell::Cell,
     collections::{HashMap, HashSet},
     fs,
-    io::{BufRead, BufReader, Cursor},
+    io::{self, BufRead, BufReader, Read},
     path::PathBuf,
+    rc::Rc,
 };
 use tokenscope_core_domain::session_key;
 use tokenscope_local_store::LocalStore;
+
+#[derive(Deserialize)]
+struct EventHeader<'a> {
+    #[serde(rename = "type", default)]
+    kind: Value,
+    #[serde(borrow, default)]
+    payload: Option<&'a RawValue>,
+}
+
+#[derive(Deserialize)]
+struct PayloadHeader {
+    #[serde(rename = "type", default)]
+    kind: Value,
+    #[serde(default)]
+    role: Value,
+}
+
+fn relevant(value: &Value) -> bool {
+    matches!(
+        value.get("type").and_then(Value::as_str),
+        Some("session_meta" | "turn_context" | "token_usage_record")
+    ) || (value.get("type").and_then(Value::as_str) == Some("event_msg")
+        && value.pointer("/payload/type").and_then(Value::as_str) == Some("token_count"))
+        || (value.get("type").and_then(Value::as_str) == Some("response_item")
+            && value.pointer("/payload/role").and_then(Value::as_str) == Some("user"))
+}
+
+// Validate every JSON line, but avoid allocating the full value for unrelated
+// assistant/tool content. Fall back to Value for unusual valid JSON shapes.
+fn relevant_line(line: &[u8]) -> Result<Option<Value>> {
+    let header = match serde_json::from_slice::<EventHeader<'_>>(line) {
+        Ok(header) => header,
+        Err(_) => {
+            let value: Value = serde_json::from_slice(line)?;
+            return Ok(relevant(&value).then_some(value));
+        }
+    };
+    let include = match header.kind.as_str() {
+        Some("session_meta" | "turn_context" | "token_usage_record") => true,
+        Some(kind @ ("event_msg" | "response_item")) => match header.payload {
+            Some(payload) => match serde_json::from_str::<PayloadHeader>(payload.get()) {
+                Ok(payload) => {
+                    (kind == "event_msg" && payload.kind.as_str() == Some("token_count"))
+                        || (kind == "response_item" && payload.role.as_str() == Some("user"))
+                }
+                Err(_) => {
+                    let value: Value = serde_json::from_slice(line)?;
+                    return Ok(relevant(&value).then_some(value));
+                }
+            },
+            None => false,
+        },
+        _ => false,
+    };
+    if include {
+        Ok(Some(serde_json::from_slice(line)?))
+    } else {
+        Ok(None)
+    }
+}
+
+struct CountRead<R> {
+    inner: R,
+    count: Rc<Cell<usize>>,
+}
+
+impl<R: Read> Read for CountRead<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let bytes = self.inner.read(buffer)?;
+        self.count.set(self.count.get().saturating_add(bytes));
+        Ok(bytes)
+    }
+}
 
 pub(super) fn collect(
     files: &[PathBuf],
@@ -46,13 +123,22 @@ pub(super) fn collect(
     let mut size = 0usize;
     for path in &paths {
         let before = fs::metadata(path)?;
-        let mut reader: Box<dyn BufRead> = if is_zstd_rollout(path) {
-            Box::new(BufReader::new(Cursor::new(decompress_rollout(path)?)))
+        let count = Rc::new(Cell::new(0));
+        let compressed = is_zstd_rollout(path);
+        let mut reader: Box<dyn BufRead> = if compressed {
+            let decoder = zstd::stream::read::Decoder::new(BufReader::new(fs::File::open(path)?))?;
+            Box::new(BufReader::new(CountRead {
+                inner: decoder.take(MAX_DECOMPRESSED as u64 + 1),
+                count: count.clone(),
+            }))
         } else {
             Box::new(BufReader::new(fs::File::open(path)?))
         };
         loop {
             let line = crate::bounded_line(&mut reader)?;
+            if compressed && count.get() > MAX_DECOMPRESSED {
+                return Err(CodexError::Limit("decompressed rollout > 512 MiB"));
+            }
             if line.bytes.is_empty() && !line.oversized {
                 break;
             }
@@ -62,16 +148,9 @@ pub(super) fn collect(
             if line.oversized {
                 continue;
             }
-            let v: serde_json::Value = serde_json::from_slice(&line.bytes)?;
-            let typ = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
-            if !(matches!(typ, "session_meta" | "turn_context" | "token_usage_record")
-                || (typ == "event_msg"
-                    && v.pointer("/payload/type").and_then(|x| x.as_str()) == Some("token_count"))
-                || (typ == "response_item"
-                    && v.pointer("/payload/role").and_then(|x| x.as_str()) == Some("user")))
-            {
+            let Some(v) = relevant_line(&line.bytes)? else {
                 continue;
-            }
+            };
             if v.get("type").and_then(|x| x.as_str()) == Some("session_meta") && header.is_none() {
                 header = Some(v.clone());
             }
@@ -103,7 +182,7 @@ pub(super) fn collect(
     if group_signature(&paths)? != signature {
         return Err(CodexError::PendingHeader);
     }
-    events.sort_by(|a, b| a.0.cmp(&b.0));
+    events.sort_by_key(|a| a.0);
     let mut body = serde_json::to_vec(&header.ok_or(CodexError::PendingHeader)?)?;
     body.push(b'\n');
     for (_, line) in events {
@@ -150,4 +229,36 @@ fn group_signature(paths: &[PathBuf]) -> Result<String> {
         .join("|");
     use sha2::{Digest, Sha256};
     Ok(format!("{:x}", Sha256::digest(signature.as_bytes())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shallow_filter_preserves_full_json_classification_and_rejects_corruption() {
+        for input in [
+            r#"{"type":"response_item","payload":{"role":"assistant","content":[{"text":"ignored"}]}}"#,
+            r#"{"type":"response_item","payload":{"content":[{"text":"keep"}],"role":"user"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":{}}}"#,
+            r#"{"type":"event_msg","payload":null}"#,
+            r#"{"type":"response_item","payload":[]}"#,
+            r#"{"type":"other","type":"turn_context","payload":{"model":"x"}}"#,
+            r#"{"type":"response_item","payload":{"role":"assistant","role":"user"}}"#,
+            r#"["not", "an", "event"]"#,
+            r#"{"type":"\u0074urn_context","payload":{}}"#,
+        ] {
+            let value: Value = serde_json::from_str(input).unwrap();
+            let expected = relevant(&value).then_some(value);
+            assert_eq!(
+                relevant_line(input.as_bytes()).unwrap(),
+                expected,
+                "{input}"
+            );
+        }
+        assert!(relevant_line(
+            br#"{"type":"response_item","payload":{"role":"assistant","broken":}}"#
+        )
+        .is_err());
+    }
 }

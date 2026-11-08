@@ -57,7 +57,7 @@ pub fn collect_claude(
         let result = store.reconcile_complete_source(
             previous.as_ref(),
             &scan.next,
-            scan.records.into_iter(),
+            scan.records,
             scan.next.last_scan_ms,
         )?;
         report.deleted += result.tombstoned;

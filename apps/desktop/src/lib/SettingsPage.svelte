@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
 import { BOOTSTRAP_STAGE } from '../lib/status';
   import { formatNumber } from '../lib/format';
   import type { ThemeMode } from '../lib/theme';
@@ -8,12 +9,14 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
 
   export let currentTheme: ThemeMode;
   export let autostartEnabled: boolean;
+  export let autostartLoaded: boolean;
   export let autostartBusy: boolean;
   export let autostartError: string;
   export let runtimeAvailable: boolean;
   export let agent: AgentStatus | null;
   export let onSwitchTheme: (mode: ThemeMode) => void;
   export let onToggleAutostart: () => Promise<void>;
+  export let onRefreshAutostart: () => Promise<void>;
   export let rollingNumbersEnabled = true;
   export let onToggleRollingNumbers: () => void = () => {};
   export let refreshIntervalMs = 300_000;
@@ -24,6 +27,8 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
   let diagnosticsBusy = false;
   let diagnosticsError = '';
   let diagnosticsCopied = false;
+
+  onMount(() => { void onRefreshAutostart(); });
 
   const refreshOptions = REFRESH_INTERVAL_OPTIONS.map((value) => ({
     value,
@@ -164,22 +169,33 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
             </div>
           </section>
 
-          <!-- Autostart & Lifecycle -->
           <section class="panel-card" style="margin-bottom: 16px;">
-            <div class="panel-head">
-              <div>
-                <h2>登录时在后台启动</h2>
+            <div class="autostart-row">
+              <div class="autostart-copy">
+                <h2>开机自启动</h2>
+                <p>登录系统后在后台采集，窗口默认不显示。</p>
               </div>
-              <button
-                class="btn-primary"
-                disabled={autostartBusy || !runtimeAvailable}
-                onclick={() => void onToggleAutostart()}
-              >
-                {autostartBusy ? '处理中…' : autostartEnabled ? '已启用 · 点击关闭' : '未启用 · 点击开启'}
-              </button>
+              <div class="autostart-control">
+                <span id="autostart-status" class="autostart-status" aria-live="polite">
+                  {!runtimeAvailable ? '仅桌面端可用' : autostartBusy ? '处理中…' : !autostartLoaded ? '状态未知' : autostartEnabled ? '已开启' : '已关闭'}
+                </span>
+                <button
+                  type="button"
+                  class="autostart-switch"
+                  role="switch"
+                  aria-label="开机自启动"
+                  aria-describedby="autostart-status"
+                  aria-checked={autostartEnabled}
+                  disabled={autostartBusy || !autostartLoaded || !runtimeAvailable}
+                  onclick={() => void onToggleAutostart()}
+                ><span></span></button>
+              </div>
             </div>
             {#if autostartError}
-              <p style="color: var(--color-danger); font-size: 12px;">{autostartError}</p>
+              <div class="autostart-error" role="alert">
+                <span>{autostartError}</span>
+                <button class="btn-secondary" disabled={autostartBusy} onclick={() => void onRefreshAutostart()}>重新读取</button>
+              </div>
             {/if}
           </section>
 
@@ -287,6 +303,89 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
           </section>
 
 <style>
+  .autostart-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px 20px;
+  }
+
+  .autostart-copy h2 {
+    margin: 0;
+  }
+
+  .autostart-copy p {
+    margin: 5px 0 0;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .autostart-control {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .autostart-status {
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+
+  .autostart-switch {
+    display: flex;
+    align-items: center;
+    width: 42px;
+    height: 24px;
+    padding: 2px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: var(--bg-secondary);
+    cursor: pointer;
+  }
+
+  .autostart-switch span {
+    display: block;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    transition: transform 150ms ease, background-color 150ms ease;
+  }
+
+  .autostart-switch[aria-checked='true'] {
+    border-color: var(--brand-strong);
+    background: var(--brand-strong);
+  }
+
+  .autostart-switch[aria-checked='true'] span {
+    background: #fff;
+    transform: translateX(18px);
+  }
+
+  .autostart-switch:focus-visible {
+    outline: 2px solid var(--brand-primary);
+    outline-offset: 3px;
+  }
+
+  .autostart-switch:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
+  .autostart-error {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    margin-top: 12px;
+    color: var(--color-danger);
+    font-size: 12px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .autostart-switch span { transition: none; }
+  }
   .refresh-options {
     display: flex;
     flex-wrap: wrap;

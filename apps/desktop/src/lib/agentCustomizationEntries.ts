@@ -24,6 +24,13 @@ export function instructionRootLabel(rootId: string): string {
     'gemini-config-instructions': 'Antigravity 配置目录',
     'dsh-instructions': 'DeepSeek Harness 用户目录',
     'dsh-shared-instructions': '共享 Agent 目录',
+    'codex-skills': 'Codex 全局目录',
+    'claude-skills': 'Claude Code 全局目录',
+    'gemini-skills': 'Antigravity 用户目录',
+    'gemini-config-skills': 'Antigravity 配置目录',
+    'dsh-skills': 'DeepSeek Harness 用户目录',
+    'dsh-shared-skills': '共享 Skill 目录',
+    'agents-skills': '通用 Agent 目录',
   };
   return labels[rootId] ?? rootId;
 }
@@ -32,7 +39,7 @@ export function instructionInfo(entry: Entry, instructions: Entry[]): Instructio
   if (!entry.instructionEntry) {
     return {
       label: entry.exists ? '辅助文件' : '新辅助文件',
-      detail: '这个文件名不在工具预设的指令入口中；仅放在此目录通常不会自动加载。需要时，请在工具实际读取的入口文件中引用它。',
+      detail: '这个文件名不在工具预设的指令入口中；仅放在此目录通常不会自动加载。可通过下方开关直接以 @ 语法引用进主入口文件。',
       tone: 'auxiliary',
     };
   }
@@ -87,5 +94,85 @@ export function instructionInfo(entry: Entry, instructions: Entry[]): Instructio
         detail: '这是 TokenScope 为该工具登记的入口文件，目前尚未创建。',
         tone: 'entry',
       };
+}
+
+export function isReferenceLine(line: string, targetPath: string, targetName: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('@')) return false;
+
+  const targetPathForward = targetPath.replace(/\\/g, '/');
+  const targetPathBack = targetPath.replace(/\//g, '\\');
+
+  let ref = trimmed.slice(1).trim();
+  if (
+    (ref.startsWith('"') && ref.endsWith('"')) ||
+    (ref.startsWith("'") && ref.endsWith("'"))
+  ) {
+    ref = ref.slice(1, -1).trim();
+  }
+
+  if (
+    ref === targetPath ||
+    ref === targetPathForward ||
+    ref === targetPathBack ||
+    ref === targetName ||
+    ref === `./${targetName}` ||
+    ref === `.\\${targetName}`
+  ) {
+    return true;
+  }
+
+  const linkMatch = trimmed.match(/^@\[.*?\]\((.*?)\)$/);
+  if (linkMatch) {
+    let linkPath = linkMatch[1].trim();
+    if (
+      (linkPath.startsWith('"') && linkPath.endsWith('"')) ||
+      (linkPath.startsWith("'") && linkPath.endsWith("'"))
+    ) {
+      linkPath = linkPath.slice(1, -1).trim();
+    }
+    if (
+      linkPath === targetPath ||
+      linkPath === targetPathForward ||
+      linkPath === targetPathBack ||
+      linkPath === targetName ||
+      linkPath === `./${targetName}` ||
+      linkPath === `.\\${targetName}`
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function isReferenced(fileContent: string, entry: Entry): boolean {
+  const lines = fileContent.split(/\r?\n/);
+  return lines.some((line) => isReferenceLine(line, entry.path, entry.id.name));
+}
+
+export function addReference(fileContent: string, refLine: string): string {
+  const trimmed = fileContent.trimEnd();
+  if (!trimmed) return `${refLine}\n`;
+  return `${trimmed}\n\n${refLine}\n`;
+}
+
+export function removeReference(fileContent: string, entry: Entry): string {
+  const lines = fileContent.split(/\r?\n/);
+  const remaining = lines.filter((line) => !isReferenceLine(line, entry.path, entry.id.name));
+  const joined = remaining.join('\n').trimEnd();
+  return joined ? `${joined}\n` : '';
+}
+
+export function getMainEntry(auxiliaryEntry: Entry, instructions: Entry[]): Entry | null {
+  const rootInstructions = instructions.filter(
+    (item) => item.id.root === auxiliaryEntry.id.root && item.instructionEntry
+  );
+  if (rootInstructions.length === 0) return null;
+  const override = rootInstructions.find((e) => e.id.name === 'AGENTS.override.md' && e.exists);
+  const preferred = rootInstructions.find((e) => e.exists && (e.id.name === 'AGENTS.md' || e.id.name === 'CLAUDE.md'));
+  const anyExist = rootInstructions.find((e) => e.exists);
+  const defaultName = rootInstructions.find((e) => e.id.name === 'AGENTS.md' || e.id.name === 'CLAUDE.md');
+  return override || preferred || anyExist || defaultName || rootInstructions[0];
 }
 

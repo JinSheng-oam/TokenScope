@@ -1,7 +1,7 @@
 use super::{LocalStore, PriceBookCache};
 use crate::error::{Result, StoreError};
 use crate::{DashboardSnapshot, RemoteUsageTotals};
-use rusqlite::params;
+use rusqlite::{params_from_iter, types::Value};
 use std::collections::HashMap;
 use tokenscope_core_domain::CanonicalRecord;
 
@@ -60,14 +60,22 @@ impl LocalStore {
         if !prices.has_rates() {
             return Ok(());
         }
-        let mut query = self.conn.prepare(
+        let mut sql = String::from(
             "SELECT payload_json FROM remote_usage_cache
             WHERE is_deleted=0 AND json_extract(payload_json, '$.scope')='device_local'
-            AND json_extract(payload_json, '$.estimated_cost_microusd') IS NULL
-            AND (?1 IS NULL OR json_extract(payload_json, '$.event_at_ms')>=?1)
-            AND (?2 IS NULL OR json_extract(payload_json, '$.event_at_ms')<?2)",
-        )?;
-        let mut rows = query.query(params![start_ms, end_ms])?;
+            AND json_extract(payload_json, '$.estimated_cost_microusd') IS NULL",
+        );
+        let mut args = Vec::<Value>::new();
+        if let Some(start) = start_ms {
+            sql.push_str(" AND json_extract(payload_json, '$.event_at_ms')>=?");
+            args.push(start.into());
+        }
+        if let Some(end) = end_ms {
+            sql.push_str(" AND json_extract(payload_json, '$.event_at_ms')<?");
+            args.push(end.into());
+        }
+        let mut query = self.conn.prepare(&sql)?;
+        let mut rows = query.query(params_from_iter(args))?;
         while let Some(row) = rows.next()? {
             let payload: String = row.get(0)?;
             let Ok(record) = serde_json::from_str::<CanonicalRecord>(&payload) else {

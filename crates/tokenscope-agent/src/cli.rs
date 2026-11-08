@@ -125,6 +125,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     if !codex
         && !claude
         && !antigravity
+        && !deepseek_harness
         && quota_path.is_none()
         && !show_antigravity
         && !refresh_antigravity_quota

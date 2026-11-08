@@ -4513,6 +4513,7 @@ dependencies = [
 name = "tokenscope-desktop"
 version = "0.1.0"
 dependencies = [
+ "auto-launch",
  "chrono",
  "fs2",
  "iana-time-zone",
@@ -4529,6 +4530,7 @@ dependencies = [
  "tokenscope-local-ipc",
  "tokenscope-local-store",
  "tokenscope-sync-client",
+ "winreg",
  "zeroize",
 ]
 

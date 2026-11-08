@@ -45,6 +45,7 @@ pub(crate) struct DashboardRequest {
 #[derive(Default)]
 pub(crate) struct DashboardWatch {
     pub(crate) revision: AtomicU64,
+    pub(crate) warming: AtomicBool,
     pub(crate) request: Mutex<DashboardRequest>,
     pub(crate) cache: Mutex<HashMap<String, (DashboardResponse, Instant)>>,
     pub(crate) session_filter_options: Mutex<HashMap<String, SessionFilterOptions>>,

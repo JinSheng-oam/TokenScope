@@ -7,17 +7,16 @@ use crate::error::{pos_u64, Result, StoreError};
 use rusqlite::{params, OptionalExtension};
 impl LocalStore {
     pub fn earliest_dashboard_event_ms(&self, owner_device_id: &str) -> Result<Option<i64>> {
-        self.conn
-            .query_row(
-                "SELECT MIN(event_at_ms) FROM (
-                    SELECT event_at_ms FROM usage_records WHERE owner_device_id=?1 AND scope='device_local' AND is_deleted=0
-                    UNION ALL SELECT json_extract(payload_json,'$.event_at_ms') FROM remote_usage_cache
-                    WHERE is_deleted=0 AND json_extract(payload_json,'$.scope')='device_local'
-                 )",
-                [owner_device_id],
-                |row| row.get(0),
-            )
-            .map_err(Into::into)
+        let (local, remote): (Option<i64>, Option<i64>) = self.conn.query_row(
+            "SELECT
+                (SELECT MIN(event_at_ms) FROM usage_records
+                 WHERE owner_device_id=?1 AND scope='device_local' AND is_deleted=0),
+                (SELECT MIN(json_extract(payload_json,'$.event_at_ms')) FROM remote_usage_cache
+                 WHERE is_deleted=0 AND json_extract(payload_json,'$.scope')='device_local')",
+            [owner_device_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok(local.into_iter().chain(remote).min())
     }
 
     pub(super) fn usage_totals(

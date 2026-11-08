@@ -8,7 +8,18 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { icons } from './icons';
-  import { instructionInfo, instructionRootLabel, type Entry, type Provider, type Id } from './agentCustomizationEntries';
+  import {
+    instructionInfo,
+    instructionRootLabel,
+    isReferenceLine,
+    isReferenced,
+    addReference,
+    removeReference,
+    getMainEntry,
+    type Entry,
+    type Provider,
+    type Id,
+  } from './agentCustomizationEntries';
   import type { UpdateInfo } from './agentSkillSourceTypes';
   import AgentSkillImport from './AgentSkillImport.svelte';
   import AgentSkillUpdates from './AgentSkillUpdates.svelte';
@@ -71,6 +82,104 @@
   $: instructionPresetOptions = instructionPresets.map((entry) => ({ key: entry.id.name, label: entry.id.name }));
   $: providerRootOptions = currentProvider.roots.map((root) => ({ key: root.id, label: root.label }));
   let hasAiConfig = false;
+
+  // Auxiliary reference to main entry state
+  let isReferencedInMain = false;
+  let checkingReference = false;
+  let togglingReference = false;
+  let targetMainEntryName = '';
+
+  $: availableMainEntries = selected && selected.kind === 'instruction' && !selected.instructionEntry
+    ? instructions.filter((item) => item.id.root === selected?.id.root && item.instructionEntry)
+    : [];
+
+  $: {
+    if (availableMainEntries.length > 0) {
+      if (!targetMainEntryName || !availableMainEntries.some((item) => item.id.name === targetMainEntryName)) {
+        const preferred = getMainEntry(selected!, instructions);
+        targetMainEntryName = preferred?.id.name ?? availableMainEntries[0].id.name;
+      }
+    } else {
+      targetMainEntryName = '';
+    }
+  }
+
+  $: mainEntryForSelected = availableMainEntries.find((item) => item.id.name === targetMainEntryName) ?? null;
+
+  let lastCheckedKey = '';
+  $: if (selected && selected.kind === 'instruction' && !selected.instructionEntry && mainEntryForSelected) {
+    const key = `${selected.id.provider}:${selected.id.root}:${selected.id.name}->${mainEntryForSelected.id.name}`;
+    if (key !== lastCheckedKey) {
+      lastCheckedKey = key;
+      void checkReferenceStatus(selected, mainEntryForSelected);
+    }
+  } else {
+    lastCheckedKey = '';
+    isReferencedInMain = false;
+  }
+
+  async function checkReferenceStatus(entry: Entry, targetMain: Entry) {
+    checkingReference = true;
+    try {
+      const mainRaw = await invoke<string | null>('read_customization', { id: targetMain.id });
+      isReferencedInMain = mainRaw !== null && isReferenced(mainRaw, entry);
+    } catch {
+      isReferencedInMain = false;
+    } finally {
+      checkingReference = false;
+    }
+  }
+
+  async function toggleMainReference() {
+    if (!selected || selected.kind !== 'instruction' || selected.instructionEntry || togglingReference) return;
+    const targetEntry = mainEntryForSelected;
+    if (!targetEntry) return;
+
+    togglingReference = true;
+    error = '';
+    notice = '';
+
+    try {
+      if (!selected.exists || dirty) {
+        await save();
+      }
+
+      const mainRaw = await invoke<string | null>('read_customization', { id: targetEntry.id });
+      const mainContent = mainRaw ?? '';
+      const currentlyReferenced = isReferenced(mainContent, selected);
+      const nextReferenced = !currentlyReferenced;
+
+      let nextContent: string;
+      const refLine = selected.path.includes(' ') ? `@"${selected.path}"` : `@${selected.path}`;
+
+      if (nextReferenced) {
+        nextContent = addReference(mainContent, refLine);
+      } else {
+        nextContent = removeReference(mainContent, selected);
+      }
+
+      const toSave = mainRaw && mainRaw.includes('\r\n')
+        ? nextContent.replace(/\r?\n/g, '\r\n')
+        : nextContent;
+
+      await invoke('save_customization', {
+        id: targetEntry.id,
+        expected: mainRaw,
+        content: toSave,
+      });
+
+      isReferencedInMain = nextReferenced;
+      notice = nextReferenced
+        ? `已在 ${targetEntry.id.name} 中添加引用：${refLine}`
+        : `已从 ${targetEntry.id.name} 中移除引用`;
+
+      entries = await invoke<Entry[]>('list_customizations', { provider });
+    } catch (e) {
+      error = `更新主入口引用失败：${String(e)}`;
+    } finally {
+      togglingReference = false;
+    }
+  }
   function normalizeLines(val: string | null | undefined): string {
     return (val ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   }
@@ -203,6 +312,9 @@
     const newName = window.prompt(promptText, selected.id.name);
     if (!newName || newName.trim() === '' || newName.trim() === selected.id.name) return;
     busy = true; error = ''; notice = '';
+    const oldEntry = selected;
+    const wasReferenced = isReferencedInMain && mainEntryForSelected;
+    const targetMain = mainEntryForSelected;
     try {
       const updated = await invoke<Entry>('rename_customization', {
         id: selected.id,
@@ -211,6 +323,22 @@
       notice = `已成功重命名为 ${updated.id.name}`;
       entries = await invoke<Entry[]>('list_customizations', { provider });
       selected = updated;
+
+      if (wasReferenced && targetMain) {
+        try {
+          const mainRaw = await invoke<string | null>('read_customization', { id: targetMain.id });
+          if (mainRaw) {
+            let next = removeReference(mainRaw, oldEntry);
+            const refLine = updated.path.includes(' ') ? `@"${updated.path}"` : `@${updated.path}`;
+            next = addReference(next, refLine);
+            const toSave = mainRaw.includes('\r\n') ? next.replace(/\r?\n/g, '\r\n') : next;
+            await invoke('save_customization', { id: targetMain.id, expected: mainRaw, content: toSave });
+            isReferencedInMain = true;
+          }
+        } catch {
+          // Best effort sync of rename in main md
+        }
+      }
     } catch (e) {
       error = String(e);
     } finally {
@@ -226,6 +354,9 @@
     );
     if (!confirmed) return;
 
+    const deletedEntry = selected;
+    const wasReferenced = isReferencedInMain && mainEntryForSelected;
+    const targetMain = mainEntryForSelected;
     const deletedName = selected.id.name;
     busy = true;
     error = '';
@@ -237,6 +368,19 @@
       content = '';
       entries = await invoke<Entry[]>('list_customizations', { provider });
       notice = `已删除指令文件：${deletedName}`;
+
+      if (wasReferenced && targetMain) {
+        try {
+          const mainRaw = await invoke<string | null>('read_customization', { id: targetMain.id });
+          if (mainRaw) {
+            const next = removeReference(mainRaw, deletedEntry);
+            const toSave = mainRaw.includes('\r\n') ? next.replace(/\r?\n/g, '\r\n') : next;
+            await invoke('save_customization', { id: targetMain.id, expected: mainRaw, content: toSave });
+          }
+        } catch {
+          // Best effort cleanup of reference
+        }
+      }
     } catch (e) {
       error = String(e);
     } finally {
@@ -513,7 +657,7 @@
                 </button>
               </div>
 
-              {#if selected.kind === 'instruction'}
+              {#if selected.kind === 'instruction' && (selected.instructionEntry || !mainEntryForSelected)}
                 {@const info = instructionInfo(selected, instructions)}
                 <p class={`instruction-status-note ${info.tone}`}>{info.detail}</p>
               {/if}
@@ -581,6 +725,57 @@
               </button>
             </div>
           </div>
+
+          {#if selected.kind === 'instruction' && !selected.instructionEntry && mainEntryForSelected}
+            <div class="aux-reference-bar" class:is-active={isReferencedInMain}>
+              <div class="aux-ref-main">
+                <span class="aux-ref-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                  </svg>
+                </span>
+                <span class="aux-ref-title">引用进主入口</span>
+                {#if availableMainEntries.length > 1}
+                  <div class="aux-ref-select-wrap">
+                    <select
+                      class="aux-ref-select"
+                      bind:value={targetMainEntryName}
+                      disabled={busy || togglingReference}
+                      aria-label="选择目标主 md 文件"
+                    >
+                      {#each availableMainEntries as item}
+                        <option value={item.id.name}>{item.id.name}</option>
+                      {/each}
+                    </select>
+                  </div>
+                {:else}
+                  <span class="aux-ref-target-pill">{mainEntryForSelected.id.name}</span>
+                {/if}
+                <span class="aux-ref-sep">·</span>
+                <span class="aux-ref-hint" title={`@${selected.path}`}>
+                  {isReferencedInMain ? '已挂载' : '开启后在末尾追加'}
+                  <code>@{selected.path}</code>
+                </span>
+              </div>
+              <div class="aux-ref-switch-wrap">
+                <span class="aux-ref-status-text" class:active={isReferencedInMain}>
+                  {checkingReference ? '检查中…' : isReferencedInMain ? '已引用' : '未引用'}
+                </span>
+                <button
+                  type="button"
+                  class="ref-switch"
+                  role="switch"
+                  aria-label={`在 ${mainEntryForSelected.id.name} 中以 @ 语法引用此辅助文件`}
+                  aria-checked={isReferencedInMain}
+                  disabled={busy || checkingReference || togglingReference}
+                  onclick={() => void toggleMainReference()}
+                >
+                  <span></span>
+                </button>
+              </div>
+            </div>
+          {/if}
 
           {#if updateInfo}
             <AgentSkillUpdates {selected} bind:updateInfo bind:busy bind:error bind:notice {dirty}
@@ -884,6 +1079,172 @@
 
   .instruction-status-note.warning {
     color: #d97706;
+  }
+
+  .aux-reference-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 18px;
+    background: color-mix(in srgb, var(--bg-secondary) 75%, var(--bg-card));
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .aux-reference-bar.is-active {
+    background: color-mix(in srgb, var(--brand-subtle) 55%, var(--bg-card));
+    border-bottom-color: var(--brand-border);
+  }
+
+  .aux-ref-main {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .aux-ref-icon {
+    width: 13px;
+    height: 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--brand-primary);
+    flex-shrink: 0;
+  }
+
+  .aux-ref-icon svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .aux-ref-title {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .aux-ref-target-pill {
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--bg-card);
+    border: 1px solid var(--brand-border);
+    font-size: 10.5px;
+    font-family: var(--font-mono, monospace);
+    font-weight: 600;
+    color: var(--brand-primary);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .aux-ref-select-wrap select {
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 4px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    font-size: 11px;
+    font-family: var(--font-mono, monospace);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .aux-ref-sep {
+    color: var(--text-muted);
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
+  .aux-ref-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .aux-ref-hint code {
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    font-family: var(--font-mono, monospace);
+    font-size: 10.5px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 320px;
+  }
+
+  .aux-ref-switch-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .aux-ref-status-text {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+  }
+
+  .aux-ref-status-text.active {
+    color: var(--color-exact);
+    font-weight: 600;
+  }
+
+  .ref-switch {
+    display: flex;
+    align-items: center;
+    width: 38px;
+    height: 22px;
+    padding: 2px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: var(--bg-secondary);
+    cursor: pointer;
+    box-sizing: border-box;
+    transition: background-color 150ms ease, border-color 150ms ease;
+  }
+
+  .ref-switch span {
+    display: block;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    transition: transform 150ms ease, background-color 150ms ease;
+  }
+
+  .ref-switch[aria-checked='true'] {
+    border-color: var(--brand-strong);
+    background: var(--brand-strong);
+  }
+
+  .ref-switch[aria-checked='true'] span {
+    background: #fff;
+    transform: translateX(16px);
+  }
+
+  .ref-switch:focus-visible {
+    outline: 2px solid var(--brand-primary);
+    outline-offset: 2px;
+  }
+
+  .ref-switch:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
   }
 
   .editor-path {
@@ -1201,7 +1562,10 @@
   }
 
   @media (min-width: 901px) and (min-height: 620px) {
-    .fit-workspace { height: 100%; }
+    .fit-workspace {
+      height: calc(100vh - 82px);
+      min-height: 520px;
+    }
     .fit-workspace .workspace {
       flex: 1;
       min-height: 0;

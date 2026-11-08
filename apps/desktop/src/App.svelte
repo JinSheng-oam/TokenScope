@@ -324,6 +324,11 @@
 
   onMount(() => {
     const cleanSettingsListener = settingsController.mount();
+    const updatePageVisibility = () => {
+      document.documentElement.toggleAttribute('data-page-hidden', document.visibilityState !== 'visible');
+    };
+    updatePageVisibility();
+    document.addEventListener('visibilitychange', updatePageVisibility);
     const unsubscribeRefreshInterval = settingsState.subscribe((current) => {
       applyRefreshInterval(current.refreshIntervalMs);
     });
@@ -368,6 +373,8 @@
 
     return () => {
       disposed = true;
+      document.removeEventListener('visibilitychange', updatePageVisibility);
+      document.documentElement.removeAttribute('data-page-hidden');
       disposeDashboard();
       heatmapRequest += 1;
       unsubscribeRefreshInterval();
@@ -469,7 +476,8 @@
     <section
       class="page-content"
       class:fit-viewport={(activeTab === 'overview' && !!snapshot) || (loading && activeTab !== 'pricing')}
-      class:compact-session={activeTab === 'sessions' && $sessionState.pageSize <= 6}
+      class:compact-session={activeTab === 'sessions' && ($sessionState.pageSize <= 6 || ($sessionState.loading && !$sessionState.analysis))}
+      class:session-loading={activeTab === 'sessions' && $sessionState.loading && !$sessionState.analysis}
     >
       {#if errorMessage && activeTab !== 'pricing'}
         <div class="notice-box" role="alert">
@@ -743,6 +751,7 @@
             rollingNumbersEnabled={$settingsState.rollingNumbersEnabled}
             refreshIntervalMs={$settingsState.refreshIntervalMs}
             autostartEnabled={$settingsState.autostartEnabled}
+            autostartLoaded={$settingsState.autostartLoaded}
             autostartBusy={$settingsState.autostartBusy}
             autostartError={$settingsState.autostartError}
             {runtimeAvailable}
@@ -751,6 +760,7 @@
             onToggleRollingNumbers={settingsController.toggleRollingNumbers}
             onSetRefreshInterval={settingsController.setRefreshInterval}
             onToggleAutostart={settingsController.toggleAutostart}
+            onRefreshAutostart={settingsController.refreshAutostart}
             onRunDiagnostics={runDiagnostics}
           />
         {/if}

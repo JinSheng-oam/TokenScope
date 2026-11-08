@@ -443,3 +443,32 @@ fn grouped_legacy_counters_share_the_previous_rollout_baseline() {
     collect_codex_precise_tolerant(&f.root, &mut db, "dev1").unwrap();
     assert_eq!(db.usage_overview().unwrap().total_tokens, 150);
 }
+
+#[test]
+fn grouped_compressed_rollout_streams_and_reconciles_after_append() {
+    let f = Fx::new();
+    f.response("r1", "2026-11-02T00:00:01Z", 98, 0, 0, 2);
+    let header = fs::read_to_string(&f.file)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap()
+        .to_owned();
+    let archived = f.file.with_file_name("rollout-z.jsonl.zst");
+    let body = format!(
+        "{header}\n{}",
+        response("r2", "2026-11-02T00:00:02Z", 198, 0, 0, 2)
+    );
+    fs::write(
+        &archived,
+        zstd::stream::encode_all(body.as_bytes(), 0).unwrap(),
+    )
+    .unwrap();
+    let mut db = store();
+    collect_codex_precise_tolerant(&f.root, &mut db, "dev1").unwrap();
+    assert_eq!(db.usage_overview().unwrap().total_tokens, 300);
+    f.response("r3", "2026-11-02T00:00:03Z", 298, 0, 0, 2);
+    collect_codex_precise_tolerant(&f.root, &mut db, "dev1").unwrap();
+    assert_eq!(db.usage_overview().unwrap().total_tokens, 600);
+    assert_eq!(db.usage_overview().unwrap().record_count, 3);
+}

@@ -17,7 +17,7 @@ mod state;
 mod webdav;
 
 use agent::{start_agent_inner, stop_agent_inner};
-use dashboard::{spawn_dashboard_warmup, spawn_dashboard_watch};
+use dashboard::spawn_dashboard_watch;
 use lifecycle::{build_tray, show_or_create_main_window};
 use state::{AgentProcess, AppLifecycle, DashboardWatch};
 use std::{env, sync::atomic::Ordering, thread, time::Duration};
@@ -43,7 +43,6 @@ pub fn run() {
             }
             spawn_dashboard_watch(app.handle().clone());
             instruction_sync::start_polling(app.handle().clone());
-            spawn_dashboard_warmup(app.handle().clone());
             // Login autostart runs the collector and tray only. No WebView is
             // created until the user chooses Open, keeping idle memory lower.
             let is_bg = env::args().any(|arg| arg == "--background");

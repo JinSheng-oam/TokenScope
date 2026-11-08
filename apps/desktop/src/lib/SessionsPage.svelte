@@ -63,6 +63,17 @@
   let sortBy: SessionSortField = 'time';
   let sortDir: SessionSortDirection = 'desc';
 
+  let isPaginating = false;
+
+  $: if (!sessionLoading) {
+    isPaginating = false;
+  }
+
+  function handleSessionPage(nextOffset: number) {
+    isPaginating = true;
+    onSessionPage(nextOffset);
+  }
+
   const MODEL_COLLAPSE_THRESHOLD = 2;
   let expandedModelKeys = new Set<string>();
 
@@ -117,7 +128,7 @@
     { nameW: '56%', chipW: '58px', sourceW: '70px', modelW: '54%', model2W: '', tokW: '62px', subW: '52px', recW: '32px', tagW: '54px', respW: '30px', timeW: '48px' },
   ];
 
-  $: visibleSkeletonRows = skeletonRowTemplates.slice(0, Math.min(Math.max(sessionPageSize, 4), 6));
+  $: visibleSkeletonRows = skeletonRowTemplates.slice(0, Math.min(Math.max(sessionPageSize, 2), 3));
 </script>
 
 <div class="page-header">
@@ -213,7 +224,7 @@
             <span>正在检索匹配的会话…</span>
           </span>
         {:else}
-          {#if sessionLoading}
+          {#if sessionLoading && !isPaginating}
             <span class="session-loading-inline">
               <span class="session-inline-spinner" aria-hidden="true"></span>
               <span>更新中…</span>
@@ -447,8 +458,8 @@
     <div class="session-pagination">
       <span>Antigravity 响应次数为来源累计值；Token 用量按当前日期范围汇总。</span>
       <div aria-label="会话分页">
-        <button class="btn-secondary" disabled={sessionOffset === 0 || refreshing} onclick={() => onSessionPage(Math.max(0, sessionOffset - (sessionPage?.limit ?? 50)))}>上一页</button>
-        <button class="btn-secondary" disabled={!sessionPage || sessionOffset + sessionPage.limit >= sessionPage.total || refreshing} onclick={() => onSessionPage(sessionOffset + (sessionPage?.limit ?? 50))}>下一页</button>
+        <button class="btn-secondary" disabled={sessionOffset === 0 || refreshing} onclick={() => handleSessionPage(Math.max(0, sessionOffset - (sessionPage?.limit ?? 50)))}>上一页</button>
+        <button class="btn-secondary" disabled={!sessionPage || sessionOffset + sessionPage.limit >= sessionPage.total || refreshing} onclick={() => handleSessionPage(sessionOffset + (sessionPage?.limit ?? 50))}>下一页</button>
       </div>
     </div>
   {:else if sessionLoading && !sessionAnalysis}
@@ -548,14 +559,6 @@
             {/each}
           </tbody>
         </table>
-      </div>
-
-      <div class="session-pagination is-skeleton" aria-hidden="true">
-        <span class="sk-bone" style="width: 260px; height: 11px;"></span>
-        <div>
-          <span class="sk-bone sk-page-btn"></span>
-          <span class="sk-bone sk-page-btn"></span>
-        </div>
       </div>
     </div>
   {:else if sessionPage && sessionPage.total === 0 && hasSessionFilters}

@@ -1,4 +1,4 @@
-use crate::state::AppLifecycle;
+use crate::{dashboard::spawn_dashboard_warmup, state::AppLifecycle};
 use std::sync::atomic::Ordering;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -8,6 +8,7 @@ use tauri::{
 };
 
 pub(crate) fn show_or_create_main_window(app: &AppHandle) -> Result<(), String> {
+    let is_new_window = app.get_webview_window("main").is_none();
     let window = if let Some(window) = app.get_webview_window("main") {
         window
     } else {
@@ -32,6 +33,9 @@ pub(crate) fn show_or_create_main_window(app: &AppHandle) -> Result<(), String> 
     let _ = window.set_always_on_top(true);
     let _ = window.set_focus();
     let _ = window.set_always_on_top(false);
+    if is_new_window {
+        spawn_dashboard_warmup(app.clone());
+    }
     Ok(())
 }
 

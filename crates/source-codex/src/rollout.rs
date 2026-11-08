@@ -10,7 +10,7 @@ use super::model::{CodexError, Result};
 
 const MAX_LINE: usize = 4 * 1024 * 1024;
 const TAIL_WINDOW: usize = 256;
-const MAX_DECOMPRESSED: usize = 512 * 1024 * 1024;
+pub(crate) const MAX_DECOMPRESSED: usize = 512 * 1024 * 1024;
 
 fn hex_digest(data: &[u8]) -> String {
     let mut h = Sha256::new();

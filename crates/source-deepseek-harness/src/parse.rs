@@ -44,7 +44,7 @@ pub(super) fn user_message_title(data: &Value) -> Option<String> {
     }
     let content = message.get("content")?;
     if let Some(text) = content.as_str() {
-        return clean_title(text);
+        return clean_title(text, 80);
     }
     content
         .as_array()?
@@ -54,7 +54,7 @@ pub(super) fn user_message_title(data: &Value) -> Option<String> {
             block
                 .get("text")
                 .and_then(Value::as_str)
-                .and_then(clean_title)
+                .and_then(|text| clean_title(text, 80))
         })
 }
 
@@ -330,6 +330,7 @@ pub(super) fn parse_session(
     let mut fallback_sequence = 0u64;
     let mut header = None;
     let mut title = None;
+    let mut explicit_title = None;
     let mut route: Option<ModelRoute> = None;
     let mut fold = UsageFold::default();
     let mut own_start_sequence = 0u64;
@@ -383,6 +384,15 @@ pub(super) fn parse_session(
         }
         if title.is_none() && event_type == "user/message" {
             title = user_message_title(data);
+        }
+        if event_type == "session/title" {
+            if let Some(next_title) = data
+                .get("title")
+                .and_then(Value::as_str)
+                .and_then(|text| clean_title(text, 200))
+            {
+                explicit_title = Some(next_title);
+            }
         }
         if event_type == "llm/retry-started" || event_type == "llm/retry" {
             let turn = data.get("turn").and_then(Value::as_u64);
@@ -511,7 +521,7 @@ pub(super) fn parse_session(
     records.sort_by(|left, right| left.record_id.cmp(&right.record_id));
     let model_calls = records.len();
     Ok(ParsedSession {
-        title,
+        title: explicit_title.or(title),
         records,
         model_calls,
     })

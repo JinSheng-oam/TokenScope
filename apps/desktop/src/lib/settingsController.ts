@@ -65,6 +65,7 @@ export type SettingsRuntime = {
 export type SettingsControllerState = {
   theme: ThemeMode;
   autostartEnabled: boolean;
+  autostartLoaded: boolean;
   autostartBusy: boolean;
   autostartError: string;
   rollingNumbersEnabled: boolean;
@@ -82,6 +83,7 @@ export function createSettingsController(
   const state = writable<SettingsControllerState>({
     theme: 'dark',
     autostartEnabled: false,
+    autostartLoaded: false,
     autostartBusy: false,
     autostartError: '',
     rollingNumbersEnabled: readRollingNumbersEnabled(),
@@ -111,12 +113,24 @@ export function createSettingsController(
 
   async function toggleAutostart() {
     const current = get(state);
-    if (current.autostartBusy || !isRuntimeAvailable()) return;
+    if (current.autostartBusy || !current.autostartLoaded || !isRuntimeAvailable()) return;
     update({ autostartBusy: true, autostartError: '' });
     try {
       update({ autostartEnabled: await runtime.api.setAutostartEnabled(!current.autostartEnabled) });
     } catch (error) {
-      update({ autostartError: error instanceof Error ? error.message : String(error) });
+      update({ autostartLoaded: false, autostartError: error instanceof Error ? error.message : String(error) });
+    } finally {
+      update({ autostartBusy: false });
+    }
+  }
+
+  async function refreshAutostart() {
+    if (get(state).autostartBusy || !isRuntimeAvailable()) return;
+    update({ autostartBusy: true, autostartError: '' });
+    try {
+      update({ autostartEnabled: await runtime.api.getAutostartEnabled(), autostartLoaded: true });
+    } catch (error) {
+      update({ autostartLoaded: false, autostartError: error instanceof Error ? error.message : String(error) });
     } finally {
       update({ autostartBusy: false });
     }
@@ -130,12 +144,10 @@ export function createSettingsController(
     });
     const unlisten = runtime.initThemeListener(() => {});
     if (isRuntimeAvailable()) {
-      void runtime.api.getAutostartEnabled()
-        .then((enabled) => update({ autostartEnabled: enabled }))
-        .catch(() => {});
+      void refreshAutostart();
     }
     return unlisten;
   }
 
-  return { state, setTheme, toggleRollingNumbers, setRefreshInterval, toggleAutostart, mount };
+  return { state, setTheme, toggleRollingNumbers, setRefreshInterval, toggleAutostart, refreshAutostart, mount };
 }

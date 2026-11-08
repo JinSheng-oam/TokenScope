@@ -16,10 +16,8 @@ use zstd::stream::read::Decoder;
 pub(super) fn parse_generation(name: &str) -> Option<(u32, bool)> {
     let (stem, compressed) = if let Some(stem) = name.strip_suffix(".jsonl.zstd") {
         (stem, true)
-    } else if let Some(stem) = name.strip_suffix(".jsonl") {
-        (stem, false)
     } else {
-        return None;
+        (name.strip_suffix(".jsonl")?, false)
     };
     if stem == "session" {
         return Some((0, compressed));
@@ -254,12 +252,12 @@ pub(super) fn project_metadata(cwd: &str) -> Option<(String, String)> {
     Some((project_id, name.to_owned()))
 }
 
-pub(super) fn clean_title(value: &str) -> Option<String> {
+pub(super) fn clean_title(value: &str, limit: usize) -> Option<String> {
     let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.is_empty() || collapsed.chars().any(char::is_control) {
         return None;
     }
-    Some(collapsed.chars().take(80).collect())
+    Some(collapsed.chars().take(limit).collect())
 }
 
 fn modified_ns(metadata: &Metadata) -> Result<u128> {

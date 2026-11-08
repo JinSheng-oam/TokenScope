@@ -1,8 +1,8 @@
 use crate::{
     models::Snapshot,
     protobuf::{
-        extract_model_name, extract_response_id, extract_usage, make_record, proto_field,
-        proto_varint_field, protobuf_timestamp_ms,
+        extract_generation_metadata, make_record, proto_field, proto_varint_field,
+        protobuf_timestamp_ms,
     },
     AntigravityError, Result, MAX_FILES, MAX_MODELS_PER_DB, MAX_PROTO_BYTES, MAX_TURNS_PER_DB,
 };
@@ -113,7 +113,7 @@ pub(super) fn read_db(
     let mut skipped_rows = 0u64;
     let mut records = Vec::new();
     let mut missing_usage = BTreeMap::new();
-    let mut seen_responses = std::collections::HashMap::<String, CanonicalRecord>::new();
+    let mut seen_responses = std::collections::HashMap::<String, usize>::new();
     let mut dated_unmeasured = BTreeMap::new();
     let mut unmeasured_responses = HashMap::<String, (String, Option<i64>)>::new();
     let mut timeline_pos = 0usize;
@@ -133,9 +133,7 @@ pub(super) fn read_db(
             skipped_rows += 1;
             continue;
         };
-        let model = extract_model_name(&blob)?;
-        let usage = extract_usage(&blob)?;
-        let response_id = extract_response_id(&blob)?;
+        let (model, usage, response_id) = extract_generation_metadata(&blob)?;
         let explicit_time = if usage.is_some() || model.is_some() {
             proto_varint_field(&blob, 2)?
                 .and_then(|idx| i64::try_from(idx).ok())
@@ -166,14 +164,14 @@ pub(super) fn read_db(
         // are ambiguous and must not advance the source checkpoint.
         if let (Some(response_id), Some(record)) = (response_id.as_ref(), native_record.as_ref()) {
             if let Some(previous) = seen_responses.get(response_id) {
-                if previous != record {
+                if records.get(*previous) != Some(record) {
                     return Err(AntigravityError::Invalid(
                         "conflicting duplicate response id",
                     ));
                 }
                 continue;
             }
-            seen_responses.insert(response_id.clone(), record.clone());
+            seen_responses.insert(response_id.clone(), records.len());
         }
         if let Some(record) = native_record {
             records.push(record);
@@ -269,14 +267,24 @@ pub fn discover_databases(gemini_home: &Path) -> Result<Vec<PathBuf>> {
 }
 
 pub(super) fn dominates(a: &Snapshot, b: &Snapshot) -> bool {
-    a.unknown_turns >= b.unknown_turns
-        && (b.project_id.is_none() || a.project_id == b.project_id)
-        && b.counts
+    if a.unknown_turns < b.unknown_turns
+        || (b.project_id.is_some() && a.project_id != b.project_id)
+        || !b
+            .counts
             .iter()
             .all(|(model, count)| a.counts.get(model).copied().unwrap_or_default() >= *count)
-        && b.records
-            .iter()
-            .all(|record| a.records.iter().any(|candidate| candidate == record))
+    {
+        return false;
+    }
+    let mut by_id = HashMap::<&str, Vec<&CanonicalRecord>>::new();
+    for record in &a.records {
+        by_id.entry(&record.record_id).or_default().push(record);
+    }
+    b.records.iter().all(|record| {
+        by_id
+            .get(record.record_id.as_str())
+            .is_some_and(|candidates| candidates.contains(&record))
+    })
 }
 pub(super) fn source_fingerprint(snapshot: &Snapshot, estimates: bool) -> String {
     let mut h = Sha256::new();

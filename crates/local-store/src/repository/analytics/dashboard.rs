@@ -54,6 +54,7 @@ impl LocalStore {
                 value
             }};
         }
+        let remote = timed!("remote_grouped", self.remote_dashboard(from_ms, to_ms)?);
         let mut snapshot = DashboardSnapshot {
             data_revision,
             schema_version: schema::VERSION,
@@ -68,23 +69,11 @@ impl LocalStore {
                 "local",
                 self.usage_totals(owner_device_id, "device_local", from_ms, to_ms)?
             ),
-            remote: timed!("remote", self.remote_usage_totals(None, from_ms, to_ms)?),
-            remote_by_device: timed!(
-                "remote_by_device",
-                self.remote_usage_by_device(from_ms, to_ms)?
-            ),
-            remote_by_tool: timed!(
-                "remote_by_tool",
-                self.remote_usage_breakdown("tool_id", from_ms, to_ms)?
-            ),
-            remote_by_model: timed!(
-                "remote_by_model",
-                self.remote_usage_breakdown("model_id", from_ms, to_ms)?
-            ),
-            remote_by_project: timed!(
-                "remote_by_project",
-                self.remote_usage_breakdown("project_id", from_ms, to_ms)?
-            ),
+            remote: remote.total,
+            remote_by_device: remote.devices,
+            remote_by_tool: remote.tools,
+            remote_by_model: remote.models,
+            remote_by_project: remote.projects,
             unassigned: timed!(
                 "unassigned",
                 self.usage_totals(owner_device_id, "unknown", from_ms, to_ms)?

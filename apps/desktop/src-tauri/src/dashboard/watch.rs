@@ -8,6 +8,12 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager};
 use tokenscope_local_store::LocalStore;
 
+fn dashboard_visible(app: &AppHandle) -> bool {
+    app.get_webview_window("main").is_some_and(|window| {
+        window.is_visible().unwrap_or(true) && !window.is_minimized().unwrap_or(false)
+    })
+}
+
 /// Poll only two revision counters. Checkpoint/quota writes push observations;
 /// only usage, names or activity changes rebuild the full projection.
 pub(crate) fn spawn_dashboard_watch(app: AppHandle) {
@@ -17,6 +23,12 @@ pub(crate) fn spawn_dashboard_watch(app: AppHandle) {
         let mut last_observations = None;
         loop {
             thread::sleep(Duration::from_millis(1_200));
+            if !dashboard_visible(&app) {
+                reader = None;
+                last_full = None;
+                last_observations = None;
+                continue;
+            }
             if reader.is_none() {
                 reader = database_path(&app)
                     .ok()
@@ -56,6 +68,12 @@ pub(crate) fn spawn_dashboard_watch(app: AppHandle) {
                 }
                 // Let a burst of source transactions settle before aggregating.
                 thread::sleep(Duration::from_millis(800));
+                if !dashboard_visible(&app) {
+                    if let Ok(mut r) = watch.refreshing.lock() {
+                        r.remove(&key);
+                    }
+                    continue;
+                }
                 let response = query_agent_fresh(
                     &app,
                     &request.range,
@@ -97,9 +115,19 @@ pub(crate) fn spawn_dashboard_watch(app: AppHandle) {
 /// Warms the standard ranges once in the background so the first manual switch
 /// hits the cache instead of paying for another cold aggregate.
 pub(crate) fn spawn_dashboard_warmup(app: AppHandle) {
+    if app
+        .state::<DashboardWatch>()
+        .warming
+        .swap(true, Ordering::AcqRel)
+    {
+        return;
+    }
     thread::spawn(move || {
         thread::sleep(Duration::from_secs(6));
         for range in ["today", "7d", "30d", "all"] {
+            if !dashboard_visible(&app) {
+                break;
+            }
             let key = dashboard_key(range, None, None, 0);
             let cached = app
                 .state::<DashboardWatch>()
@@ -110,11 +138,34 @@ pub(crate) fn spawn_dashboard_warmup(app: AppHandle) {
             if cached {
                 continue;
             }
-            if let Ok(response) = query_agent_fresh(&app, range, 0, None, None) {
-                if let Ok(mut cache) = app.state::<DashboardWatch>().cache.lock() {
-                    cache.insert(key, (response, Instant::now()));
+            let watch = app.state::<DashboardWatch>();
+            let claimed = watch
+                .refreshing
+                .lock()
+                .map(|mut r| r.insert(key.clone()))
+                .unwrap_or(false);
+            if !claimed {
+                continue;
+            }
+            let response = query_agent_fresh(&app, range, 0, None, None);
+            if let Ok(mut r) = watch.refreshing.lock() {
+                r.remove(&key);
+            }
+            if let Ok(response) = response {
+                if let Ok(mut cache) = watch.cache.lock() {
+                    let should_insert = cache.get(&key).is_none_or(|(previous, _)| {
+                        previous.snapshot.data_revision <= response.snapshot.data_revision
+                            && previous.snapshot.generated_at_ms
+                                <= response.snapshot.generated_at_ms
+                    });
+                    if should_insert {
+                        cache.insert(key, (response, Instant::now()));
+                    }
                 }
             }
         }
+        app.state::<DashboardWatch>()
+            .warming
+            .store(false, Ordering::Release);
     });
 }

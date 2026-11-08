@@ -7,7 +7,7 @@ use crate::error::{db_int, pos_u64, Result, StoreError};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
 // One aggregate definition is shared by all-remote and per-device totals.
-const REMOTE_TOTAL_COLUMNS: &str = "
+pub(super) const REMOTE_TOTAL_COLUMNS: &str = "
  COALESCE(SUM(json_extract(payload_json,'$.usage.input_uncached_tokens')),0),
  COALESCE(SUM(json_extract(payload_json,'$.usage.cache_read_tokens')),0),
  COALESCE(SUM(json_extract(payload_json,'$.usage.cache_write_tokens')),0),
@@ -22,7 +22,7 @@ const REMOTE_TOTAL_COLUMNS: &str = "
  SUM(json_extract(payload_json,'$.precision')='unknown'),
  SUM(json_extract(payload_json,'$.estimated_cost_microusd'))";
 
-fn read_remote_totals(
+pub(super) fn read_remote_totals(
     row: &rusqlite::Row<'_>,
     offset: usize,
 ) -> rusqlite::Result<RemoteUsageTotals> {

@@ -12,7 +12,7 @@ use std::{
 
 pub const MODULE_ID: &str = "source-deepseek-harness";
 pub const TOOL_ID: &str = "deepseek-harness";
-pub const PARSER_VERSION: u32 = 1;
+pub const PARSER_VERSION: u32 = 2;
 
 pub(crate) const MAX_SESSION_DIRECTORIES: usize = 100_000;
 pub(crate) const MAX_EVENT_ROWS_PER_SESSION: usize = 2_000_000;

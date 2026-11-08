@@ -74,6 +74,10 @@ pub fn extract_model_name(data: &[u8]) -> Result<Option<String>> {
     let Some(nested) = proto_field(data, 1)? else {
         return Ok(None);
     };
+    model_from_chat(nested)
+}
+
+fn model_from_chat(nested: &[u8]) -> Result<Option<String>> {
     let Some(bytes) = proto_field(nested, 19)? else {
         return Ok(None);
     };
@@ -131,13 +135,7 @@ pub(super) fn proto_varint_field(data: &[u8], requested: u64) -> Result<Option<u
     Ok(None)
 }
 
-pub(super) fn extract_usage(data: &[u8]) -> Result<Option<NativeUsage>> {
-    let Some(chat_model) = proto_field(data, 1)? else {
-        return Ok(None);
-    };
-    let Some(usage) = proto_field(chat_model, 4)? else {
-        return Ok(None);
-    };
+fn extract_usage(usage: &[u8]) -> Result<Option<NativeUsage>> {
     let field = |number| proto_varint_field(usage, number).map(|value| value.unwrap_or(0));
     let parsed = NativeUsage {
         fixed_prompt_tokens: field(1)?,
@@ -182,13 +180,7 @@ pub(super) fn extract_usage(data: &[u8]) -> Result<Option<NativeUsage>> {
     Ok(Some(parsed))
 }
 
-pub(super) fn extract_response_id(data: &[u8]) -> Result<Option<String>> {
-    let Some(chat_model) = proto_field(data, 1)? else {
-        return Ok(None);
-    };
-    let Some(usage) = proto_field(chat_model, 4)? else {
-        return Ok(None);
-    };
+fn extract_response_id(usage: &[u8]) -> Result<Option<String>> {
     let Some(bytes) = proto_field(usage, 11)? else {
         return Ok(None);
     };
@@ -201,6 +193,27 @@ pub(super) fn extract_response_id(data: &[u8]) -> Result<Option<String>> {
         return Err(AntigravityError::Invalid("response ID bounds"));
     }
     Ok(Some(value.to_string()))
+}
+
+/// Read the shared protobuf envelopes once for each generation.
+pub(super) fn extract_generation_metadata(
+    data: &[u8],
+) -> Result<(Option<String>, Option<NativeUsage>, Option<String>)> {
+    if data.len() > MAX_PROTO_BYTES {
+        return Err(AntigravityError::Invalid("metadata BLOB too large"));
+    }
+    let Some(chat_model) = proto_field(data, 1)? else {
+        return Ok((None, None, None));
+    };
+    let model = model_from_chat(chat_model)?;
+    let Some(usage_blob) = proto_field(chat_model, 4)? else {
+        return Ok((model, None, None));
+    };
+    Ok((
+        model,
+        extract_usage(usage_blob)?,
+        extract_response_id(usage_blob)?,
+    ))
 }
 
 pub(super) fn make_record(

@@ -7,6 +7,28 @@ use tokenscope_core_domain::{aggregate_device_local, stable_record_id, Precision
 use tokenscope_source_antigravity::{collect_antigravity, collect_antigravity_tolerant};
 
 #[test]
+fn collector_observes_live_wal_and_releases_source_file() {
+    let f = Fixture::new();
+    let path = f.write("antigravity", "wal", &[Some("gemini-pro")]);
+    let mut store = store();
+    collect_antigravity_tolerant(&f.root, &mut store, "test-device", false).unwrap();
+    let writer = Connection::open(&path).unwrap();
+    writer.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+    writer
+        .execute(
+            "INSERT INTO gen_metadata(data) VALUES(?1)",
+            params![blob("claude-sonnet")],
+        )
+        .unwrap();
+    collect_antigravity_tolerant(&f.root, &mut store, "test-device", false).unwrap();
+    assert_eq!(store.antigravity_activity_summary().unwrap().known_turns, 2);
+    drop(writer);
+    fs::remove_file(&path).unwrap();
+    collect_antigravity_tolerant(&f.root, &mut store, "test-device", false).unwrap();
+    assert_eq!(store.antigravity_activity_summary().unwrap().known_turns, 2);
+}
+
+#[test]
 fn append_same_model_revises_one_record() {
     let f = Fixture::new();
     f.write("antigravity", "s1", &[Some("gemini-pro")]);

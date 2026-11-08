@@ -1,6 +1,8 @@
 mod common;
 use common::{cp, rec, setup};
-use tokenscope_core_domain::{project_key, Precision, RevisionedRecord};
+use tokenscope_core_domain::{
+    project_key, Precision, RevisionedRecord, TokenBreakdown, UsageScope,
+};
 use tokenscope_local_store::{
     CodexQuota, DashboardQuery, DashboardSnapshot, LocalStore, RemoteUsageChange,
 };
@@ -135,6 +137,138 @@ fn all_projects_reach_the_ui_before_name_merging() {
     assert_eq!(
         s.by_project.iter().map(|p| p.total_tokens).sum::<u64>(),
         s.local.total_tokens
+    );
+}
+
+#[test]
+fn grouped_remote_dashboard_matches_independent_queries_for_each_range() {
+    let mut db = setup();
+    let mut records = Vec::new();
+    for i in 0..24 {
+        let mut r = rec(&format!("remote-{i}"), i as u64 * 3);
+        r.owner_device_id = format!("remote-{}", i % 3);
+        r.model_id = (i % 4 != 0).then(|| format!("model-{}", i % 4));
+        r.project_id = (i % 3 == 0)
+            .then(|| project_key("codex", format!("project-{}", i % 2).as_bytes()).unwrap());
+        r.event_at_ms = (i % 5 != 0).then_some(1000 + i * 100);
+        if i % 3 == 0 {
+            r.estimated_cost_microusd = None;
+            r.price_version = None;
+        }
+        if i % 4 == 0 {
+            r.precision = Precision::Aggregate;
+        }
+        if i == 22 {
+            r.scope = UsageScope::Unknown;
+        }
+        if i == 23 {
+            r.is_deleted = true;
+            r.usage = TokenBreakdown::default();
+            r.estimated_cost_microusd = None;
+        }
+        records.push(r);
+    }
+    let changes: Vec<_> = records
+        .into_iter()
+        .enumerate()
+        .map(|(index, record)| RemoteUsageChange {
+            change_seq: index as u64 + 1,
+            owner_device_id: record.owner_device_id.clone(),
+            envelope: RevisionedRecord::from_store(record, 1).unwrap(),
+        })
+        .collect();
+    db.apply_remote_changes(&changes, changes.len() as u64)
+        .unwrap();
+
+    for (start, end) in [
+        (None, None),
+        (Some(1600), Some(2600)),
+        (Some(2000), None),
+        (None, Some(2000)),
+    ] {
+        let result = db
+            .dashboard_snapshot(DashboardQuery {
+                range: "all",
+                from_ms: start,
+                to_ms: end,
+                daily_ranges: &[],
+                generated_at_ms: 10_000,
+                time_zone: "UTC".into(),
+                time_zone_valid: true,
+                session_offset: 0,
+            })
+            .unwrap();
+        macro_rules! assert_json_eq {
+            ($actual:expr, $expected:expr) => {
+                assert_eq!(
+                    serde_json::to_value($actual).unwrap(),
+                    serde_json::to_value($expected).unwrap()
+                );
+            };
+        }
+        assert_json_eq!(
+            result.remote,
+            db.remote_usage_totals(None, start, end).unwrap()
+        );
+        assert_json_eq!(
+            result.remote_by_device,
+            db.remote_usage_by_device(start, end).unwrap()
+        );
+        assert_json_eq!(
+            result.remote_by_tool,
+            db.remote_usage_breakdown("tool_id", start, end).unwrap()
+        );
+        assert_json_eq!(
+            result.remote_by_model,
+            db.remote_usage_breakdown("model_id", start, end).unwrap()
+        );
+        assert_json_eq!(
+            result.remote_by_project,
+            db.remote_usage_breakdown("project_id", start, end).unwrap()
+        );
+    }
+}
+
+#[test]
+fn earliest_event_ignores_missing_times_across_local_and_remote_sources() {
+    let mut db = setup();
+    assert_eq!(
+        db.earliest_dashboard_event_ms("dev-test-001").unwrap(),
+        None
+    );
+    let mut local = rec("earliest-local", 10);
+    local.event_at_ms = None;
+    db.apply_scan(None, &cp("earliest", 1), &[local], 1, false)
+        .unwrap();
+    let mut remote = rec("earliest-remote", 5);
+    remote.owner_device_id = "remote-a".into();
+    remote.event_at_ms = Some(2_000);
+    db.apply_remote_changes(
+        &[RemoteUsageChange {
+            change_seq: 1,
+            owner_device_id: remote.owner_device_id.clone(),
+            envelope: RevisionedRecord::from_store(remote, 1).unwrap(),
+        }],
+        1,
+    )
+    .unwrap();
+    assert_eq!(
+        db.earliest_dashboard_event_ms("dev-test-001").unwrap(),
+        Some(2_000)
+    );
+    let mut local = rec("earliest-local", 10);
+    local.event_at_ms = Some(1_000);
+    db.apply_scan(
+        Some(&cp("earliest", 1)),
+        &cp("earliest", 2),
+        &[local],
+        2,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        db.earliest_dashboard_event_ms("dev-test-001").unwrap(),
+        Some(1_000)
     );
 }
 

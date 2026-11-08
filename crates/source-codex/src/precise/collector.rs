@@ -341,7 +341,7 @@ fn collect_codex_precise_with_policy(
                 let result = store.reconcile_complete_source(
                     prior.as_ref(),
                     &scan.next,
-                    scan.records.into_iter(),
+                    scan.records,
                     scan.next.last_scan_ms,
                 )?;
                 report.reconciled += 1;

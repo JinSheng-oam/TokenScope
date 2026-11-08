@@ -15,6 +15,11 @@
   padding-bottom: 12px;
 }
 
+.page-content.session-loading {
+  overflow-y: hidden;
+  padding-bottom: 12px;
+}
+
 .page-header {
   display: flex;
   align-items: baseline;

@@ -30,5 +30,18 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 zeroize = { version = "1.8", features = ["alloc"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
+[target.'cfg(windows)'.dependencies]
+auto-launch = "0.6.0"
+winreg = "0.56.0"
+
 # Keep WebView/GTK dependencies isolated from the lightweight Agent workspace.
 [workspace]
+
+# This standalone Tauri package has its own Cargo workspace and build profile.
+[profile.dev]
+debug = 1
+incremental = false
+
+[profile.test]
+debug = 1
+incremental = false

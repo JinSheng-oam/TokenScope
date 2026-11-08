@@ -6,7 +6,7 @@
   import { formatNumber } from './format';
   import { icons } from './icons';
   import ManualModelPrice from './ManualModelPrice.svelte';
-  import { priceKey, rateColumns as columns, type Catalog, type PriceEntry, type PricingPreferences, type RateKey } from './modelPricing';
+  import { filterPrices, indexPrices, priceKey, rateColumns as columns, sortPrices, type Catalog, type PriceEntry, type PriceSortField, type PricingPreferences } from './modelPricing';
 
   export let runtimeAvailable: boolean;
 
@@ -32,11 +32,10 @@
   let editing: PriceEntry | null = null;
   let manualOnly = false;
 
-  type SortField = 'model' | 'provider' | RateKey;
-  let sortBy: SortField = 'model';
+  let sortBy: PriceSortField = 'model';
   let sortDir: 'asc' | 'desc' = 'asc';
 
-  function toggleSort(field: SortField) {
+  function toggleSort(field: PriceSortField) {
     if (sortBy === field) {
       sortDir = sortDir === 'asc' ? 'desc' : 'asc';
     } else {
@@ -71,32 +70,9 @@
 
   $: hasFilters = Boolean(search.trim() || provider || manualOnly);
   $: terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  $: filtered = entries.filter((entry) => {
-    if (provider && provider !== entry.provider_id) return false;
-    if (manualOnly && !manualKeys.has(priceKey(entry))) return false;
-    const label = (entry.provider_id + '/' + entry.model_id).toLowerCase();
-    return terms.every((term) => label.includes(term));
-  });
-
-  $: sorted = [...filtered].sort((a, b) => {
-    const aManual = manualKeys.has(priceKey(a)) ? 1 : 0;
-    const bManual = manualKeys.has(priceKey(b)) ? 1 : 0;
-    if (aManual !== bManual && sortBy === 'model' && sortDir === 'asc') {
-      return bManual - aManual;
-    }
-    const dir = sortDir === 'asc' ? 1 : -1;
-    if (sortBy === 'model') return a.model_id.localeCompare(b.model_id) * dir;
-    if (sortBy === 'provider') {
-      const cmp = a.provider_id.localeCompare(b.provider_id);
-      return (cmp !== 0 ? cmp : a.model_id.localeCompare(b.model_id)) * dir;
-    }
-    const av = a[sortBy];
-    const bv = b[sortBy];
-    if (av === null && bv === null) return a.model_id.localeCompare(b.model_id);
-    if (av === null) return 1;
-    if (bv === null) return -1;
-    return (av - bv) * dir;
-  });
+  $: indexedEntries = indexPrices(entries, manualKeys);
+  $: orderedEntries = sortPrices(indexedEntries, sortBy, sortDir);
+  $: sorted = filterPrices(orderedEntries, terms, provider, manualOnly);
 
   $: pages = Math.max(1, Math.ceil(sorted.length / pageSize));
   $: currentPage = Math.min(page, pages);
@@ -415,13 +391,14 @@
                   <button
                     type="button"
                     class="provider-pill"
+                    class:active={provider === entry.provider_id}
                     title={`筛选厂商 ${entry.provider_id}`}
                     onclick={() => {
                       provider = provider === entry.provider_id ? '' : entry.provider_id;
                       page = 1;
                     }}
                   >
-                    {entry.provider_id}
+                    <span class="provider-pill-text">{entry.provider_id}</span>
                   </button>
                 </td>
                 {#each columns as column}
@@ -473,7 +450,7 @@
             {#each ['52%', '44%', '62%', '38%', '56%', '48%', '50%', '42%'] as w, idx}
               <tr style={`--delay: ${idx * 55}ms`}>
                 <td class="col-model"><span class="sk-bone" style={`width: ${w}; height: 13px; --delay: ${idx * 55}ms`}></span></td>
-                <td class="col-provider"><span class="sk-bone" style={`width: 64px; height: 20px; border-radius: 6px; --delay: ${idx * 55 + 30}ms`}></span></td>
+                <td class="col-provider"><span class="sk-bone" style={`width: ${['88px', '72px', '108px', '64px', '96px', '80px', '100px', '76px'][idx]}; height: 20px; border-radius: 6px; --delay: ${idx * 55 + 30}ms`}></span></td>
                 {#each columns as _, cIdx}
                   <td class="col-rate tabular">
                     <span class="sk-bone" style={`width: ${cIdx < 2 ? '44px' : '32px'}; height: 12px; margin-left: auto; --delay: ${idx * 55 + cIdx * 20}ms`}></span>
@@ -741,19 +718,34 @@
   .pricing-table {
     width: 100%;
     table-layout: fixed;
-    min-width: 680px;
+    min-width: 720px;
+  }
+
+  .pricing-table th,
+  .pricing-table td {
+    padding: 9px 10px;
+  }
+
+  .pricing-table th:first-child,
+  .pricing-table td:first-child {
+    padding-left: 14px;
+  }
+
+  .pricing-table th:last-child,
+  .pricing-table td:last-child {
+    padding-right: 14px;
   }
 
   .pricing-table .col-model {
-    width: 33%;
+    width: 32%;
   }
 
   .pricing-table .col-provider {
-    width: 13%;
+    width: 20%;
   }
 
   .pricing-table .col-rate {
-    width: 10.8%;
+    width: 9.6%;
     text-align: right;
   }
 
@@ -824,19 +816,18 @@
   .provider-pill {
     display: inline-flex;
     align-items: center;
+    max-width: 100%;
     height: 22px;
     padding: 0 8px;
     border: 1px solid var(--border-subtle);
     border-radius: 6px;
     background: var(--bg-secondary);
     color: var(--text-secondary);
-    font-family: var(--font-mono);
-    font-size: 11px;
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 500;
     cursor: pointer;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    box-sizing: border-box;
     transition: all var(--transition-fast);
   }
 
@@ -844,6 +835,20 @@
     color: var(--brand-primary);
     border-color: var(--brand-border);
     background: var(--brand-subtle);
+  }
+
+  .provider-pill.active {
+    color: var(--brand-primary);
+    border-color: var(--brand-border);
+    background: var(--brand-subtle);
+    font-weight: 600;
+  }
+
+  .provider-pill-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
   }
 
   .rate-sym {

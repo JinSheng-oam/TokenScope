@@ -1,6 +1,7 @@
 mod activity;
 mod dashboard;
 mod filters;
+mod remote;
 mod sessions;
 mod usage;
 

@@ -36,9 +36,9 @@ fn deepseek_harness_home() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 fn usage() {
     println!(
-        r#"Usage: tokenscope-agent [--scan-codex | --scan-claude | --scan-antigravity | --scan-deepseek-harness | --scan-all]
+        r#"Usage: tokenscope-agent [--scan-codex | --scan-claude | --scan-antigravity | --scan-deepseek-harness | --scan-pi | --scan-all]
     --db PATH [--device-id ID] [--codex-home PATH] [--claude-home PATH]
-    [--antigravity-home PATH] [--deepseek-harness-home PATH] [--antigravity-estimates]
+    [--antigravity-home PATH] [--deepseek-harness-home PATH] [--pi-sessions PATH] [--antigravity-estimates]
     [--import-antigravity-quota-json PATH] [--refresh-antigravity-quota] [--refresh-codex-quota] [--emit-codex-quota-json] [--show-antigravity]
     [--display-name NAME] [--time-zone ZONE] [--daemon --interval-seconds 120]
     --dashboard-json [--range today|7d|30d|all]
@@ -75,6 +75,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     let deepseek_harness = args
         .iter()
         .any(|s| s == "--scan-deepseek-harness" || s == "--scan-all");
+    let pi = args.iter().any(|s| s == "--scan-pi" || s == "--scan-all");
     let ag_estimates = args.iter().any(|s| s == "--antigravity-estimates");
     let quota_path = arg(&args, "--import-antigravity-quota-json");
     let show_antigravity = args.iter().any(|s| s == "--show-antigravity");
@@ -101,6 +102,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             || claude
             || antigravity
             || deepseek_harness
+            || pi
             || quota_path.is_some()
             || show_antigravity
             || refresh_antigravity_quota
@@ -126,6 +128,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         && !claude
         && !antigravity
         && !deepseek_harness
+        && !pi
         && quota_path.is_none()
         && !show_antigravity
         && !refresh_antigravity_quota
@@ -359,6 +362,13 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some(p) => PathBuf::from(p),
         None => config_home("TOKENSCOPE_GEMINI_HOME", ".gemini")?,
     };
+    let pi_root = match arg(&args, "--pi-sessions") {
+        Some(path) => PathBuf::from(path),
+        None => match env::var_os("PI_CODING_AGENT_SESSION_DIR").filter(|path| !path.is_empty()) {
+            Some(path) => PathBuf::from(path),
+            None => config_home("PI_CODING_AGENT_DIR", ".pi/agent")?.join("sessions"),
+        },
+    };
     let deepseek_harness_root = match arg(&args, "--deepseek-harness-home") {
         Some(path) => PathBuf::from(path),
         None => deepseek_harness_home()?,
@@ -374,7 +384,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     if !daemon {
-        if codex || claude || antigravity || deepseek_harness {
+        if codex || claude || antigravity || deepseek_harness || pi {
             pricing::refresh_if_due(&mut store);
             collect_once(
                 &mut store,
@@ -387,6 +397,8 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
                     claude_root: &claude_root,
                     antigravity_root: &ag_root,
                     deepseek_harness_root: &deepseek_harness_root,
+                    pi,
+                    pi_root: &pi_root,
                     allow_antigravity_estimates: ag_estimates,
                     device_id: &device,
                 },
@@ -449,6 +461,8 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             claude_root: &claude_root,
             antigravity_root: &ag_root,
             deepseek_harness_root: &deepseek_harness_root,
+            pi,
+            pi_root: &pi_root,
             allow_antigravity_estimates: ag_estimates,
             device_id: &device,
         },

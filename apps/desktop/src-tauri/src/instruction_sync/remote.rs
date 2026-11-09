@@ -88,7 +88,7 @@ pub(super) fn sync(
         publish(&client, markdown, None)?;
         state.base = Some(hash(markdown));
     } else {
-        return Ok(("两端还没有主稿".into(), None, false));
+        return Ok(("本机没有已保存的主稿，当前 WebDAV 目录也没有主稿。请在有主稿的设备保存并同步，并核对两台设备使用同一 WebDAV 目录。".into(), None, false));
     }
     state.endpoint = Some(endpoint);
     Ok(("设备同步完成".into(), None, downloaded))

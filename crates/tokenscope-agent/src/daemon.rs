@@ -76,6 +76,7 @@ pub(super) fn run(
             || collection.claude
             || collection.antigravity
             || collection.deepseek_harness
+            || collection.pi
         {
             pricing::refresh_if_due(store);
             match collect_once(store, collection) {

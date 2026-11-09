@@ -66,7 +66,14 @@ pub(crate) struct SessionActivity {
     model_id: Option<String>,
 }
 
-fn tool_home(env_name: &str, default_dir: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn pi_sessions_root() -> Option<std::path::PathBuf> {
+    std::env::var_os("PI_CODING_AGENT_SESSION_DIR")
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| tool_home("PI_CODING_AGENT_DIR", ".pi/agent").map(|home| home.join("sessions")))
+}
+
+pub(crate) fn tool_home(env_name: &str, default_dir: &str) -> Option<std::path::PathBuf> {
     std::env::var_os(env_name)
         .filter(|value| !value.to_string_lossy().trim().is_empty())
         .map(std::path::PathBuf::from)

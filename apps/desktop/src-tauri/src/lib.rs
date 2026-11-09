@@ -11,6 +11,7 @@ mod lifecycle;
 mod model_pricing;
 mod paths;
 mod session_activity;
+mod session_history;
 mod settings;
 mod skill_sources;
 mod state;
@@ -102,6 +103,9 @@ pub fn run() {
             ai_assistant::get_skill_summary,
             ai_assistant::generate_skill_summary,
             session_activity::recent_session_activity,
+            session_history::get_session_history,
+            session_history::save_session_message,
+            session_history::remove_source_session,
             dashboard::get_dashboard_snapshot,
             dashboard::get_session_analysis,
             dashboard::delete_session,

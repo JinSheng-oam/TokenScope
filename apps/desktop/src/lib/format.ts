@@ -8,6 +8,7 @@ const toolLabels: Record<string, string> = {
   codex: 'Codex',
   claude: 'Claude',
   antigravity: 'Antigravity',
+  pi: 'Pi Agent',
   'deepseek-harness': 'DeepSeek Harness',
 };
 

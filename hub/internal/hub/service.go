@@ -251,7 +251,7 @@ func validateUsageEnvelope(deviceID string, e UsageEnvelope) error {
 	if r.OwnerDeviceID != deviceID || len(r.RecordID) != 64 || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(r.RecordID) {
 		return ErrInvalidInput
 	}
-	if !safeVersionPattern.MatchString(r.ToolID) || len(r.ToolID) > 64 || !strings.Contains("|codex|claude-code|opencode|antigravity|deepseek-harness|", "|"+r.ToolID+"|") {
+	if !safeVersionPattern.MatchString(r.ToolID) || len(r.ToolID) > 64 || !strings.Contains("|codex|claude-code|opencode|antigravity|deepseek-harness|pi|", "|"+r.ToolID+"|") {
 		return ErrInvalidInput
 	}
 	if r.Scope != "device_local" && r.Scope != "account_global" && r.Scope != "unknown" {

@@ -57,9 +57,10 @@
     error = '';
     try {
       const next = await invoke<View>('shared_instruction', { action: { kind, ...args } });
+      const replaceDraft = updateDraft || (kind === 'configure' && !dirty);
       view = next;
-      if (updateDraft) draft = normalizeLines(next.draft ?? '');
-      if (kind === 'sync') {
+      if (replaceDraft) draft = normalizeLines(next.draft ?? '');
+      if (kind === 'sync' || kind === 'save' || next.conflict !== null || !next.enabled) {
         conflict = next.conflict !== null && next.conflict_token
           ? { text: next.conflict, token: next.conflict_token }
           : null;
@@ -202,7 +203,7 @@
               />
               <span class="check-text">
                 <strong>启用统一指令 WebDAV 同步</strong>
-                <small>仅同步统一指令正文。</small>
+                <small>启用后立即同步；保存主稿时也会同步。仅同步正文。</small>
               </span>
             </label>
 

@@ -22,6 +22,11 @@ fn active_roots() -> Vec<(std::path::PathBuf, &'static str, bool)> {
             roots.push((path, "claude", true));
         }
     }
+    if let Some(path) = super::pi_sessions_root() {
+        if path.is_dir() {
+            roots.push((path, "pi", true));
+        }
+    }
     if let Some(home) = tool_home("DSH_HOME", ".dsh") {
         let path = home.join("sessions");
         if path.is_dir() {
@@ -46,7 +51,7 @@ fn active_roots() -> Vec<(std::path::PathBuf, &'static str, bool)> {
     roots
 }
 
-fn dsh_session_id(path: &Path) -> Option<String> {
+fn jsonl_session_id(tool_id: &str, path: &Path) -> Option<String> {
     let file = File::open(path).ok()?;
     let reader = BufReader::new(file);
     let mut line = Vec::new();
@@ -59,7 +64,7 @@ fn dsh_session_id(path: &Path) -> Option<String> {
     if id.is_empty() || id.len() > 200 || id.chars().any(char::is_control) {
         return None;
     }
-    session_key("deepseek-harness", id.as_bytes()).ok()
+    session_key(tool_id, id.as_bytes()).ok()
 }
 
 fn activity_from_path(
@@ -88,11 +93,11 @@ fn activity_from_path(
             let relative = source_path.strip_prefix(root).ok()?.to_str()?;
             session_key("claude", relative.as_bytes()).ok()?
         }
-        "deepseek-harness" => {
+        "deepseek-harness" | "pi" => {
             if source_path.extension().is_none_or(|e| e != "jsonl") {
                 return None;
             }
-            dsh_session_id(&source_path)?
+            jsonl_session_id(tool_id, &source_path)?
         }
         _ => return None,
     };

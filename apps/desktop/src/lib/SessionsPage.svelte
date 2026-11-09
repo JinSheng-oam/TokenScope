@@ -1,6 +1,7 @@
 <script lang="ts">
   import "./sessionTable.css";
   import CustomSelect from './CustomSelect.svelte';
+  import SessionHistoryDialog from './SessionHistoryDialog.svelte';
   import { formatNumber, formatToolLabel, relativeTime } from '../lib/format';
   import { icons } from '../lib/icons';
   import {
@@ -59,6 +60,9 @@
   export let onLoadSessionAnalysis: () => Promise<void>;
 
   export let sessionActivity: SessionActivity[] = [];
+  let historySession: SessionUsage | null = null;
+  const historyTools = new Set(['codex', 'claude', 'deepseek-harness', 'antigravity', 'pi']);
+  const readOnlyHistoryTools = new Set(['antigravity', 'pi']);
 
   let sortBy: SessionSortField = 'time';
   let sortDir: SessionSortDirection = 'desc';
@@ -323,6 +327,17 @@
 
                 <div class="session-meta-subline">
                   <code class="session-id-pill" title={session.session_id}>…{session.session_id.slice(-8)}</code>
+                  {#if historyTools.has(session.tool_id)}
+                    <button
+                      type="button"
+                      class="session-history-button"
+                      title={readOnlyHistoryTools.has(session.tool_id) ? '查看本地会话记录' : '查看或编辑本地源会话记录'}
+                      onclick={() => { historySession = session; }}
+                    >
+                      {@html icons.edit}
+                      <span>{readOnlyHistoryTools.has(session.tool_id) ? '查看历史' : '编辑历史'}</span>
+                    </button>
+                  {/if}
                   {#if projectLabels.length > 0}
                     {#each projectLabels.slice(0, 2) as pLabel}
                       <span class="session-facet-chip" title={pLabel}>{pLabel}</span>
@@ -582,3 +597,11 @@
     <div class="session-empty-state" role="status">选择“会话分析”后会读取当前日期范围的会话。</div>
   {/if}
 </section>
+
+{#if historySession}
+  <SessionHistoryDialog
+    session={historySession}
+    isGenerating={resolveSessionActivityState(historySession, sessionActivity, $liveNow) === 'generating'}
+    onClose={() => { historySession = null; }}
+  />
+{/if}

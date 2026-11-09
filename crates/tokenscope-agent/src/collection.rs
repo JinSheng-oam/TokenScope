@@ -10,10 +10,12 @@ pub(super) struct CollectionOptions<'a> {
     pub(super) claude: bool,
     pub(super) antigravity: bool,
     pub(super) deepseek_harness: bool,
+    pub(super) pi: bool,
     pub(super) codex_root: &'a Path,
     pub(super) claude_root: &'a Path,
     pub(super) antigravity_root: &'a Path,
     pub(super) deepseek_harness_root: &'a Path,
+    pub(super) pi_root: &'a Path,
     pub(super) allow_antigravity_estimates: bool,
     pub(super) device_id: &'a str,
 }
@@ -112,6 +114,21 @@ pub(super) fn collect_once(
             }
         }
     }
+    if options.pi {
+        match crate::pi::collect(options.pi_root, store, options.device_id) {
+            Ok(r) => {
+                succeeded += 1;
+                println!(
+                    "pi files={} cached={} skipped={} inserted={} revised={}",
+                    r.files, r.cached, r.skipped, r.inserted, r.revised
+                );
+            }
+            Err(error) => {
+                eprintln!("TokenScope: Pi scan skipped: {error}");
+                failures.push(format!("pi: {error}"));
+            }
+        }
+    }
     if succeeded == 0 && !failures.is_empty() {
         return Err(failures.join("; ").into());
     }
@@ -153,10 +170,12 @@ mod tests {
                 claude: true,
                 antigravity: false,
                 deepseek_harness: true,
+                pi: false,
                 codex_root: &root,
                 claude_root: &claude,
                 antigravity_root: &root,
                 deepseek_harness_root: &harness,
+                pi_root: &root,
                 allow_antigravity_estimates: false,
                 device_id: "test",
             },

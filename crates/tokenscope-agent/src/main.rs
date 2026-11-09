@@ -9,6 +9,7 @@ mod dashboard;
 mod diagnostics;
 mod identity;
 mod lock;
+mod pi;
 mod pricing;
 mod quota;
 mod session_control;

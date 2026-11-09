@@ -25,7 +25,7 @@ pub(crate) fn read_path(root: &Root, path: &Path) -> Result<Option<String>, Stri
 }
 
 #[cfg(windows)]
-fn replace_file(from: &Path, to: &Path, exists: bool) -> std::io::Result<()> {
+pub(crate) fn replace_file(from: &Path, to: &Path, exists: bool) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     #[link(name = "kernel32")]
     unsafe extern "system" {
@@ -64,7 +64,7 @@ fn replace_file(from: &Path, to: &Path, exists: bool) -> std::io::Result<()> {
     }
 }
 #[cfg(not(windows))]
-fn replace_file(from: &Path, to: &Path, exists: bool) -> std::io::Result<()> {
+pub(crate) fn replace_file(from: &Path, to: &Path, exists: bool) -> std::io::Result<()> {
     if exists {
         fs::rename(from, to)
     } else {

@@ -14,6 +14,7 @@ tokenscope-source-codex = { path = "../source-codex" }
 tokenscope-source-claude = { path = "../source-claude" }
 tokenscope-source-antigravity = { path = "../source-antigravity" }
 tokenscope-source-deepseek-harness = { path = "../source-deepseek-harness" }
+tokenscope-core-domain = { path = "../core-domain" }
 tokenscope-local-store = { path = "../local-store" }
 tokenscope-local-ipc = { path = "../local-ipc" }
 tokenscope-sync-client = { path = "../sync-client" }

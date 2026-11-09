@@ -8,6 +8,7 @@ pub(super) fn tool_display_name(tool_id: &str) -> String {
         "codex" => "Codex".into(),
         "claude" => "Claude".into(),
         "antigravity" => "Antigravity".into(),
+        "pi" => "Pi Agent".into(),
         "deepseek-harness" => "DeepSeek Harness".into(),
         _ => tool_id.to_owned(),
     }

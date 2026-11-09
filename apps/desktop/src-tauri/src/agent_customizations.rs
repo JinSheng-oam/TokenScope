@@ -6,7 +6,7 @@ use std::{fs, path::PathBuf};
 mod file_io;
 mod paths;
 use file_io::{read, save};
-pub(crate) use file_io::{read_path, save_path};
+pub(crate) use file_io::{read_path, replace_file, save_path};
 use paths::check_target;
 use paths::valid_instruction_name;
 pub(crate) use paths::{display_path, is_link, resolve, roots, valid_skill_name};

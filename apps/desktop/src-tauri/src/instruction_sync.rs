@@ -328,6 +328,7 @@ fn run(app: &AppHandle, action: Action) -> Result<View, String> {
     let mut conflict = None;
     let mut message = String::new();
     let mut apply = None;
+    let mut sync_after_save = false;
     match action {
         Action::Load => {}
         Action::Poll if state.enabled => {
@@ -348,12 +349,14 @@ fn run(app: &AppHandle, action: Action) -> Result<View, String> {
             validate(&markdown)?;
             state.draft = Some(markdown);
             message = "主稿已保存".into();
+            sync_after_save = state.enabled;
         }
         Action::Configure {
             enabled,
             auto_apply,
             selected,
         } => {
+            sync_after_save = enabled && !state.enabled;
             state.enabled = enabled;
             state.auto_apply = auto_apply && enabled;
             state.selected = entries
@@ -418,6 +421,25 @@ fn run(app: &AppHandle, action: Action) -> Result<View, String> {
                 state.applied.remove(&target.path);
             }
             message = "已恢复应用前的文件".into();
+        }
+    }
+    if sync_after_save {
+        // Keep the local change even if the server is unavailable or has a conflict.
+        write_json(&data, &path, &state)?;
+        match remote::sync(app, &mut state, None, false) {
+            Ok((status, remote_conflict, downloaded)) => {
+                message.push_str("；");
+                message.push_str(&status);
+                conflict = remote_conflict;
+                if downloaded && state.auto_apply {
+                    write_json(&data, &path, &state)?;
+                    apply = Some((true, BTreeMap::new()));
+                }
+            }
+            Err(error) => {
+                message.push_str("；WebDAV 同步失败：");
+                message.push_str(&error);
+            }
         }
     }
     if let Some((automatic, approved)) = apply {

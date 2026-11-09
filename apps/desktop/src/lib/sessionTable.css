@@ -124,6 +124,34 @@ tr:hover .session-inline-delete-btn {
   margin-top: 3px;
 }
 
+.session-history-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  border: 1px solid var(--brand-border);
+  border-radius: var(--radius-xs);
+  color: var(--brand-primary);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  padding: 1px 6px;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.session-history-button svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+}
+
+.session-history-button:hover {
+  background: var(--brand-subtle);
+  border-color: var(--brand-primary);
+}
+
 .session-id-pill {
   font-size: 11px;
   font-weight: 500;

@@ -48,7 +48,8 @@
   }
 
   .brand-title,
-  .nav-label {
+  .nav-label,
+  .sidebar-toggle-btn {
     display: none;
   }
 
@@ -85,8 +86,7 @@
     padding-top: 10px;
   }
 
-  .agent-label,
-  .milestone-tag {
+  .agent-label {
     position: absolute;
     width: 1px;
     height: 1px;

@@ -26,7 +26,6 @@
   import { icons } from './lib/icons';
   import { createSessionController } from './lib/sessionController';
   import { createSettingsController } from './lib/settingsController';
-  import { BOOTSTRAP_STAGE } from './lib/status';
   import type { AgentStatus, CodexQuota, DashboardObservations, DashboardRange, DashboardSnapshot, RemoteDevice, SessionActivity } from './lib/types';
   import DevicesPage from './lib/DevicesPage.svelte';
   import ModelPricingPage from './lib/ModelPricingPage.svelte';
@@ -67,6 +66,13 @@
   let unlistenDashboard: (() => void) | undefined;
   let heatmapRequest = 0;
 
+  let sidebarCollapsed = typeof localStorage !== 'undefined' && localStorage.getItem('tokenscope.sidebarCollapsed') === '1';
+  function toggleSidebar() {
+    sidebarCollapsed = !sidebarCollapsed;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('tokenscope.sidebarCollapsed', sidebarCollapsed ? '1' : '0');
+    }
+  }
   let remoteSelectedDevice = 'all';
   let deviceScope: DeviceScope = (typeof localStorage !== 'undefined' && localStorage.getItem('tokenscope.deviceScope')) || 'all';
 
@@ -145,14 +151,14 @@
   // Navigation Items
   const navItems: { id: Tab; label: string; iconKey: keyof typeof icons }[] = [
     { id: 'overview', label: '使用总览', iconKey: 'dashboard' },
-    { id: 'devices', label: '多设备网络', iconKey: 'devices' },
+    { id: 'devices', label: '设备网络', iconKey: 'devices' },
     { id: 'tools', label: '工具分析', iconKey: 'tools' },
     { id: 'models', label: '模型排行', iconKey: 'models' },
     { id: 'pricing', label: '模型定价', iconKey: 'pricing' },
     { id: 'projects', label: '项目分析', iconKey: 'projects' },
     { id: 'sessions', label: '会话分析', iconKey: 'sessions' },
-    { id: 'quota', label: '额度与活动', iconKey: 'quota' },
-    { id: 'customizations', label: 'Agent 配置', iconKey: 'tools' },
+    { id: 'quota', label: '额度活动', iconKey: 'quota' },
+    { id: 'customizations', label: '规则配置', iconKey: 'tools' },
     { id: 'settings', label: '系统设置', iconKey: 'settings' },
   ];
 
@@ -394,12 +400,21 @@
 
 <div class="app-shell">
   <!-- Sidebar -->
-  <aside class="sidebar">
+  <aside class="sidebar" class:collapsed={sidebarCollapsed}>
     <div class="brand-row" title="TokenScope">
       <img class="brand-icon" src={appIcon} alt="" width="28" height="28" />
       <div class="brand-title">
         TokenScope
       </div>
+      <button
+        type="button"
+        class="sidebar-toggle-btn"
+        aria-label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+        title={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+        onclick={toggleSidebar}
+      >
+        {@html sidebarCollapsed ? icons.sidebarExpand : icons.sidebarCollapse}
+      </button>
     </div>
 
     <nav aria-label="主导航">
@@ -426,10 +441,9 @@
     <div class="sidebar-spacer"></div>
 
     <div class="sidebar-footer">
-      <div class="agent-heart-row">
+      <div class="agent-heart-row" title={agent?.running ? '采集服务运行中' : '采集服务未连接'}>
         <span class="ping-dot" class:online={agent?.running}></span>
-        <span class="agent-label">{agent?.running ? 'Agent 正在运行' : 'Agent 未连接'}</span>
-        <span class="milestone-tag">{BOOTSTRAP_STAGE}</span>
+        <span class="agent-label">{agent?.running ? '采集运行' : '采集未连'}</span>
       </div>
 
       <!-- Theme Switcher -->

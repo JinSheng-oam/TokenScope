@@ -180,7 +180,7 @@ fn backfill_unpriced_records(tx: &Transaction<'_>, observed_at_ms: i64) -> Resul
     loop {
         let ids = {
             let mut statement = tx.prepare(
-                "SELECT record_id FROM usage_records WHERE owner_device_id=?1 AND scope='device_local' AND is_deleted=0 AND estimated_cost_microusd IS NULL AND (unclassified_tokens=0 OR tool_id='antigravity') AND tool_id IN ('codex','claude','antigravity','deepseek-harness') AND record_id>?2 ORDER BY record_id LIMIT ?3",
+                "SELECT record_id FROM usage_records WHERE owner_device_id=?1 AND scope='device_local' AND is_deleted=0 AND estimated_cost_microusd IS NULL AND (unclassified_tokens=0 OR tool_id='antigravity') AND tool_id IN ('codex','claude','antigravity','deepseek-harness','pi') AND record_id>?2 ORDER BY record_id LIMIT ?3",
             )?;
             let rows = statement
                 .query_map(params![owner, last_id, BACKFILL_BATCH_SIZE], |row| {

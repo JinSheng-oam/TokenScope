@@ -1,6 +1,8 @@
 # TokenScope
 
-TokenScope 是一款本地 AI 用量监控桌面软件，支持 Codex、Claude Code、Antigravity 和 DeepSeek Harness 等来源。桌面端使用 Tauri 2 和 Svelte 5，Rust Agent 在后台采集，用量保存在本机 SQLite 中。
+TokenScope 是一款本地 AI 用量监控桌面软件，支持 Codex、Claude Code、Antigravity、DeepSeek Harness 和 Pi Agent 等来源。桌面端使用 Tauri 2 和 Svelte 5，Rust Agent 在后台采集，用量保存在本机 SQLite 中。
+
+Pi Agent 默认从 ~/.pi/agent/sessions 采集；可通过 PI_CODING_AGENT_SESSION_DIR 指定目录，或通过 PI_CODING_AGENT_DIR 指定其上级目录。命令行可用 --scan-pi 单独采集，并用 --pi-sessions PATH 指定自定义会话目录。
 
 - 按日期、设备、工具、模型、项目和会话查看 Token 用量。模型调用量仅统计本机，配额与 Token 用量分开显示。
 - 查看估算成本和模型定价，支持手动定价、关键词匹配开关及美元 / 人民币显示。估算金额不等于实际账单。

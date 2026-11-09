@@ -33,12 +33,13 @@ def check() -> None:
     assert tauri['bundle']['active'] is True
     assert (ROOT / 'hub/go.mod').exists()
     assert (ROOT / 'hub/internal/sqlstore/migrations/001.sql').is_file()
-    assert (ROOT / 'docs/M1-01-DEVICE-REGISTRATION.md').is_file()
     assert (ROOT / 'scripts/verify_m101_sql.py').is_file()
     for path in ['rust-ci.yml','desktop-ci.yml','hub-ci.yml']:
         assert (ROOT / '.github/workflows' / path).is_file()
-    for path in ['architecture.md','ai-coding-spec.md']:
-        assert (ROOT / 'docs' / path).is_file()
+    docs = ROOT / 'docs'
+    if docs.is_dir():  # Local development docs are not in a GitHub checkout.
+        for path in ['README.md', 'architecture.md', 'development.md']:
+            assert (docs / path).is_file()
     assert (ROOT / 'README.md').is_file()
     print(f'PASS cumulative structural verification ({len(members)} Rust packages; bundled Svelte/Tauri shell; Go Hub M1-01; 3 CI workflows)')
 

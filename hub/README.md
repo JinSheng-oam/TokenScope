@@ -13,7 +13,7 @@ Go 1.23+ self-hosted synchronization and device registry service.
 
 Usage uploads are partitioned by authenticated device ID and record ID. Revision increases replace prior payloads; equal revision/equal hash is idempotent; equal revision/different hash rejects the whole batch; lower revisions are returned as `superseded`.
 
-See `../docs/M1-03-SYNC-PROTOCOL.md` for the wire contract.
+See [the HTTP server](internal/httpapi/server.go) for API routes. Local development copies of this workspace may also include docs/api-v1.md.
 
 ## Self-hosted deployment
 

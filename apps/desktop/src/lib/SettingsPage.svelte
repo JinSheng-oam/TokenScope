@@ -95,160 +95,172 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
   }
 </script>
 
-<div class="page-header">
-            <h1>系统设置</h1>
-          </div>
+<div class="settings-page">
+  <div class="page-header settings-header">
+    <div>
+      <h1>系统设置</h1>
+      <p>调整外观、数据更新方式，并查看本机采集与运行状态。</p>
+    </div>
+  </div>
 
-          <!-- Theme Settings -->
-          <section class="panel-card" style="margin-bottom: 16px;">
-            <div class="panel-head">
-              <h2>主题</h2>
-              <span class="panel-tag">Linear Craft</span>
-            </div>
-            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-              <button
-                class="btn-secondary"
-                class:selected={currentTheme === 'dark'}
-                aria-pressed={currentTheme === 'dark'}
-                onclick={() => onSwitchTheme('dark')}
-              >
-                {@html icons.moon} 深色模式 (Obsidian)
-              </button>
-              <button
-                class="btn-secondary"
-                class:selected={currentTheme === 'light'}
-                aria-pressed={currentTheme === 'light'}
-                onclick={() => onSwitchTheme('light')}
-              >
-                {@html icons.sun} 浅色模式 (Soft Zinc)
-              </button>
-              <button
-                class="btn-secondary"
-                class:selected={currentTheme === 'system'}
-                aria-pressed={currentTheme === 'system'}
-                onclick={() => onSwitchTheme('system')}
-              >
-                {@html icons.laptop} 跟随操作系统
-              </button>
-            </div>
+  <div class="settings-preferences">
+    <section class="panel-card settings-card">
+      <div class="panel-head">
+        <div>
+          <h2>外观与显示</h2>
+          <p>选择应用主题，并控制仪表盘数字动效。</p>
+        </div>
+      </div>
+      <div class="theme-options" role="group" aria-label="应用主题">
+        <button
+          class="theme-option"
+          class:selected={currentTheme === 'dark'}
+          aria-pressed={currentTheme === 'dark'}
+          onclick={() => onSwitchTheme('dark')}
+        >
+          {@html icons.moon}
+          <span><strong>深色</strong><small>Obsidian</small></span>
+        </button>
+        <button
+          class="theme-option"
+          class:selected={currentTheme === 'light'}
+          aria-pressed={currentTheme === 'light'}
+          onclick={() => onSwitchTheme('light')}
+        >
+          {@html icons.sun}
+          <span><strong>浅色</strong><small>Soft Zinc</small></span>
+        </button>
+        <button
+          class="theme-option"
+          class:selected={currentTheme === 'system'}
+          aria-pressed={currentTheme === 'system'}
+          onclick={() => onSwitchTheme('system')}
+        >
+          {@html icons.laptop}
+          <span><strong>跟随系统</strong><small>自动切换</small></span>
+        </button>
+      </div>
+      <div class="setting-row rolling-setting">
+        <div>
+          <strong>核心指标数字滚动动效</strong>
+          <p>数值更新时显示平滑过渡动画。</p>
+        </div>
+        <button
+          class="btn-secondary"
+          class:selected={rollingNumbersEnabled}
+          aria-pressed={rollingNumbersEnabled}
+          onclick={onToggleRollingNumbers}
+        >
+          {rollingNumbersEnabled ? '已开启' : '已关闭'}
+        </button>
+      </div>
+    </section>
 
-            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-subtle);">
-              <div>
-                <div style="font-size: 13px; font-weight: 600; color: var(--text-primary);">核心指标数字滚动动效</div>
-              </div>
-              <button
-                class="btn-secondary"
-                class:selected={rollingNumbersEnabled}
-                aria-pressed={rollingNumbersEnabled}
-                onclick={onToggleRollingNumbers}
-              >
-                {rollingNumbersEnabled ? '已开启 · 点击关闭' : '已关闭 · 点击开启'}
-              </button>
-            </div>
-          </section>
+    <section class="panel-card settings-card">
+      <div class="panel-head">
+        <div>
+          <h2>数据更新</h2>
+          <p>设置仪表盘自动拉取数据的频率。</p>
+        </div>
+        <span class="precision-chip aggregate">{refreshLabel(refreshIntervalMs)}</span>
+      </div>
+      <div class="refresh-options" role="group" aria-label="数据更新速率">
+        {#each refreshOptions as option}
+          <button
+            class="btn-secondary"
+            class:selected={refreshIntervalMs === option.value}
+            aria-pressed={refreshIntervalMs === option.value}
+            onclick={() => onSetRefreshInterval(option.value)}
+          >
+            {option.label}
+          </button>
+        {/each}
+      </div>
+      <p class="setting-note">仅事件推送模式下，数据只会在收到更新通知时刷新。</p>
+    </section>
+  </div>
 
-          <!-- Refresh Interval -->
-          <section class="panel-card" style="margin-bottom: 16px;">
-            <div class="panel-head">
-              <div>
-                <h2>刷新间隔</h2>
-              </div>
-              <span class="precision-chip aggregate">{refreshLabel(refreshIntervalMs)}</span>
-            </div>
-            <div class="refresh-options" role="group" aria-label="数据更新速率">
-              {#each refreshOptions as option}
-                <button
-                  class="btn-secondary"
-                  class:selected={refreshIntervalMs === option.value}
-                  aria-pressed={refreshIntervalMs === option.value}
-                  onclick={() => onSetRefreshInterval(option.value)}
-                >
-                  {option.label}
-                </button>
-              {/each}
-            </div>
-          </section>
+  <section class="panel-card settings-card settings-section">
+    <div class="autostart-row">
+      <div class="autostart-copy">
+        <h2>开机自启动</h2>
+        <p>登录系统后在后台启动采集器，默认不显示窗口。</p>
+      </div>
+      <div class="autostart-control">
+        <span id="autostart-status" class="autostart-status" aria-live="polite">
+          {!runtimeAvailable ? '仅桌面端可用' : autostartBusy ? '处理中…' : !autostartLoaded ? '状态未知' : autostartEnabled ? '已开启' : '已关闭'}
+        </span>
+        <button
+          type="button"
+          class="autostart-switch"
+          role="switch"
+          aria-label="开机自启动"
+          aria-describedby="autostart-status"
+          aria-checked={autostartEnabled}
+          disabled={autostartBusy || !autostartLoaded || !runtimeAvailable}
+          onclick={() => void onToggleAutostart()}
+        ><span></span></button>
+      </div>
+    </div>
+    {#if autostartError}
+      <div class="autostart-error" role="alert">
+        <span>{autostartError}</span>
+        <button class="btn-secondary" disabled={autostartBusy} onclick={() => void onRefreshAutostart()}>重新读取</button>
+      </div>
+    {/if}
+  </section>
 
-          <section class="panel-card" style="margin-bottom: 16px;">
-            <div class="autostart-row">
-              <div class="autostart-copy">
-                <h2>开机自启动</h2>
-                <p>登录系统后在后台采集，窗口默认不显示。</p>
-              </div>
-              <div class="autostart-control">
-                <span id="autostart-status" class="autostart-status" aria-live="polite">
-                  {!runtimeAvailable ? '仅桌面端可用' : autostartBusy ? '处理中…' : !autostartLoaded ? '状态未知' : autostartEnabled ? '已开启' : '已关闭'}
-                </span>
-                <button
-                  type="button"
-                  class="autostart-switch"
-                  role="switch"
-                  aria-label="开机自启动"
-                  aria-describedby="autostart-status"
-                  aria-checked={autostartEnabled}
-                  disabled={autostartBusy || !autostartLoaded || !runtimeAvailable}
-                  onclick={() => void onToggleAutostart()}
-                ><span></span></button>
-              </div>
-            </div>
-            {#if autostartError}
-              <div class="autostart-error" role="alert">
-                <span>{autostartError}</span>
-                <button class="btn-secondary" disabled={autostartBusy} onclick={() => void onRefreshAutostart()}>重新读取</button>
-              </div>
-            {/if}
-          </section>
+  <section class="panel-card settings-card settings-section">
+    <div class="panel-head">
+      <div>
+        <h2>采集状态</h2>
+        <p>本机采集器及其依赖组件的运行情况。</p>
+      </div>
+      <span class="precision-chip" class:exact={agent?.running} class:danger={!agent?.running}>
+        {agent?.running ? '运行中' : '已停止'}
+      </span>
+    </div>
+    <div class="device-summary-strip settings-status-grid">
+      <div class="summary-pill-card">
+        <span class="summary-label">守护进程</span>
+        <div class="status-value">
+          <span class="source-status-dot" class:complete={agent?.running} class:degraded={!agent?.running}></span>
+          <strong>{agent?.running ? '正常运行中' : '未连接'}</strong>
+        </div>
+      </div>
+      <div class="summary-pill-card">
+        <span class="summary-label">Agent 二进制</span>
+        <strong>{agent?.binaryFound ? '已部署' : '未找到'}</strong>
+        <span class="summary-foot">resources/tokenscope-agent</span>
+      </div>
+      <div class="summary-pill-card">
+        <span class="summary-label">SQLite WAL 数据库</span>
+        <strong>{agent?.databaseReady ? '就绪（WAL 模式）' : '初始化中'}</strong>
+        <span class="summary-foot">tokenscope.db</span>
+      </div>
+      <div class="summary-pill-card">
+        <span class="summary-label">桌面版本里程碑</span>
+        <strong class="tabular">{BOOTSTRAP_STAGE}</strong>
+        <span class="summary-foot">当前版本</span>
+      </div>
+    </div>
+  </section>
 
-          <!-- Supervisor Health Diagnostics -->
-          <section class="panel-card" style="margin-bottom: 16px;">
-            <div class="panel-head">
-              <div>
-                <h2>采集状态</h2>
-              </div>
-              <span class="precision-chip" class:exact={agent?.running} class:danger={!agent?.running}>
-                {agent?.running ? 'RUNNING' : 'STOPPED'}
-              </span>
-            </div>
-            <div class="device-summary-strip" style="margin-bottom: 0;">
-              <div class="summary-pill-card">
-                <span class="summary-label">守护进程状态</span>
-                <div style="display: flex; align-items: center; gap: 7px; margin-top: 6px;">
-                  <span class="source-status-dot" class:complete={agent?.running} class:degraded={!agent?.running}></span>
-                  <strong style="margin: 0; font-size: 14px;">{agent?.running ? '正常运行中' : '未连接'}</strong>
-                </div>
-              </div>
-              <div class="summary-pill-card">
-                <span class="summary-label">Agent 二进制</span>
-                <strong style="margin-top: 6px; font-size: 14px;">{agent?.binaryFound ? '已部署' : '未找到'}</strong>
-                <span class="summary-foot">resources/tokenscope-agent</span>
-              </div>
-              <div class="summary-pill-card">
-                <span class="summary-label">SQLite WAL 数据库</span>
-                <strong style="margin-top: 6px; font-size: 14px;">{agent?.databaseReady ? '就绪 (WAL 模式)' : '初始化中'}</strong>
-                <span class="summary-foot">tokenscope.db</span>
-              </div>
-              <div class="summary-pill-card">
-                <span class="summary-label">桌面版本里程碑</span>
-                <strong style="margin-top: 6px; font-size: 14px;" class="tabular">{BOOTSTRAP_STAGE}</strong>
-                <span class="summary-foot">Linear Craft UI</span>
-              </div>
-            </div>
-          </section>
-
-          <!-- Full Health Diagnostics -->
-          <section class="panel-card diagnostic-panel">
-            <div class="panel-head">
-              <div>
-                <h2>系统诊断</h2>
-              </div>
-              <button
-                class="btn-primary"
-                disabled={diagnosticsBusy || !runtimeAvailable}
-                onclick={() => void runDiagnostics()}
-              >
-                {diagnosticsBusy ? '诊断中…' : diagnostics ? '重新诊断' : '运行诊断'}
-              </button>
-            </div>
+  <!-- Full Health Diagnostics -->
+  <section class="panel-card diagnostic-panel settings-card settings-section">
+    <div class="panel-head">
+      <div>
+        <h2>系统诊断</h2>
+        <p>检查数据库、磁盘空间和采集组件，并生成可复制的诊断报告。</p>
+      </div>
+      <button
+        class="btn-primary"
+        disabled={diagnosticsBusy || !runtimeAvailable}
+        onclick={() => void runDiagnostics()}
+      >
+        {diagnosticsBusy ? '诊断中…' : diagnostics ? '重新诊断' : '运行诊断'}
+      </button>
+    </div>
 
             {#if diagnosticsError}
               <p class="diagnostic-error">{diagnosticsError}</p>
@@ -301,8 +313,159 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
               <div class="empty-box">尚未运行诊断。升级后、发现统计异常或采集器停止时，建议先运行一次。</div>
             {/if}
           </section>
+</div>
 
 <style>
+  .settings-page {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .settings-header {
+    margin-bottom: 0;
+  }
+
+  .settings-preferences {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+    gap: 14px;
+  }
+
+  .settings-card {
+    min-width: 0;
+    margin: 0;
+  }
+
+  .settings-card .panel-head {
+    margin-bottom: 12px;
+  }
+
+  .theme-options {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .theme-option {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    min-height: 54px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    text-align: left;
+    transition: border-color var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+  }
+
+  .theme-option:hover {
+    border-color: var(--border-strong);
+    background: var(--bg-card-hover);
+  }
+
+  .theme-option.selected {
+    border-color: var(--brand-border);
+    background: var(--brand-subtle);
+    color: var(--brand-primary);
+  }
+
+  .theme-option :global(svg) {
+    width: 17px;
+    height: 17px;
+    flex: 0 0 auto;
+  }
+
+  .theme-option span {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 2px;
+  }
+
+  .theme-option strong {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .theme-option small {
+    color: var(--text-muted);
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  .setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .rolling-setting {
+    margin-top: 14px;
+    padding-top: 13px;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .setting-row strong {
+    color: var(--text-primary);
+    font-size: 12.5px;
+  }
+
+  .setting-row p,
+  .setting-note {
+    margin: 4px 0 0;
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  .setting-row .btn-secondary {
+    min-width: 76px;
+  }
+
+  .setting-note {
+    margin-top: 11px;
+  }
+
+  .settings-status-grid {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    margin: 0;
+  }
+
+  .settings-status-grid .summary-pill-card {
+    padding: 12px 14px;
+    box-shadow: none;
+    background: var(--bg-secondary);
+  }
+
+  .settings-status-grid .summary-pill-card strong {
+    margin-top: 6px;
+    font-size: 14px;
+  }
+
+  .settings-status-grid .summary-pill-card .summary-foot {
+    margin-top: 4px;
+    color: var(--text-muted);
+    font-size: 10px;
+  }
+
+  .settings-status-grid .status-value {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 6px;
+  }
+
+  .settings-status-grid .status-value strong {
+    margin: 0;
+  }
+
   .autostart-row {
     display: flex;
     align-items: center;
@@ -397,7 +560,27 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
   }
 
   .diagnostic-panel {
-    margin-top: 16px;
+    margin-top: 0;
+  }
+
+  @media (max-width: 820px) {
+    .settings-preferences {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 520px) {
+    .theme-options {
+      grid-template-columns: 1fr;
+    }
+
+    .theme-option {
+      min-height: 46px;
+    }
+
+    .settings-card {
+      padding: 14px;
+    }
   }
 
   .diagnostic-error {

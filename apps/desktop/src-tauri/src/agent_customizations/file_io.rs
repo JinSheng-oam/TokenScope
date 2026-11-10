@@ -86,6 +86,7 @@ pub(crate) fn save_path(
     expected: Option<String>,
     content: String,
 ) -> Result<(), String> {
+    root.require_writable()?;
     if content.len() > MAX_FILE {
         return Err("文件超过 1 MiB".into());
     }

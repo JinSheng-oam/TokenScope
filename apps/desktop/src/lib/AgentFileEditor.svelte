@@ -3,6 +3,7 @@
   export let busy: boolean;
   export let dirty: boolean;
   export let exists: boolean;
+  export let readOnly = false;
 
   $: editorLines = content ? content.split('\n').length : 0;
   $: editorChars = content ? content.length : 0;
@@ -16,13 +17,16 @@
     spellcheck="false"
     bind:value={content}
     disabled={busy}
+    readonly={readOnly}
     placeholder="文件为空，在此输入文本内容..."
   ></textarea>
 </div>
 
 <div class="editor-foot">
   <div class="editor-foot-left">
-    {#if dirty}
+    {#if readOnly}
+      <span class="foot-status">Agent 自带 · 只读</span>
+    {:else if dirty}
       <span class="foot-status dirty">
         <span class="status-dot dirty"></span> 有未保存的更改
       </span>

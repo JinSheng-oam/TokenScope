@@ -23,6 +23,9 @@
   import type { UpdateInfo } from './agentSkillSourceTypes';
   import AgentSkillImport from './AgentSkillImport.svelte';
   import AgentSkillUpdates from './AgentSkillUpdates.svelte';
+  import AgentMcpConfig from './AgentMcpConfig.svelte';
+  let showMcp = false;
+  let mcpDirty = false;
   import AgentAiConfig from './AgentAiConfig.svelte';
   import AgentFileEditor from './AgentFileEditor.svelte';
   import AgentFileCatalog from './AgentFileCatalog.svelte';
@@ -42,6 +45,7 @@
     { id: 'codex', label: 'Codex', roots: [{ id: 'shared-skills', label: '共享 skills' }, { id: 'codex-skills', label: 'Codex skills' }] },
     { id: 'claude', label: 'Claude Code', roots: [{ id: 'claude-skills', label: 'Claude skills' }] },
     { id: 'antigravity', label: 'Antigravity', roots: [{ id: 'antigravity-skills', label: 'Antigravity skills' }] },
+    { id: 'pi', label: 'Pi Agent', roots: [{ id: 'pi-skills', label: 'Pi skills' }, { id: 'pi-shared-skills', label: '共享 skills' }] },
     { id: 'deepseek', label: 'DeepSeek Harness', roots: [{ id: 'dsh-skills', label: 'DeepSeek skills' }, { id: 'dsh-shared-skills', label: '共享 skills' }] },
   ];
 
@@ -89,7 +93,7 @@
   let togglingReference = false;
   let targetMainEntryName = '';
 
-  $: availableMainEntries = selected && selected.kind === 'instruction' && !selected.instructionEntry
+  $: availableMainEntries = selected && selected.id.provider !== 'pi' && selected.kind === 'instruction' && !selected.instructionEntry
     ? instructions.filter((item) => item.id.root === selected?.id.root && item.instructionEntry)
     : [];
 
@@ -184,7 +188,7 @@
     return (val ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   }
 
-  $: dirty = (showShared && sharedDirty) || (selected !== null && normalizeLines(content) !== normalizeLines(original));
+  $: dirty = (showMcp && mcpDirty) || (showShared && sharedDirty) || (selected !== null && normalizeLines(content) !== normalizeLines(original));
   $: instructions = entries.filter((entry) => entry.kind === 'instruction');
   $: skills = entries.filter((entry) => entry.kind === 'skill');
   $: currentProvider = providers.find((p) => p.id === provider)!;
@@ -203,6 +207,7 @@
     if (provider === 'codex') {
       return 'Codex 全局入口为 AGENTS.override.md（优先）或 AGENTS.md；其他文件名只是辅助文件，不会仅因位于此目录就自动加载。';
     }
+    if (provider === 'pi') return 'Pi 全局上下文优先读取 AGENTS.override.md，其次 AGENTS.md 或 CLAUDE.md；SYSTEM.md 和 APPEND_SYSTEM.md 单独管理系统提示词。';
     return 'TokenScope 会标出工具预设的入口文件；自定义 Markdown 是否自动加载取决于对应工具，必要时请从入口文件引用。';
   }
 
@@ -251,6 +256,7 @@
 
   async function switchProvider(next: Provider) {
     if (provider === next || !canLeave()) return;
+    mcpDirty = false;
     provider = next;
     selected = null;
     content = '';
@@ -268,11 +274,13 @@
 
   async function select(entry: Entry) {
     if (selected?.id.root === entry.id.root && selected?.id.name === entry.id.name) return;
-    if (!canLeave() || !entry.editable) return;
+    if (!canLeave() || (!entry.editable && !entry.builtin)) return;
     const current = ++request;
     busy = true; error = ''; notice = '';
     try {
-      const value = await invoke<string | null>('read_customization', { id: entry.id });
+      const value = entry.builtin_description
+        ? entry.builtin_description + '\n\n此条目来自 Claude Code 官方目录。实际可用性取决于本机版本和设置，正文由 Claude Code 管理。'
+        : await invoke<string | null>('read_customization', { id: entry.id });
       if (current !== request) return;
       selected = entry;
       original = value;
@@ -282,13 +290,14 @@
       importing = false;
 
       updateInfo = null;
-      void loadSkillSummary(entry);
+      skillSummary = null;
+      if (!entry.builtin_description) void loadSkillSummary(entry);
     } catch (e) { if (current === request) error = String(e); }
     finally { if (current === request) busy = false; }
   }
 
   async function save() {
-    if (!selected || busy) return;
+    if (!selected || !selected.editable || busy) return;
     busy = true; error = ''; notice = '';
     try {
       const toSave = original && original.includes('\r\n') ? content.replace(/\r?\n/g, '\r\n') : content;
@@ -494,7 +503,7 @@
   });
 </script>
 
-<div class="custom-page" class:fit-workspace={!showShared && !showAiConfig}>
+<div class="custom-page" class:fit-workspace={!showShared && !showAiConfig && !showMcp}>
   <div class="custom-heading">
     <div class="heading-text">
       <h1>Agent 配置与技能管理</h1>
@@ -510,6 +519,12 @@
         <span class="ai-btn-icon">{@html icons.sparkle}</span>
         <span>AI 助手配置</span>
       </button>
+      <button type="button" class="ai-toggle-btn" class:active={showMcp} aria-expanded={showMcp}
+        disabled={!runtimeAvailable} onclick={() => {
+          if (showMcp && mcpDirty && !window.confirm('放弃未保存的 MCP 修改？')) return;
+          showMcp = !showMcp;
+          if (!showMcp) mcpDirty = false;
+        }}>MCP 配置</button>
       <span class="local-badge" title="普通指令与 Skill 仅操作本机文件；统一指令有独立同步设置">
         {@html icons.shield}
         <span>仅操作本机文件</span>
@@ -536,6 +551,16 @@
       {/each}
     </div>
   </div>
+
+  {#if showMcp && runtimeAvailable}
+    {#key provider}
+      <AgentMcpConfig {provider} bind:dirty={mcpDirty} onClose={() => {
+        if (mcpDirty && !window.confirm('放弃未保存的 MCP 修改？')) return;
+        showMcp = false;
+        mcpDirty = false;
+      }} />
+    {/key}
+  {/if}
 
   {#if !runtimeAvailable}
     <div class="empty-box">请在 TokenScope 桌面应用中管理本地文件。</div>
@@ -621,7 +646,7 @@
             <div class="editor-meta">
               <div class="editor-title-row">
                 <h2 class="editor-file-title" title={selected.id.name}>
-                  {selected.id.name}{selected.kind === 'skill' ? ' / SKILL.md' : ''}
+                  {selected.builtin_description ? '/' : ''}{selected.id.name}{selected.kind === 'skill' && !selected.builtin_description ? ' / SKILL.md' : ''}
                 </h2>
                 <div class="editor-badges">
                   {#if selected.kind === 'instruction'}
@@ -642,6 +667,7 @@
 
               <div class="editor-path-row">
                 <span class="editor-path" title={selected.path}>{selected.path}</span>
+                {#if selected.path}
                 <button
                   type="button"
                   class="copy-path-btn"
@@ -655,6 +681,7 @@
                     <span>复制路径</span>
                   {/if}
                 </button>
+                {/if}
               </div>
 
               {#if selected.kind === 'instruction' && (selected.instructionEntry || !mainEntryForSelected)}
@@ -664,7 +691,7 @@
             </div>
 
             <div class="editor-actions">
-              {#if selected.kind === 'skill' && selected.exists}
+              {#if selected.kind === 'skill' && selected.exists && !selected.builtin}
                 <button
                   class="btn-secondary btn-action"
                   disabled={busy}
@@ -694,7 +721,7 @@
                 </button>
               {/if}
 
-              {#if selected.exists}
+              {#if selected.exists && selected.editable}
                 <button
                   class="btn-secondary btn-action"
                   disabled={busy}
@@ -716,6 +743,7 @@
                 </button>
               {/if}
 
+              {#if selected.editable}
               <button
                 class="btn-primary btn-save"
                 disabled={busy || (!dirty && selected.exists)}
@@ -723,6 +751,7 @@
               >
                 {busy ? '处理中…' : selected.exists ? '保存更改' : '创建文件'}
               </button>
+              {/if}
             </div>
           </div>
 
@@ -821,7 +850,7 @@
             </div>
           {/if}
 
-          <AgentFileEditor bind:content {busy} {dirty} exists={selected.exists} />
+          <AgentFileEditor bind:content {busy} {dirty} exists={selected.exists} readOnly={!selected.editable} />
         {:else}
           <div class="editor-empty">
             <div class="empty-icon-box">{@html icons.tools}</div>

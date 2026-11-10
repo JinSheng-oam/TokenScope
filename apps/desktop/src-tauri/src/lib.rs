@@ -85,6 +85,8 @@ pub fn run() {
             agent::get_agent_status,
             agent::refresh_codex_quota_now,
             agent_customizations::list_customizations,
+            agent_customizations::mcp::read_mcp_config,
+            agent_customizations::mcp::save_mcp_config,
             agent_customizations::read_customization,
             agent_customizations::save_customization,
             agent_customizations::prepare_instruction,

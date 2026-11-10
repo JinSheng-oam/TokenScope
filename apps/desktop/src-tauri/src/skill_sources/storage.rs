@@ -17,6 +17,7 @@ pub(super) fn skill_root(id: &CustomizationId) -> Result<PathBuf, String> {
         .into_iter()
         .find(|r| r.id == id.root && r.kind == "skill")
         .ok_or("不支持的 skill 目录")?;
+    root.require_writable()?;
     Ok(root.path)
 }
 pub(super) fn snapshot(root: &Path) -> Result<BTreeMap<String, String>, String> {

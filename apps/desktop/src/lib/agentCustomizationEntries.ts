@@ -1,4 +1,4 @@
-export type Provider = 'codex' | 'claude' | 'antigravity' | 'deepseek';
+export type Provider = 'codex' | 'claude' | 'antigravity' | 'deepseek' | 'pi';
 export type Id = { provider: Provider; root: string; name: string };
 export type Entry = {
   id: Id;
@@ -6,6 +6,8 @@ export type Entry = {
   kind: 'skill' | 'instruction';
   exists: boolean;
   editable: boolean;
+  builtin?: boolean;
+  builtin_description?: string;
   linked: boolean;
   enabled: boolean;
   instructionEntry: boolean;
@@ -24,6 +26,18 @@ export function instructionRootLabel(rootId: string): string {
     'gemini-config-instructions': 'Antigravity 配置目录',
     'dsh-instructions': 'DeepSeek Harness 用户目录',
     'dsh-shared-instructions': '共享 Agent 目录',
+    'pi-instructions': 'Pi Agent 全局目录',
+    'pi-skills': 'Pi Agent 用户目录',
+    'pi-shared-skills': '共享 Skill 目录',
+    'claude-builtin-catalog': 'Claude Code 官方目录',
+    'dsh-office-builtin': 'DeepSeek Harness 安装包',
+    'antigravity-app-builtin': 'Antigravity App 自带',
+    'antigravity-cli-builtin': 'Antigravity CLI 自带',
+    'antigravity-cli-skills': 'Antigravity CLI 用户目录',
+    'antigravity-cli-legacy-skills': 'Antigravity CLI 兼容目录',
+    'codex-system-skills': 'Codex 自带',
+    'shared-skills': '共享 Skill 目录',
+    'antigravity-skills': 'Antigravity 配置目录',
     'codex-skills': 'Codex 全局目录',
     'claude-skills': 'Claude Code 全局目录',
     'gemini-skills': 'Antigravity 用户目录',
@@ -39,8 +53,31 @@ export function instructionInfo(entry: Entry, instructions: Entry[]): Instructio
   if (!entry.instructionEntry) {
     return {
       label: entry.exists ? '辅助文件' : '新辅助文件',
-      detail: '这个文件名不在工具预设的指令入口中；仅放在此目录通常不会自动加载。可通过下方开关直接以 @ 语法引用进主入口文件。',
+      detail: entry.id.provider === 'pi'
+        ? 'Pi 不会仅因该文件位于全局配置目录就自动加载它。'
+        : '这个文件名不在工具预设的指令入口中；仅放在此目录通常不会自动加载。可通过下方开关直接以 @ 语法引用进主入口文件。',
       tone: 'auxiliary',
+    };
+  }
+
+  if (entry.id.root === 'pi-instructions') {
+    const name = entry.id.name;
+    if (name === 'SYSTEM.md' || name === 'APPEND_SYSTEM.md') {
+      return {
+        label: name === 'SYSTEM.md' ? '系统提示词覆盖' : '系统提示词追加',
+        detail: '这是 Pi 的全局系统提示词配置；同名的可信项目配置优先。',
+        tone: 'entry',
+      };
+    }
+    const priority = ['AGENTS.override.md', 'AGENTS.md', 'AGENTS.MD', 'CLAUDE.md', 'CLAUDE.MD'];
+    const index = priority.indexOf(name);
+    const higher = priority.slice(0, index).find((candidate) =>
+      instructions.some((item) => item.id.root === entry.id.root && item.id.name === candidate && item.exists)
+    );
+    return {
+      label: higher ? '被更高优先级入口覆盖' : entry.exists ? '全局上下文入口' : '入口文件未创建',
+      detail: higher ? 'Pi 优先读取 ' + higher + '。' : 'Pi 在全局配置目录按优先级读取第一个存在的上下文文件。',
+      tone: higher ? 'warning' : 'entry',
     };
   }
 

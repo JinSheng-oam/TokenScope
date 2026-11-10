@@ -20,6 +20,12 @@
   $: filteredSkills = skills.filter(
     (entry) => !filterQuery.trim() || entry.id.name.toLowerCase().includes(filterQuery.toLowerCase().trim())
   );
+  $: userSkills = filteredSkills.filter((entry) => !entry.builtin);
+  $: builtinSkills = filteredSkills.filter((entry) => entry.builtin);
+  $: skillGroups = [
+    { label: '用户安装的 Skills', entries: userSkills, builtin: false },
+    { label: 'Agent 自带的 Skills', entries: builtinSkills, builtin: true },
+  ];
 </script>
 
   <!-- Catalog (Left Column) -->
@@ -104,25 +110,28 @@
         {/if}
       {/each}
 
+      {#each skillGroups as group (group.label)}
       <div class="group-title skills-head">
         <div class="group-title-left">
-          <span>Skills</span>
-          <span class="count-badge">{filteredSkills.length}</span>
+          <span>{group.label}</span>
+          <span class="count-badge">{group.entries.length}</span>
         </div>
+        {#if !group.builtin}
         <div class="catalog-actions">
           <button class="btn-ghost-sm" disabled={busy} onclick={beginImport} aria-label="添加 Skill">添加</button>
           <button class="btn-ghost-sm" disabled={busy} onclick={beginCreate} aria-label="新建 Skill">新建</button>
         </div>
+        {/if}
       </div>
 
-      {#each filteredSkills as entry}
+      {#each group.entries as entry}
         <button
           type="button"
           class="file-row"
           class:active={selected?.id.root === entry.id.root && selected?.id.name === entry.id.name}
           class:row-disabled={!entry.enabled}
-          disabled={busy || !entry.editable}
-          title={entry.editable ? entry.path : '符号链接请在原位置管理'}
+          disabled={busy || (!entry.editable && !entry.builtin)}
+          title={(entry.editable || entry.builtin) ? (entry.path || entry.builtin_description) : '符号链接请在原位置管理'}
           onclick={() => void select(entry)}
         >
           <div class="file-row-main">
@@ -145,10 +154,11 @@
               </div>
             </div>
           </div>
-          <span class="file-sub-root">{entry.editable ? instructionRootLabel(entry.id.root) : '无法访问目标文件'}</span>
+          <span class="file-sub-root">{(entry.editable || entry.builtin) ? instructionRootLabel(entry.id.root) : '无法访问目标文件'}</span>
         </button>
       {:else}
-        <p class="empty-list">{filterQuery ? '未匹配到相关 Skill' : '尚未发现全局 skill。'}</p>
+        <p class="empty-list">{filterQuery ? '未匹配到相关 Skill' : group.builtin ? '未发现可识别的自带 Skill。' : '尚未发现用户安装的 Skill。'}</p>
+      {/each}
       {/each}
     </div>
   </section>

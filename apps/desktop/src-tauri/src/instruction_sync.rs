@@ -108,6 +108,7 @@ fn entries() -> Result<Vec<(Target, CustomizationId)>, String> {
     for (provider, root, name, label) in [
         ("codex", "codex-instructions", "AGENTS.md", "Codex"),
         ("claude", "claude-instructions", "CLAUDE.md", "Claude Code"),
+        ("pi", "pi-instructions", "AGENTS.md", "Pi Agent"),
         (
             "antigravity",
             "gemini-instructions",
@@ -140,6 +141,24 @@ fn entries() -> Result<Vec<(Target, CustomizationId)>, String> {
         };
         let (config, _) = agent::resolve(&id)?;
         let mut path = config.path.join(&id.name);
+        if provider == "pi" {
+            // Match Pi's first existing global context file. System prompt
+            // overrides are intentionally not targets for shared instructions.
+            for candidate in [
+                "AGENTS.override.md",
+                "AGENTS.md",
+                "AGENTS.MD",
+                "CLAUDE.md",
+                "CLAUDE.MD",
+            ] {
+                let candidate_path = config.path.join(candidate);
+                if candidate_path.is_file() {
+                    id.name = candidate.into();
+                    path = candidate_path;
+                    break;
+                }
+            }
+        }
         if provider == "codex" {
             let override_path = config.path.join("AGENTS.override.md");
             match fs::symlink_metadata(&override_path) {

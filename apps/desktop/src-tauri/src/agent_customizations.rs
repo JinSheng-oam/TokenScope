@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 
 mod file_io;
+pub(crate) mod mcp;
 mod paths;
 use file_io::{read, save};
 pub(crate) use file_io::{read_path, replace_file, save_path};
@@ -25,6 +26,9 @@ pub(crate) struct CustomizationEntry {
     kind: &'static str,
     exists: bool,
     editable: bool,
+    builtin: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    builtin_description: Option<&'static str>,
     linked: bool,
     enabled: bool,
     #[serde(rename = "instructionEntry")]
@@ -36,6 +40,25 @@ pub(crate) struct Root {
     pub(crate) path: PathBuf,
     pub(crate) kind: &'static str,
     pub(crate) names: &'static [&'static str],
+}
+
+impl Root {
+    pub(crate) fn is_builtin(&self) -> bool {
+        matches!(
+            self.id,
+            "codex-system-skills"
+                | "antigravity-app-builtin"
+                | "antigravity-cli-builtin"
+                | "dsh-office-builtin"
+        )
+    }
+
+    pub(crate) fn require_writable(&self) -> Result<(), String> {
+        if self.is_builtin() {
+            return Err("Agent 自带 Skill 由 Agent 管理，只能查看".into());
+        }
+        Ok(())
+    }
 }
 
 fn entry(
@@ -52,7 +75,9 @@ fn entry(
         path: display_path(&path),
         kind: root.kind,
         exists: path.is_file(),
-        editable,
+        editable: editable && !root.is_builtin(),
+        builtin: root.is_builtin(),
+        builtin_description: None,
         linked,
         enabled,
         instruction_entry,
@@ -128,6 +153,41 @@ fn list(provider: &str) -> Result<Vec<CustomizationEntry>, String> {
                 }
             }
         }
+    }
+    if provider == "claude"
+        && paths::path_has_command(&["claude", "claude.exe", "claude.cmd", "claude.ps1"])
+    {
+        // Claude ships these inside its CLI. This documents known commands,
+        // not the active session's version, visibility or policy overrides.
+        result.extend(
+            [
+                ("batch", "拆分并行执行跨文件的批量任务。"),
+                ("claude-api", "提供 Claude API 与 SDK 的开发指引。"),
+                ("code-review", "检查代码变更中的问题。"),
+                ("debug", "诊断 Claude Code 的运行问题。"),
+                ("doctor", "检查 Claude Code 安装和配置。"),
+                ("loop", "在会话中按间隔重复运行提示。"),
+                ("simplify", "检查并简化最近的代码变更。"),
+                ("verify", "运行应用验证变更。"),
+            ]
+            .into_iter()
+            .map(|(name, description)| CustomizationEntry {
+                id: CustomizationId {
+                    provider: provider.into(),
+                    root: "claude-builtin-catalog".into(),
+                    name: name.into(),
+                },
+                path: String::new(),
+                kind: "skill",
+                exists: true,
+                editable: false,
+                builtin: true,
+                builtin_description: Some(description),
+                linked: false,
+                enabled: true,
+                instruction_entry: false,
+            }),
+        );
     }
     result.sort_by(|a, b| {
         a.kind
@@ -208,6 +268,7 @@ fn rename_item(id: &CustomizationId, new_name: &str) -> Result<CustomizationEntr
         .find(|r| r.id == id.root)
         .ok_or("不支持的文件位置")?;
 
+    root.require_writable()?;
     if root.kind == "instruction" {
         if !valid_instruction_name(new_name) {
             return Err("无效的指令文件名，必须以 .md 结尾且不包含特殊路径字符".into());
@@ -266,6 +327,7 @@ fn rename_item(id: &CustomizationId, new_name: &str) -> Result<CustomizationEntr
 
 fn toggle_skill(id: &CustomizationId, enabled: bool) -> Result<bool, String> {
     let (root, _) = resolve(id)?;
+    root.require_writable()?;
     if root.kind != "skill" {
         return Err("仅支持对 skill 启用或停用".into());
     }

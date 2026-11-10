@@ -63,6 +63,7 @@ pub(super) fn check(id: &CustomizationId) -> Result<UpdateInfo, String> {
     })
 }
 pub(super) fn update(id: &CustomizationId) -> Result<String, String> {
+    let root = skill_root(id)?;
     if let Some(skill) = managed(id)? {
         let report = manager(&["skills", "update", &skill.id])?;
         if report.to_string().contains("held_back_removals") {
@@ -79,7 +80,6 @@ pub(super) fn update(id: &CustomizationId) -> Result<String, String> {
             "Skills Manager 未应用更新，请检查来源或稍后重试".into()
         });
     }
-    let root = skill_root(id)?;
     let target = root.join(&id.name);
     if fs::symlink_metadata(&target)
         .map_err(|_| "skill 不存在")?
@@ -169,6 +169,7 @@ pub(super) fn adopt(
     source_input: &str,
     candidate_path: Option<&str>,
 ) -> Result<UpdateInfo, String> {
+    skill_root(id)?;
     let source = source_from(source_input)?;
     let (_tmp, repo, latest) = clone_source(&source)?;
     let candidates = discover(&repo, &source)?;

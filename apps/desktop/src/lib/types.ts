@@ -52,6 +52,11 @@ export type SessionActivity = {
   observed_at_ms: number;
   display_name: string | null;
   model_id: string | null;
+  output_speed?: {
+    output_tokens: number;
+    generation_ms: number;
+    completed_at_ms: number;
+  };
 };
 
 export type ModelActivityBreakdown = {
@@ -59,12 +64,6 @@ export type ModelActivityBreakdown = {
   model_id: string;
   response_count: number;
   time_scope: 'selected_range' | 'all_time';
-};
-
-export type RecentSessionActivity = {
-  sessions: SessionActivity[];
-  sampled_at_ms: number;
-  rates: { tool_id: string; session_id: string; tokens: number }[];
 };
 
 export type SessionUsage = {

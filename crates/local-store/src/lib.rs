@@ -14,8 +14,8 @@ pub use repository::{
     LocalStore, ModelActivityBreakdown, ModelPriceCatalogState, ModelPriceEntry,
     ModelPriceInstallReport, OutboxEntry, ProjectName, ReconcileReport, RemoteDailyUsage,
     RemoteDeviceUsage, RemoteUsageBreakdown, RemoteUsageChange, RemoteUsageTotals,
-    SessionAnalysisPage, SessionFilterOption, SessionFilterOptions, SessionTokenRate, SessionUsage,
-    SessionUsagePage, SourceCheckpoint, SourceHealth, SyncOutboxStatus, ToolUsageOverview,
-    UsageBreakdown, UsageOverview, UsageTotals,
+    SessionAnalysisPage, SessionFilterOption, SessionFilterOptions, SessionUsage, SessionUsagePage,
+    SourceCheckpoint, SourceHealth, SyncOutboxStatus, ToolUsageOverview, UsageBreakdown,
+    UsageOverview, UsageTotals,
 };
 pub const MODULE_ID: &str = "local-store";

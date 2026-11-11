@@ -1,4 +1,4 @@
-use super::{is_generating, remembered_active, SessionActivity};
+use super::{is_generating, remembered_active, OutputSpeed, SessionActivity};
 use rusqlite::{Connection, OpenFlags};
 use std::{
     collections::HashMap,
@@ -111,38 +111,159 @@ fn codex_thread_titles(home: &Path) -> Arc<HashMap<String, String>> {
     Arc::clone(&cache.names)
 }
 
-pub(super) fn turn_active(tail: &[u8]) -> Option<bool> {
-    let mut turn = None;
+#[derive(Default)]
+struct TurnObservation {
+    active: Option<bool>,
+    output_speed: Option<OutputSpeed>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Usage {
+    input: u64,
+    output: u64,
+}
+
+impl Usage {
+    fn read(value: &serde_json::Value) -> Option<Self> {
+        Some(Self {
+            input: value.get("input_tokens")?.as_u64()?,
+            output: value.get("output_tokens")?.as_u64()?,
+        })
+    }
+}
+
+struct MeasuredTurn {
+    id: Option<String>,
+    invalid: bool,
+    output_tokens: Option<u64>,
+}
+
+fn completed_speed(row: &serde_json::Value, turn: MeasuredTurn) -> Option<OutputSpeed> {
+    let payload = &row["payload"];
+    if turn.invalid || turn.id.as_deref()? != payload["turn_id"].as_str()? {
+        return None;
+    }
+    let output_tokens = turn.output_tokens.filter(|tokens| *tokens > 0)?;
+    let generation_ms = payload["duration_ms"]
+        .as_u64()?
+        .checked_sub(payload["time_to_first_token_ms"].as_u64()?)?;
+    if generation_ms == 0 {
+        return None;
+    }
+    Some(OutputSpeed {
+        output_tokens,
+        generation_ms,
+        completed_at_ms: chrono::DateTime::parse_from_rfc3339(row["timestamp"].as_str()?)
+            .ok()?
+            .timestamp_millis(),
+    })
+}
+
+fn observe_turns(tail: &[u8]) -> TurnObservation {
+    // Own the turn ID because each JSON row is dropped before the next one.
+    let mut turn: Option<MeasuredTurn> = None;
+    let mut observation = TurnObservation::default();
+    let mut previous_usage = None;
     let mut last_terminal_end = None;
     let mut offset = 0usize;
     for line in tail.split(|b| *b == b'\n') {
         let line_end = offset.saturating_add(line.len());
         offset = line_end.saturating_add(1);
-        if let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) {
-            if value.get("type").and_then(|v| v.as_str()) != Some("event_msg") {
-                continue;
-            }
-            match value
-                .get("payload")
-                .and_then(|v| v.get("type"))
-                .and_then(|v| v.as_str())
-            {
-                Some("task_started") => {
-                    turn = Some(true);
-                    last_terminal_end = None;
+        let Ok(row) = serde_json::from_slice::<serde_json::Value>(line) else {
+            if !line.iter().all(u8::is_ascii_whitespace) {
+                if let Some(turn) = turn.as_mut() {
+                    turn.invalid = true;
                 }
-                Some("task_complete" | "task_aborted" | "turn_aborted") => {
-                    turn = Some(false);
-                    last_terminal_end = Some(line_end);
-                }
-                _ => {}
             }
+            continue;
+        };
+        let payload = &row["payload"];
+        match (row["type"].as_str(), payload["type"].as_str()) {
+            (Some("event_msg"), Some("task_started" | "turn_started")) => {
+                observation.active = Some(true);
+                last_terminal_end = None;
+                turn = Some(MeasuredTurn {
+                    id: payload["turn_id"].as_str().map(str::to_owned),
+                    invalid: false,
+                    output_tokens: None,
+                });
+            }
+            (
+                Some("event_msg"),
+                Some("task_complete" | "turn_completed" | "task_aborted" | "turn_aborted"),
+            ) => {
+                observation.active = Some(false);
+                last_terminal_end = Some(line_end);
+                observation.output_speed = turn.take().and_then(|turn| {
+                    if matches!(
+                        payload["type"].as_str(),
+                        Some("task_complete" | "turn_completed")
+                    ) {
+                        completed_speed(&row, turn)
+                    } else {
+                        None
+                    }
+                });
+            }
+            (Some("event_msg"), Some("token_count")) => {
+                let info = &payload["info"];
+                let Some(total) = Usage::read(&info["total_token_usage"]) else {
+                    continue;
+                };
+                if previous_usage == Some(total) {
+                    continue;
+                }
+                if let Some(turn) = turn.as_mut() {
+                    // A second distinct usage event implies multiple requests.
+                    if turn.output_tokens.is_some() {
+                        turn.invalid = true;
+                    } else {
+                        let delta = previous_usage.map_or(Some(total.output), |previous: Usage| {
+                            total.output.checked_sub(previous.output)
+                        });
+                        let last = Usage::read(&info["last_token_usage"]);
+                        let matches_request = last.is_some_and(|last| {
+                            delta == Some(last.output)
+                                && previous_usage.map_or(total.input == last.input, |previous| {
+                                    total.input.checked_sub(previous.input) == Some(last.input)
+                                })
+                        });
+                        turn.invalid |= !matches_request;
+                        turn.output_tokens = delta;
+                    }
+                } else {
+                    // Unpaired usage after completion makes the last sample ambiguous.
+                    observation.output_speed = None;
+                }
+                previous_usage = Some(total);
+            }
+            (Some("response_item"), Some(kind)) if !matches!(kind, "message" | "reasoning") => {
+                if let Some(turn) = turn.as_mut() {
+                    turn.invalid = true;
+                }
+            }
+            (Some("event_msg"), Some("item_started" | "item_completed" | "context_compacted")) => {
+                if let Some(turn) = turn.as_mut() {
+                    turn.invalid |= !matches!(
+                        payload["item"]["type"].as_str(),
+                        Some("AgentMessage" | "UserMessage" | "Reasoning" | "Plan")
+                    );
+                }
+            }
+            _ => {}
         }
     }
-    if turn == Some(false) && tail.len().saturating_sub(last_terminal_end?) > 8_192 {
-        return None;
+    if observation.active == Some(false)
+        && last_terminal_end.is_some_and(|end| tail.len().saturating_sub(end) > 8_192)
+    {
+        observation.active = None;
     }
-    turn
+    observation
+}
+
+#[cfg(test)]
+pub(super) fn turn_active(tail: &[u8]) -> Option<bool> {
+    observe_turns(tail).active
 }
 
 pub(super) fn read_codex_activity(now: u64) -> Result<Vec<SessionActivity>, String> {
@@ -232,9 +353,11 @@ pub(super) fn read_codex_activity(now: u64) -> Result<Vec<SessionActivity>, Stri
         if file.take(tail_limit).read_to_end(&mut tail).is_err() {
             continue;
         }
-        let generating = is_generating(&session_id, turn_active(&tail), modified, now);
+        let observation = observe_turns(&tail);
+        let generating = is_generating(&session_id, observation.active, modified, now);
         result.push(SessionActivity {
             tool_id: "codex",
+            output_speed: observation.output_speed,
             session_id,
             state: if generating { "generating" } else { "recent" },
             observed_at_ms: modified,
@@ -247,4 +370,42 @@ pub(super) fn read_codex_activity(now: u64) -> Result<Vec<SessionActivity>, Stri
         });
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod output_speed_tests {
+    use super::observe_turns;
+
+    const BASE: &str = r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":300,"output_tokens":500}}}}"#;
+    const START: &str = r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}"#;
+    const USAGE: &str = r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"output_tokens":620},"last_token_usage":{"input_tokens":700,"output_tokens":120,"reasoning_output_tokens":20}}}}"#;
+    const END: &str = r#"{"timestamp":"2026-11-11T12:00:00Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","duration_ms":4100,"time_to_first_token_ms":1100}}"#;
+
+    #[test]
+    fn measures_one_request_and_deduplicates_repeated_usage() {
+        let log = [BASE, START, USAGE, USAGE, END].join("\n");
+        let speed = observe_turns(log.as_bytes()).output_speed.unwrap();
+        assert_eq!((speed.output_tokens, speed.generation_ms), (120, 3000));
+    }
+
+    #[test]
+    fn ambiguous_or_incomplete_turns_have_no_speed() {
+        let tool = r#"{"type":"response_item","payload":{"type":"custom_tool_call"}}"#;
+        let second = r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1900,"output_tokens":650},"last_token_usage":{"input_tokens":900,"output_tokens":30}}}}"#;
+        let invalid_duration = END.replace("4100", "1100");
+        let different_turn = END.replace("t1", "t2");
+        for rows in [
+            vec![BASE, START, USAGE],
+            vec![START, USAGE, END],
+            vec![BASE, START, tool, USAGE, END],
+            vec![BASE, START, USAGE, second, END],
+            vec![BASE, START, USAGE, END, second],
+            vec![BASE, START, USAGE, &invalid_duration],
+            vec![BASE, START, USAGE, &different_turn],
+        ] {
+            assert!(observe_turns(rows.join("\n").as_bytes())
+                .output_speed
+                .is_none());
+        }
+    }
 }

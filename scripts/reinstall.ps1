@@ -14,7 +14,7 @@ Builds and replaces the currently installed Windows TokenScope binaries.
 .DESCRIPTION
 Uses the registered installation directory. Stops only the desktop instance
 and its own Agent, makes a SQLite online backup, and replaces the matching
-desktop, library, Agent, and manifest files. Restarts a running application.
+desktop executable, Agent, and manifest. Restarts a running application.
 The MSI/NSIS registration and user configuration are left in place.
 
 .PARAMETER Bundle
@@ -44,6 +44,7 @@ $releaseRoot = Join-Path $desktopRoot 'src-tauri\target\release'
 $resourceRoot = Join-Path $desktopRoot 'src-tauri\resources'
 
 if (-not $SkipBuild -and -not $ValidateOnly) {
+    Write-Host '正在从当前源码构建 TokenScope…'
     & (Join-Path $PSScriptRoot 'build-installer.ps1') -Bundles $Bundle
     if ($LASTEXITCODE -ne 0) {
         throw "Installer build failed with exit code $LASTEXITCODE."
@@ -74,6 +75,9 @@ if (-not $resourcesItem.PSIsContainer -or ($resourcesItem.Attributes -band [IO.F
     throw '安装资源目录无效或是重解析点。'
 }
 
+Write-Host "正在检查安装目录和构建文件: $installDir"
+$desktopPath = Join-Path $installDir 'tokenscope-desktop.exe'
+$agentPath = Join-Path $installedResources 'tokenscope-agent.exe'
 $manifestPath = Join-Path $resourceRoot 'agent-build.json'
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 $appConfig = Get-Content -LiteralPath (Join-Path $desktopRoot 'src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json
@@ -84,10 +88,9 @@ if ($manifest.buildProfile -ne 'release' -or $manifest.targetPlatform -ne 'win32
     throw '构建的 Agent 清单与当前桌面版本或系统平台不匹配。'
 }
 $files = @(
-    @{ Source = (Join-Path $resourceRoot 'tokenscope-agent.exe'); Target = (Join-Path $installedResources 'tokenscope-agent.exe'); Backup = 'tokenscope-agent.exe' },
+    @{ Source = (Join-Path $resourceRoot 'tokenscope-agent.exe'); Target = $agentPath; Backup = 'tokenscope-agent.exe' },
     @{ Source = $manifestPath; Target = (Join-Path $installedResources 'agent-build.json'); Backup = 'agent-build.json' },
-    @{ Source = (Join-Path $releaseRoot 'tokenscope_desktop_lib.dll'); Target = (Join-Path $installDir 'tokenscope_desktop_lib.dll'); Backup = 'tokenscope_desktop_lib.dll' },
-    @{ Source = (Join-Path $releaseRoot 'tokenscope-desktop.exe'); Target = (Join-Path $installDir 'tokenscope-desktop.exe'); Backup = 'tokenscope-desktop.exe' }
+    @{ Source = (Join-Path $releaseRoot 'tokenscope-desktop.exe'); Target = $desktopPath; Backup = 'tokenscope-desktop.exe' }
 )
 foreach ($file in $files) {
     foreach ($path in @($file.Source, $file.Target)) {
@@ -96,8 +99,10 @@ foreach ($file in $files) {
             throw "程序文件无效或是重解析点: $path"
         }
     }
+    $file.SourceHash = (Get-FileHash -LiteralPath $file.Source -Algorithm SHA256).Hash
+    $file.OriginalHash = (Get-FileHash -LiteralPath $file.Target -Algorithm SHA256).Hash
 }
-if ((Get-FileHash -LiteralPath $files[0].Source -Algorithm SHA256).Hash -ne $manifest.sha256) {
+if ($files[0].SourceHash -ne $manifest.sha256) {
     throw '构建的 Agent 与其清单校验值不一致。'
 }
 $node = Get-Command node.exe -ErrorAction Stop
@@ -106,8 +111,6 @@ if ($LASTEXITCODE -ne 0) {
     throw '需要支持 node:sqlite backup 的 Node.js 22。'
 }
 
-$desktopPath = $files[3].Target
-$agentPath = $files[0].Target
 $dbPath = Join-Path $env:LOCALAPPDATA 'dev.tokenscope.desktop\tokenscope.db'
 $shutdownPath = "$dbPath.shutdown"
 $processes = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('tokenscope-desktop.exe', 'tokenscope-agent.exe') })
@@ -142,8 +145,25 @@ if ($installedAgents.Count -gt 1 -or ($installedAgents.Count -and (Test-Path -Li
     throw 'Agent 数量异常或已有停止请求，未修改运行状态。'
 }
 
+# The manifest's staging timestamp can change even when Cargo reused both executables.
+$executablesMatch = @($files | Where-Object { $_.Backup -ne 'agent-build.json' -and $_.SourceHash -ne $_.OriginalHash }).Count -eq 0
+$installedManifest = Get-Content -LiteralPath $files[1].Target -Raw | ConvertFrom-Json -AsHashtable -ErrorAction SilentlyContinue
+$manifestMatches = $null -ne $installedManifest
+foreach ($key in @('appVersion', 'agentVersion', 'buildProfile', 'targetPlatform', 'targetArch', 'binary', 'sha256')) {
+    if (-not $manifestMatches -or $installedManifest[$key] -ne $manifest.$key) {
+        $manifestMatches = $false
+        break
+    }
+}
+$alreadyCurrent = $executablesMatch -and $manifestMatches
+
 if ($ValidateOnly) {
-    Write-Host "已检查安装目录和构建文件: $installDir"
+    $status = if ($alreadyCurrent) { '已安装程序与构建产物一致。' } else { '检测到待更新的构建产物。' }
+    Write-Host "只读检查通过: $installDir。$status"
+    return
+}
+if ($alreadyCurrent) {
+    Write-Host '已安装程序与构建产物一致，无需替换或重启。'
     return
 }
 
@@ -204,10 +224,10 @@ function Wait-ForProcessExit([int]$ProcessId, [int]$Seconds) {
 }
 
 try {
+    Write-Host '正在备份原程序并暂存新版文件…'
     foreach ($file in $files) {
         $file.BackupPath = Join-Path $backupDir $file.Backup
         Copy-Item -LiteralPath $file.Target -Destination $file.BackupPath
-        $file.OriginalHash = (Get-FileHash -LiteralPath $file.Target -Algorithm SHA256).Hash
         if ((Get-FileHash -LiteralPath $file.BackupPath -Algorithm SHA256).Hash -ne $file.OriginalHash) {
             throw '原程序备份校验失败。'
         }
@@ -215,12 +235,12 @@ try {
         if (Test-Path -LiteralPath $file.Stage) { throw '暂存文件已存在。' }
         Copy-Item -LiteralPath $file.Source -Destination $file.Stage
         $stages.Add($file.Stage)
-        $file.SourceHash = (Get-FileHash -LiteralPath $file.Source -Algorithm SHA256).Hash
         if ((Get-FileHash -LiteralPath $file.Stage -Algorithm SHA256).Hash -ne $file.SourceHash) {
             throw '构建文件暂存校验失败。'
         }
     }
 
+    if ($desktopPid) { Write-Host '正在等待已安装的 TokenScope 和 Agent 正常退出…' }
     if ($desktopPid -and $wasVisible) {
         $desktopProcess = Get-Process -Id $desktopPid -ErrorAction SilentlyContinue
         if ($desktopProcess) { [void]$desktopProcess.CloseMainWindow() }
@@ -241,6 +261,7 @@ try {
     if ($remaining.Count) { throw '安装目录仍有 TokenScope 进程运行。' }
 
     if (Test-Path -LiteralPath $dbPath -PathType Leaf) {
+        Write-Host '正在创建并校验数据库备份…'
         $nodeScript = @'
 const { DatabaseSync, backup } = require('node:sqlite');
 (async () => {
@@ -255,6 +276,7 @@ const { DatabaseSync, backup } = require('node:sqlite');
         if ($LASTEXITCODE -ne 0) { throw '数据库在线备份或完整性检查失败。' }
     }
 
+    Write-Host '正在替换并校验程序文件…'
     foreach ($file in $files) {
         if ((Get-FileHash -LiteralPath $file.Target -Algorithm SHA256).Hash -ne $file.OriginalHash) {
             throw '安装文件在更新期间发生变化。'

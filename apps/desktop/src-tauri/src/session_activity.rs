@@ -4,7 +4,6 @@ use std::{
     sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::Manager;
 
 mod codex;
 mod other;
@@ -65,6 +64,15 @@ pub(crate) struct SessionActivity {
     observed_at_ms: u64,
     display_name: Option<String>,
     model_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_speed: Option<OutputSpeed>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+struct OutputSpeed {
+    output_tokens: u64,
+    generation_ms: u64,
+    completed_at_ms: i64,
 }
 
 pub(crate) fn pi_sessions_root() -> Option<std::path::PathBuf> {
@@ -155,35 +163,9 @@ mod tests {
     }
 }
 
-#[derive(Serialize)]
-pub(crate) struct RecentSessionActivity {
-    sessions: Vec<SessionActivity>,
-    sampled_at_ms: i64,
-    rates: Vec<tokenscope_local_store::SessionTokenRate>,
-}
-
 #[tauri::command]
-pub(crate) async fn recent_session_activity(
-    app: tauri::AppHandle,
-) -> Result<RecentSessionActivity, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let sessions = read_activity()?;
-        let sampled_at_ms = chrono::Utc::now().timestamp_millis();
-        let rates = app
-            .path()
-            .app_local_data_dir()
-            .ok()
-            .and_then(|dir| {
-                tokenscope_local_store::LocalStore::open_readonly(&dir.join("tokenscope.db")).ok()
-            })
-            .and_then(|store| store.recent_session_token_rates(sampled_at_ms).ok())
-            .unwrap_or_default();
-        Ok(RecentSessionActivity {
-            sessions,
-            sampled_at_ms,
-            rates,
-        })
-    })
-    .await
-    .map_err(|e| e.to_string())?
+pub(crate) async fn recent_session_activity() -> Result<Vec<SessionActivity>, String> {
+    tauri::async_runtime::spawn_blocking(read_activity)
+        .await
+        .map_err(|e| e.to_string())?
 }

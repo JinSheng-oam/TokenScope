@@ -1,5 +1,5 @@
 use super::super::models::{
-    SessionAnalysisPage, SessionModelUsage, SessionTokenRate, SessionUsage, SessionUsagePage,
+    SessionAnalysisPage, SessionModelUsage, SessionUsage, SessionUsagePage,
 };
 use super::super::LocalStore;
 use super::SESSION_LINKS_CTE;
@@ -7,44 +7,6 @@ use crate::error::{pos_u64, Result, StoreError};
 use rusqlite::params;
 use std::time::Instant;
 impl LocalStore {
-    /// Local, timestamped usage only. The device/time index bounds the scan to one minute.
-    pub fn recent_session_token_rates(&self, now_ms: i64) -> Result<Vec<SessionTokenRate>> {
-        let Some(identity) = self.identity()? else {
-            return Ok(Vec::new());
-        };
-        let mut stmt = self.conn.prepare(
-            r#"WITH recent AS MATERIALIZED (
-                SELECT record_id,tool_id,session_id,
-                    input_uncached_tokens+cache_read_tokens+cache_write_tokens+output_tokens+unclassified_tokens AS tokens
-                FROM usage_records
-                WHERE owner_device_id=?1 AND event_at_ms>?2 AND event_at_ms<=?3
-                    AND scope='device_local' AND is_deleted=0 AND precision IN ('exact','aggregate')
-            ), linked AS (
-                SELECT tool_id,session_id,tokens FROM recent
-                WHERE tool_id<>'antigravity' AND session_id IS NOT NULL
-                UNION ALL
-                SELECT u.tool_id,rs.source_key,u.tokens FROM recent u
-                CROSS JOIN record_sources rs ON rs.record_id=u.record_id AND rs.tool_id=u.tool_id
-                WHERE u.tool_id='antigravity'
-            )
-            SELECT tool_id,session_id,SUM(tokens) FROM linked
-            GROUP BY tool_id,session_id HAVING SUM(tokens)>0"#,
-        )?;
-        let rows = stmt.query_map(
-            params![identity.device_id, now_ms.saturating_sub(60_000), now_ms],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )?;
-        rows.map(|row| {
-            let (tool_id, session_id, tokens) = row?;
-            Ok(SessionTokenRate {
-                tool_id,
-                session_id,
-                tokens: pos_u64(tokens)?,
-            })
-        })
-        .collect()
-    }
-
     pub(super) fn session_usage_page(
         &self,
         owner_device_id: &str,

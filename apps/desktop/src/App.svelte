@@ -260,9 +260,8 @@
     if (!runtimeAvailable || (activeTab !== 'overview' && activeTab !== 'sessions') || document.visibilityState !== 'visible' || activityPolling) return;
     activityPolling = true;
     try {
-      const update = await getRecentSessionActivity();
-      sessionActivity = update.sessions;
-      sessionRates = buildSessionRates(update);
+      sessionActivity = await getRecentSessionActivity();
+      sessionRates = buildSessionRates(sessionActivity);
     } catch {
       sessionActivity = [];
       sessionRates = null;

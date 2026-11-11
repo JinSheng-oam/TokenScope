@@ -22,7 +22,6 @@ pub use models::{
     ModelActivityBreakdown, ModelPriceCatalogState, ModelPriceEntry, ModelPriceInstallReport,
     OutboxEntry, ProjectName, ReconcileReport, RemoteDailyUsage, RemoteDeviceUsage,
     RemoteUsageBreakdown, RemoteUsageChange, RemoteUsageTotals, SessionAnalysisPage,
-    SessionFilterOption, SessionFilterOptions, SessionTokenRate, SessionUsage, SessionUsagePage,
-    SourceCheckpoint, SourceHealth, SyncOutboxStatus, ToolUsageOverview, UsageBreakdown,
-    UsageOverview, UsageTotals,
+    SessionFilterOption, SessionFilterOptions, SessionUsage, SessionUsagePage, SourceCheckpoint,
+    SourceHealth, SyncOutboxStatus, ToolUsageOverview, UsageBreakdown, UsageOverview, UsageTotals,
 };

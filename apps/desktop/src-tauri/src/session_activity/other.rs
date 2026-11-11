@@ -108,6 +108,7 @@ fn activity_from_path(
         observed_at_ms: now,
         display_name: None,
         model_id: None,
+        output_speed: None,
     })
 }
 
@@ -146,6 +147,7 @@ fn read_antigravity_active(db: &Path, now: u64) -> Option<Vec<SessionActivity>> 
                     observed_at_ms: now,
                     display_name: title.map(|name| name.chars().take(200).collect()),
                     model_id: None,
+                    output_speed: None,
                 })
             })
             .collect(),

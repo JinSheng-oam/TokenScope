@@ -1,24 +1,26 @@
 import { formatCompactTokens } from './dashboardView';
-import type { RecentSessionActivity, SessionUsage } from './types';
+import type { SessionActivity, SessionUsage } from './types';
 
 type SessionKey = Pick<SessionUsage, 'tool_id' | 'session_id'>;
+type OutputSpeed = NonNullable<SessionActivity['output_speed']>;
 const sessionKey = (session: SessionKey) => `${session.tool_id}:${session.session_id}`;
 
-export type SessionRates = { sampledAtMs: number; tokens: ReadonlyMap<string, number> };
+export type SessionRates = ReadonlyMap<string, OutputSpeed>;
 
-export const sessionRateTitle = '本机最近 60 秒已采集的平均用量（含输入、输出和缓存）';
+export const sessionRateTitle = 'Codex 最近一轮的估算输出速度：模型输出 Token（含推理）÷ 首个 Token 到回合结束的时间。';
 
-export function buildSessionRates(update: RecentSessionActivity): SessionRates {
-  return {
-    sampledAtMs: update.sampled_at_ms,
-    tokens: new Map(update.rates.map((rate) => [sessionKey(rate), rate.tokens])),
-  };
+export function buildSessionRates(sessions: SessionActivity[]): SessionRates {
+  const rates = new Map<string, OutputSpeed>();
+  for (const session of sessions) {
+    if (session.output_speed) rates.set(sessionKey(session), session.output_speed);
+  }
+  return rates;
 }
 
 export function sessionRateLabel(rates: SessionRates | null, session: SessionKey, nowMs: number): string | null {
-  if (!rates || nowMs - rates.sampledAtMs > 20_000) return null;
-  const tokens = rates.tokens.get(sessionKey(session));
-  if (!tokens) return null;
-  const perSecond = tokens / 60;
-  return `${perSecond < 1 ? '<1' : formatCompactTokens(perSecond)} Token/s`;
+  const speed = rates?.get(sessionKey(session));
+  if (!speed || nowMs - speed.completed_at_ms > 5 * 60_000) return null;
+  const perSecond = speed.output_tokens * 1000 / speed.generation_ms;
+  const display = perSecond < 1 ? '<1' : perSecond < 100 ? perSecond.toFixed(1) : formatCompactTokens(perSecond);
+  return `上次输出 ≈ ${display} Token/s`;
 }

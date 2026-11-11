@@ -161,7 +161,6 @@
 
 <div class="page-header">
   <h1>模型定价</h1>
-  <p>{shownCurrency} ({currencySymbol}) / 百万 Token{catalog?.updated_at_ms ? ' · 更新于 ' + dateFormat.format(catalog.updated_at_ms) : ''}</p>
 </div>
 
 {#if !runtimeAvailable}
@@ -174,6 +173,7 @@
         <p>
           {#if catalog}
             共收录 <strong>{formatNumber(entries.length)}</strong> 个模型 · 覆盖 <strong>{formatNumber(providerCounts.size)}</strong> 家厂商{#if manual.length > 0} · 含 <strong>{formatNumber(manual.length)}</strong> 条手动报价{/if}
+            · {shownCurrency} ({currencySymbol}) / 百万 Token{#if catalog.updated_at_ms} · 更新于 {dateFormat.format(catalog.updated_at_ms)}{/if}
           {:else if loading}
             正在同步模型价格目录…
           {:else}

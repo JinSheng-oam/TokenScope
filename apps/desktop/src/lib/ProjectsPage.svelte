@@ -129,10 +129,7 @@
 </script>
 
 <div class="page-header">
-  <div>
-    <h1>项目分析</h1>
-    <p>项目名称会在已配对设备间同步；完整目录路径保留在本机</p>
-  </div>
+  <h1>项目分析</h1>
   {#if workspaceProjects.length > 0}
     <div class="range-capsule" role="group" aria-label="项目展示聚合方式">
       <button

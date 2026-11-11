@@ -504,10 +504,8 @@
 </script>
 
 <div class="custom-page" class:fit-workspace={!showShared && !showAiConfig && !showMcp}>
-  <div class="custom-heading">
-    <div class="heading-text">
-      <h1>Agent 配置与技能管理</h1>
-    </div>
+  <div class="page-header custom-heading">
+    <h1>Agent 配置与技能管理</h1>
     <div class="head-right-actions"><button class="ai-toggle-btn" class:active={showShared} aria-expanded={showShared} disabled={!runtimeAvailable} onclick={() => { if (showShared && sharedDirty && !window.confirm("放弃未保存的统一指令？")) return; showShared = !showShared; if (!showShared) sharedDirty = false; }}><span class="ai-status-dot" class:configured={sharedConfigured && !sharedDirty} class:dirty={sharedDirty}></span><span class="ai-btn-icon">{@html icons.edit}</span><span>统一指令</span></button>
       <button
         class="ai-toggle-btn"
@@ -872,19 +870,7 @@
   }
 
   .custom-heading {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-    flex-wrap: wrap;
-  }
-
-  .heading-text h1 {
-    font-size: 20px;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    margin: 0 0 4px;
-    color: var(--text-primary);
+    margin-bottom: calc(var(--page-heading-gap) - 12px);
   }
 
   .head-right-actions {

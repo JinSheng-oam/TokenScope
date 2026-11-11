@@ -17,8 +17,6 @@ import { formatCompactTokens, resolveSessionActivityState, findActivityForSessio
   export let sessionRates: SessionRates | null = null;
   export let local: UsageTotals | undefined;
   export let tools: UsageBreakdown[] | undefined = undefined;
-  export let deviceScope: string = 'all';
-  export let deviceScopeLabel: string = '全部设备汇总';
   export let exactRatio: string;
   export let cacheHitRate: string;
   export let inputShareRate: string;
@@ -51,19 +49,6 @@ import { formatCompactTokens, resolveSessionActivityState, findActivityForSessio
 <div class="overview-layout">
   <div class="page-header">
     <h1>使用总览</h1>
-    <p class="overview-header-meta">
-      <span>统计时区 {snapshot.time_zone}</span>
-      <span class="meta-dot">·</span>
-      <span>更新于 {relativeTime(snapshot.generated_at_ms)}</span>
-      <span class="meta-dot">·</span>
-      {#if deviceScope === 'all' && snapshot.remote.total_tokens > 0}
-        <span class="meta-scope-highlight">
-          本机 {formatCompactTokens(snapshot.local.total_tokens)} + 远端 {formatCompactTokens(snapshot.remote.total_tokens)}
-        </span>
-      {:else}
-        <span>{deviceScopeLabel}</span>
-      {/if}
-    </p>
   </div>
 
   <!-- 4 Metric Cards -->

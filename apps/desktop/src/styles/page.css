@@ -2,6 +2,7 @@
    Page Content & Header
    ========================================================================== */
 .page-content {
+  --page-heading-gap: 14px;
   flex: 1;
   min-height: 0;
   width: 100%;
@@ -22,11 +23,12 @@
 
 .page-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 4px 16px;
-  margin-bottom: 14px;
+  min-height: 34px;
+  gap: 8px 16px;
+  margin-bottom: var(--page-heading-gap, 14px);
 }
 
 .page-header h1 {
@@ -36,14 +38,6 @@
   line-height: 1.25;
   letter-spacing: -0.025em;
   color: var(--text-primary);
-}
-
-.page-header p {
-  margin: 0;
-  max-width: 78ch;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--text-muted);
 }
 
 /* Notice / Alert Banners */
@@ -218,30 +212,6 @@
 
 .metric-foot-sub {
   color: var(--text-muted);
-}
-
-.overview-header-meta {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.overview-header-meta .meta-dot {
-  color: var(--border-strong);
-}
-
-.overview-header-meta .meta-scope-highlight {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--brand-primary);
-  background-color: var(--brand-subtle);
-  border: 1px solid var(--brand-border);
-  font-variant-numeric: tabular-nums;
 }
 
 /* Top Metric Rolling Number */

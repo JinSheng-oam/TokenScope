@@ -641,8 +641,6 @@
             {sessionRates}
             local={dashboardView.local}
             tools={dashboardView.scopedTools}
-            {deviceScope}
-            {deviceScopeLabel}
             exactRatio={dashboardView.exactRatio}
             cacheHitRate={dashboardView.tokenShares.cacheHitRate}
             inputShareRate={dashboardView.tokenShares.inputShareRate}

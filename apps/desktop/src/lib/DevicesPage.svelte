@@ -81,9 +81,7 @@
 </script>
 
 <div class="page-header">
-  <div>
-    <h1>多设备网络</h1>
-  </div>
+  <h1>多设备网络</h1>
 </div>
 
 <!-- Cross-device Summary -->

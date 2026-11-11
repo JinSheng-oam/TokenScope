@@ -14,9 +14,7 @@
 </script>
 
 <div class="page-header">
-  <div>
-    <h1>模型排行与用量分析</h1>
-  </div>
+  <h1>模型排行与用量分析</h1>
   <div class="range-capsule" role="group" aria-label="模型列表排序模式">
     <button
       class="range-btn"

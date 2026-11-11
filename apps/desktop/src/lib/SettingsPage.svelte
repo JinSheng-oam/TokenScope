@@ -98,10 +98,7 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
 
 <div class="settings-page">
   <div class="page-header settings-header">
-    <div>
-      <h1>系统设置</h1>
-      <p>调整外观、数据更新方式，并查看本机采集与运行状态。</p>
-    </div>
+    <h1>系统设置</h1>
   </div>
 
   <div class="settings-preferences">
@@ -321,7 +318,7 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
   .settings-page {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: var(--page-heading-gap);
   }
 
   .settings-header {

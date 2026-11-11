@@ -12,9 +12,7 @@
 </script>
 
 <div class="page-header">
-  <div>
-    <h1>工具分析</h1>
-  </div>
+  <h1>工具分析</h1>
 </div>
 
 <section class="panel-card" style="margin-bottom: 16px;">

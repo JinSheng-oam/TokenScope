@@ -129,10 +129,6 @@
   $: detailSession = selectedKey === null ? null
     : sessionPage?.sessions.find((session) => sessionActionKey(session) === selectedKey) ?? null;
   $: if (selectedKey && !detailSession && !sessionLoading) void closeDetails();
-  $: activeCount = sortedSessions.filter(
-    (s) => resolveSessionActivityState(s, sessionActivity, $liveNow) !== null,
-  ).length;
-
   $: cleanProjectOptions = [
     { key: '', label: '全部项目' },
     ...sessionFilterOptions.projects
@@ -143,42 +139,12 @@
 </script>
 
 <section class="session-workspace" aria-label="会话分析">
-  <div class="session-heading">
-    <div>
-      <h1>会话分析</h1>
-      <p>
-        {#if sessionPage}
-          显示 {formatNumber(sessionPageStart)}–{formatNumber(sessionPageEnd)} / {formatNumber(sessionPage.total)} 个匹配会话
-          {#if sessionLoading}
-            <span class="session-head-sync">
-              <span class="session-head-pulse" aria-hidden="true"></span>正在同步…
-            </span>
-          {/if}
-        {:else if sessionLoading}
-          <span class="session-head-status">
-            <span class="session-head-pulse" aria-hidden="true"></span>正在查询会话…
-          </span>
-        {:else}
-          当前范围：{rangeLabel}
-        {/if}
-      </p>
-    </div>
-    <div class="session-page-size">
-      <span class="session-page-size-label">每页</span>
-      <CustomSelect
-        value={String(sessionPageSize)}
-        options={pageSizeOptions}
-        align="right"
-        ariaLabel="设置每页会话数量"
-        onChange={(val) => onSetSessionPageSize(Number(val))}
-      />
-    </div>
-  </div>
+  <div class="page-header"><h1>会话分析</h1></div>
 
   <div class="session-filter-panel">
     <div class="session-filter-row">
       <label class="session-filter-field session-search-field">
-        <span>搜索会话</span>
+        <span class="session-search-icon" aria-hidden="true">{@html icons.search}</span>
         <input
           type="search"
           bind:this={searchInput}
@@ -235,8 +201,8 @@
   {/if}
 
   {#if sessionPage && sessionPage.sessions.length > 0}
-    <div class="session-sort-bar" role="group" aria-label="会话排序">
-      <span class="session-sort-label">排序</span>
+    <div class="session-sort-bar" role="group" aria-label="会话排序，仅对本页生效">
+      <span class="session-sort-label" title="仅对本页排序">排序：</span>
       {#each sortOptions as opt}
         <button
           type="button"
@@ -249,10 +215,6 @@
           {#if sortBy === opt.key}<span class="sort-arrow" aria-hidden="true">{sortDir === 'desc' ? '↓' : '↑'}</span>{/if}
         </button>
       {/each}
-      <span class="session-sort-hint">
-        {#if activeCount > 0}<span class="session-sort-live"><i></i>{activeCount} 个活跃</span>{/if}
-        仅对本页 {sortedSessions.length} 条排序
-      </span>
     </div>
     <div class="session-timeline" aria-busy={sessionLoading}>
       {#each groups as group (group.key)}
@@ -289,16 +251,20 @@
                   </span>
                   <span class="session-entry-metric">
                     <span>Token 用量</span>
-                    <strong>{formatNumber(session.total_tokens)}</strong>
-                    {#if session.usage_record_count > 0 && session.exact_records === session.usage_record_count}
-                      <small class="session-entry-precision">精确</small>
-                    {/if}
+                    <span class="session-token-value">
+                      <strong>{formatNumber(session.total_tokens)}</strong>
+                      {#if session.usage_record_count > 0 && session.exact_records === session.usage_record_count}
+                        <small class="session-entry-precision">精确</small>
+                      {/if}
+                    </span>
                     {#if rate}<small title={sessionRateTitle}>{rate}</small>{/if}
                   </span>
                   <span class="session-entry-metric session-entry-responses">
                     <span>{session.tool_id === 'antigravity' ? '响应 · 来源累计' : '响应次数'}</span>
                     <strong>{session.known_response_count === null ? '—' : formatNumber(session.known_response_count)}</strong>
-                    <small>{eventTime === null ? '时间未知' : relativeTime(eventTime, $liveNow)}</small>
+                    {#if sortBy !== 'time'}
+                      <small>{eventTime === null ? '时间未知' : relativeTime(eventTime, $liveNow)}</small>
+                    {/if}
                   </span>
                   <span class="session-entry-arrow" aria-hidden="true">{@html icons.chevronRight}</span>
                 </button>
@@ -309,10 +275,22 @@
       {/each}
     </div>
     <div class="session-pagination">
-      <span>第 {formatNumber(Math.floor(sessionOffset / sessionPage.limit) + 1)} / {formatNumber(Math.ceil(sessionPage.total / sessionPage.limit))} 页</span>
-      <div aria-label="会话分页">
-        <button class="btn-secondary" disabled={sessionOffset === 0 || refreshing || isPaginating} onclick={() => handleSessionPage(Math.max(0, sessionOffset - sessionPage.limit))}>上一页</button>
-        <button class="btn-secondary" disabled={sessionOffset + sessionPage.limit >= sessionPage.total || refreshing || isPaginating} onclick={() => handleSessionPage(sessionOffset + sessionPage.limit)}>下一页</button>
+      <span role="status">{sessionLoading ? '更新中…' : formatNumber(sessionPageStart) + '–' + formatNumber(sessionPageEnd) + ' / ' + formatNumber(sessionPage.total) + ' 条'}</span>
+      <div class="session-pagination-controls">
+        <div class="session-page-size">
+          <span class="session-page-size-label">每页</span>
+          <CustomSelect
+            value={String(sessionPageSize)}
+            options={pageSizeOptions}
+            align="right"
+            ariaLabel="设置每页会话数量"
+            onChange={(val) => onSetSessionPageSize(Number(val))}
+          />
+        </div>
+        <div aria-label="会话分页">
+          <button class="btn-secondary" disabled={sessionOffset === 0 || refreshing || isPaginating} onclick={() => handleSessionPage(Math.max(0, sessionOffset - sessionPage.limit))}>上一页</button>
+          <button class="btn-secondary" disabled={sessionOffset + sessionPage.limit >= sessionPage.total || refreshing || isPaginating} onclick={() => handleSessionPage(sessionOffset + sessionPage.limit)}>下一页</button>
+        </div>
       </div>
     </div>
   {:else if sessionLoading && !sessionAnalysis}

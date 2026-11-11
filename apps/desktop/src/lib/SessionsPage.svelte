@@ -10,6 +10,7 @@
     type SessionSortDirection,
     type SessionSortField,
   } from '../lib/dashboardView';
+  import { sessionRateLabel, sessionRateTitle, type SessionRates } from './sessionRates';
   import { liveNow } from '../lib/liveClock';
   import { SESSION_PAGE_SIZES } from '../lib/sessionController';
   import type {
@@ -60,6 +61,7 @@
   export let onLoadSessionAnalysis: () => Promise<void>;
 
   export let sessionActivity: SessionActivity[] = [];
+  export let sessionRates: SessionRates | null = null;
   let historySession: SessionUsage | null = null;
   const historyTools = new Set(['codex', 'claude', 'deepseek-harness', 'antigravity', 'pi']);
   const readOnlyHistoryTools = new Set(['antigravity', 'pi']);
@@ -296,6 +298,7 @@
         <tbody>
           {#each sortedSessions as session (`${session.tool_id}:${session.session_id}`)}
             {@const actState = resolveSessionActivityState(session, sessionActivity, $liveNow)}
+            {@const rate = sessionRateLabel(sessionRates, session, $liveNow)}
             {@const projectLabels = session.project_ids.map((id) => getSessionProjectLabel(id)).filter((p) => p && p.trim().length > 0 && !p.startsWith('prj_') && p !== '项目名称未提供')}
             {@const isDeletingThis = pendingSessionDeleteKey === sessionActionKey(session)}
             {@const promptTokens = (session.input_uncached_tokens ?? 0) + (session.cache_read_tokens ?? 0) + (session.cache_write_tokens ?? 0)}
@@ -412,6 +415,9 @@
                 <div class="session-token-main">
                   <strong>{formatNumber(session.total_tokens)}</strong>
                 </div>
+                {#if rate}
+                  <div class="session-token-rate" title={sessionRateTitle}>{rate}</div>
+                {/if}
                 {#if promptTokens > 0}
                   <div
                     class="session-precision-sub session-cache-rate"

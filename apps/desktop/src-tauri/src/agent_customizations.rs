@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 
+mod dsh_mcp;
 mod file_io;
 pub(crate) mod mcp;
 mod paths;

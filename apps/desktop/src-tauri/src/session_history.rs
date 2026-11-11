@@ -587,7 +587,7 @@ fn mutate<T>(
         options.share_mode(0x1 | 0x4);
     }
     let original = options
-        .open(&path)
+        .open(path)
         .map_err(|e| format!("无法锁定会话文件，请退出原会话后重试：{e}"))?;
     let bytes = read_bytes(&original)?;
     if file_revision(path, &revision(&bytes)) != expected_revision {
@@ -597,7 +597,7 @@ fn mutate<T>(
         tool_id,
         &bytes,
         0,
-        same_revision(&path, &original, expected_revision, &last),
+        same_revision(path, &original, expected_revision, &last),
     )?
     .writable
     {
@@ -735,7 +735,7 @@ pub(crate) async fn get_session_history(
                 .unwrap_or_default()
         });
         let path = part_path(&paths, index)?;
-        let file = File::open(&path).map_err(io)?;
+        let file = File::open(path).map_err(io)?;
         let bytes = read_bytes(&file)?;
         let mut history = inspect(
             &tool_id,
@@ -748,7 +748,7 @@ pub(crate) async fn get_session_history(
         history.revision = file_revision(path, &history.revision);
         if history.writable {
             let last = LAST_SAVE.lock().map_err(|_| "会话保存锁不可用")?;
-            history.writable = same_revision(&path, &file, &history.revision, &last);
+            history.writable = same_revision(path, &file, &history.revision, &last);
         }
         Ok(history)
     })

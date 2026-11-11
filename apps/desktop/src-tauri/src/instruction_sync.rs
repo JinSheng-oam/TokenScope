@@ -447,7 +447,7 @@ fn run(app: &AppHandle, action: Action) -> Result<View, String> {
         write_json(&data, &path, &state)?;
         match remote::sync(app, &mut state, None, false) {
             Ok((status, remote_conflict, downloaded)) => {
-                message.push_str("；");
+                message.push('；');
                 message.push_str(&status);
                 conflict = remote_conflict;
                 if downloaded && state.auto_apply {

@@ -10,6 +10,7 @@ mod instruction_sync;
 mod lifecycle;
 mod model_pricing;
 mod paths;
+mod project_updates;
 mod session_activity;
 mod session_history;
 mod settings;
@@ -112,6 +113,8 @@ pub fn run() {
             dashboard::get_session_analysis,
             dashboard::delete_session,
             diagnostics::run_diagnostics,
+            project_updates::check_project_update,
+            project_updates::open_project_page,
             settings::get_autostart_enabled,
             settings::set_autostart_enabled,
             hub::pair_hub_device,

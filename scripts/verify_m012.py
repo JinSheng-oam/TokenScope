@@ -44,7 +44,7 @@ check('Release staging script wired', 'stage-agent.mjs --release' in package['sc
 check('Desktop CI builds installers', 'npx tauri build --bundles' in workflow)
 check('Desktop CI uploads installers', 'actions/upload-artifact@v4' in workflow)
 check('Desktop CI lints the Tauri Rust shell', 'cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml' in workflow)
-check('CI install command remains compatible with missing lockfile', 'npm install --no-audit --no-fund' in workflow)
+check('CI installs frontend dependencies from the lockfile', 'npm ci --no-audit --no-fund' in workflow)
 
 failed = [name for name, ok in checks if not ok]
 for name, ok in checks:

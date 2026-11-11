@@ -8,6 +8,7 @@
   export let dirty = false;
   export let onClose: () => void;
 
+  let profile: 'desktop' | 'web' = 'desktop';
   let view: View | null = null;
   let draft = '';
   let busy = false;
@@ -25,8 +26,8 @@
     notice = '';
     try {
       const next = save
-        ? await invoke<View>('save_mcp_config', { provider, expected: view!.revision, draft })
-        : await invoke<View>('read_mcp_config', { provider });
+        ? await invoke<View>('save_mcp_config', { provider, profile, expected: view!.revision, draft })
+        : await invoke<View>('read_mcp_config', { provider, profile });
       view = next;
       draft = next.draft;
       if (save) notice = '已保存到本机。请在原 Agent 中重新加载配置。';
@@ -37,9 +38,21 @@
     }
   }
 
-  onMount(() => {
-    if (provider !== 'deepseek') void run();
-  });
+  function switchProfile(event: Event) {
+    const select = event.currentTarget as HTMLSelectElement;
+    const next = select.value === 'web' ? 'web' : 'desktop';
+    if (dirty && !window.confirm('放弃未保存的 MCP 修改？')) {
+      select.value = profile;
+      return;
+    }
+    profile = next;
+    view = null;
+    draft = '';
+    reveal = false;
+    void run();
+  }
+
+  onMount(() => { void run(); });
 </script>
 
 <section class="mcp-panel" aria-label="MCP 配置">
@@ -52,13 +65,23 @@
   </div>
 
   {#if provider === 'deepseek'}
-    <p>请在 DeepSeek Harness 的设置中管理 MCP。不同配置档案各有自己的服务器列表。</p>
-  {:else}
+    <div class="mcp-actions">
+      <label for="dsh-mcp-profile">配置档案</label>
+      <select id="dsh-mcp-profile" value={profile} disabled={busy} onchange={switchProfile}>
+        <option value="desktop">Desktop</option>
+        <option value="web">Web</option>
+      </select>
+    </div>
+    <p>这里只管理通过 TokenScope 添加的服务器。手写、继承和插件注册的配置请在 DeepSeek 中查看。</p>
+  {/if}
     {#if error}<p class="mcp-error" role="alert">{error}</p>{/if}
     {#if notice}<p role="status">{notice}</p>{/if}
     {#if view}
       <p>仅编辑 MCP 段。配置可能包含密钥，只保存在本机。</p>
       {#if reveal}
+        {#if provider === 'deepseek'}
+          <p>本地进程用 transport: stdio 和 command；远端用 transport: streamable-http 和 url。enabled: false 可停用。</p>
+        {/if}
         <label for="mcp-config-draft">服务器配置（{view.format}）</label>
         <textarea id="mcp-config-draft" bind:value={draft} disabled={busy} spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
       {/if}
@@ -70,7 +93,6 @@
         <button type="button" class="btn-primary" disabled={busy || !dirty || !reveal} onclick={() => void run(true)}>保存 MCP</button>
       {/if}
     </div>
-  {/if}
 </section>
 
 <style>

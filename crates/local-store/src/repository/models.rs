@@ -409,6 +409,13 @@ pub struct ModelActivityBreakdown {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionTokenRate {
+    pub tool_id: String,
+    pub session_id: String,
+    pub tokens: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionUsage {
     /// Stable opaque session key; never a title, file path, or native account ID.
     pub session_id: String,

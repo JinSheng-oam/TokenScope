@@ -1,0 +1,120 @@
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    outputs:
+      commit: ${{ steps.version.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify stable version and source
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          git merge-base --is-ancestor HEAD origin/main
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          tag = os.environ["RELEASE_TAG"]
+          if not re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag):
+              raise SystemExit("Release tags must use vMAJOR.MINOR.PATCH.")
+          expected = tag[1:]
+          sources = {
+              "apps/desktop/src-tauri/tauri.conf.json": ("version",),
+              "apps/desktop/package.json": ("version",),
+              "apps/desktop/package-lock.json": ("packages", "", "version"),
+              "apps/desktop/src-tauri/Cargo.toml": ("package", "version"),
+              "Cargo.toml": ("workspace", "package", "version"),
+          }
+          for filename, keys in sources.items():
+              path = Path(filename)
+              content = path.read_text(encoding="utf-8")
+              value = (json.loads if path.suffix == ".json" else tomllib.loads)(content)
+              for key in keys:
+                  value = value[key]
+              if value != expected:
+                  raise SystemExit(f"{filename}: expected {expected}, got {value}")
+          PY
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: validate
+    uses: ./.github/workflows/desktop-ci.yml
+
+  draft:
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tokenscope-*
+          path: artifacts
+      - name: Verify installers and generate SHA-256 manifest
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import shutil
+          from pathlib import Path
+
+          expected = {
+              "tokenscope-windows-2022": (".msi", ".exe"),
+              "tokenscope-macos-15": (".dmg",),
+              "tokenscope-ubuntu-24.04": (".deb", ".AppImage"),
+          }
+          output = Path("release-assets")
+          output.mkdir()
+          for artifact, extensions in expected.items():
+              for extension in extensions:
+                  matches = list((Path("artifacts") / artifact).rglob(f"*{extension}"))
+                  if len(matches) != 1 or not matches[0].is_file() or not matches[0].stat().st_size:
+                      raise SystemExit(f"{artifact}: expected one nonempty {extension} installer")
+                  target = output / matches[0].name
+                  if target.exists():
+                      raise SystemExit(f"Duplicate asset name: {target.name}")
+                  shutil.copyfile(matches[0], target)
+          checksums = []
+          for asset in sorted(output.iterdir()):
+              with asset.open("rb") as source:
+                  digest = hashlib.file_digest(source, "sha256").hexdigest()
+              checksums.append(f"{digest}  {asset.name}\n")
+          (output / "SHA256SUMS.txt").write_text("".join(checksums), encoding="utf-8")
+          PY
+      - name: Create GitHub Release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          EXPECTED_COMMIT: ${{ needs.validate.outputs.commit }}
+        shell: bash
+        run: |
+          actual_commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')
+          if [[ "$actual_commit" != "$EXPECTED_COMMIT" ]]; then
+            echo "The remote tag no longer points to the tested commit." >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --draft --generate-notes \
+            --title "TokenScope $RELEASE_TAG"

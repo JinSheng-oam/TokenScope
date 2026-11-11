@@ -61,6 +61,12 @@ export type ModelActivityBreakdown = {
   time_scope: 'selected_range' | 'all_time';
 };
 
+export type RecentSessionActivity = {
+  sessions: SessionActivity[];
+  sampled_at_ms: number;
+  rates: { tool_id: string; session_id: string; tokens: number }[];
+};
+
 export type SessionUsage = {
   session_id: string;
   tool_id: string;

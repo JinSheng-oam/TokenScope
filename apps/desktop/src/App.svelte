@@ -1,5 +1,6 @@
 <script lang="ts">
   import DashboardTopbar from './lib/DashboardTopbar.svelte';
+  import { buildSessionRates, type SessionRates } from './lib/sessionRates';
   import { dashboardRequestKey } from './lib/dashboardRequests';
   import { createDashboardLoader } from './lib/dashboardLoader';
   import { onMount } from 'svelte';
@@ -54,6 +55,7 @@
   let codexQuotaError = '';
   let codexQuotaOverride: CodexQuota[] | null = null;
   let sessionActivity: SessionActivity[] = [];
+  let sessionRates: SessionRates | null = null;
   let activityPolling = false;
   let activityTimer: number | undefined;
   let quotaTimer: number | undefined;
@@ -258,9 +260,12 @@
     if (!runtimeAvailable || (activeTab !== 'overview' && activeTab !== 'sessions') || document.visibilityState !== 'visible' || activityPolling) return;
     activityPolling = true;
     try {
-      sessionActivity = await getRecentSessionActivity();
+      const update = await getRecentSessionActivity();
+      sessionActivity = update.sessions;
+      sessionRates = buildSessionRates(update);
     } catch {
       sessionActivity = [];
+      sessionRates = null;
     } finally {
       activityPolling = false;
     }
@@ -634,6 +639,7 @@
           <OverviewPage
             {snapshot}
             {sessionActivity}
+            {sessionRates}
             local={dashboardView.local}
             tools={dashboardView.scopedTools}
             {deviceScope}
@@ -713,6 +719,7 @@
           <SessionsPage
             sessionAnalysis={$sessionState.analysis}
             {sessionActivity}
+            {sessionRates}
             {sessionPage}
             {sessionPageStart}
             {sessionPageEnd}

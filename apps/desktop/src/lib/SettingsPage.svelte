@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import ProjectAbout from './ProjectAbout.svelte';
 import { BOOTSTRAP_STAGE } from '../lib/status';
   import { formatNumber } from '../lib/format';
   import type { ThemeMode } from '../lib/theme';
@@ -313,6 +314,7 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
               <div class="empty-box">尚未运行诊断。升级后、发现统计异常或采集器停止时，建议先运行一次。</div>
             {/if}
           </section>
+  <ProjectAbout {runtimeAvailable} />
 </div>
 
 <style>

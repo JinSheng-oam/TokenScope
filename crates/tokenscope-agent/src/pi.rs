@@ -198,13 +198,15 @@ fn parse_entries(
 
 enum Scan {
     Cached,
-    Changed {
-        checkpoint: SourceCheckpoint,
-        previous: Option<SourceCheckpoint>,
-        project: Option<(String, String)>,
-        title: Option<String>,
-        records: Vec<CanonicalRecord>,
-    },
+    Changed(Box<ChangedScan>),
+}
+
+struct ChangedScan {
+    checkpoint: SourceCheckpoint,
+    previous: Option<SourceCheckpoint>,
+    project: Option<(String, String)>,
+    title: Option<String>,
+    records: Vec<CanonicalRecord>,
 }
 
 fn scan(path: &Path, store: &LocalStore, device: &str) -> Result<Scan> {
@@ -253,7 +255,7 @@ fn scan(path: &Path, store: &LocalStore, device: &str) -> Result<Scan> {
             .as_ref()
             .map_or(0, |old| old.last_scan_ms.saturating_add(1)),
     );
-    Ok(Scan::Changed {
+    Ok(Scan::Changed(Box::new(ChangedScan {
         checkpoint: SourceCheckpoint {
             tool_id: TOOL.to_owned(),
             source_key: key,
@@ -268,7 +270,7 @@ fn scan(path: &Path, store: &LocalStore, device: &str) -> Result<Scan> {
         project,
         title,
         records,
-    })
+    })))
 }
 
 pub(super) fn collect(root: &Path, store: &mut LocalStore, device: &str) -> Result<Report> {
@@ -309,13 +311,14 @@ pub(super) fn collect(root: &Path, store: &mut LocalStore, device: &str) -> Resu
                 report.files += 1;
                 match scan(&entry.path(), store, device) {
                     Ok(Scan::Cached) => report.cached += 1,
-                    Ok(Scan::Changed {
-                        checkpoint,
-                        previous,
-                        project,
-                        title,
-                        records,
-                    }) => {
+                    Ok(Scan::Changed(changed)) => {
+                        let ChangedScan {
+                            checkpoint,
+                            previous,
+                            project,
+                            title,
+                            records,
+                        } = *changed;
                         let now = checkpoint.last_scan_ms;
                         if let Some((id, name)) = project {
                             store.upsert_project_name(&id, &name, now)?;

@@ -56,6 +56,54 @@ mod dashboard_tests {
     }
 
     #[test]
+    fn recent_session_rate_uses_timestamped_local_usage_without_double_counting_reasoning() {
+        let mut store = LocalStore::open_in_memory().unwrap();
+        store
+            .init_identity(&LocalIdentity {
+                device_id: "device-a".into(),
+                display_name: "Office PC".into(),
+                time_zone: "UTC".into(),
+            })
+            .unwrap();
+        let checkpoint = SourceCheckpoint {
+            tool_id: "codex".into(),
+            source_key: "test-source".into(),
+            source_fingerprint: "fingerprint-v1".into(),
+            read_offset: 100,
+            parser_version: 1,
+            last_scan_ms: 120_000,
+            last_complete_scan_ms: Some(120_000),
+            last_status: "complete".into(),
+        };
+        let session_id = format!("sess_{}", "b".repeat(64));
+        let mut rows = [
+            record('a', UsageScope::DeviceLocal, Some(60_000)),
+            record('b', UsageScope::DeviceLocal, Some(60_001)),
+            record('c', UsageScope::DeviceLocal, Some(120_000)),
+            record('d', UsageScope::DeviceLocal, Some(120_001)),
+            record('e', UsageScope::DeviceLocal, None),
+            record('f', UsageScope::AccountGlobal, Some(120_000)),
+            record('1', UsageScope::DeviceLocal, Some(120_000)),
+        ];
+        rows[6].precision = Precision::Estimated;
+        for row in &mut rows {
+            row.session_id = Some(session_id.clone());
+        }
+        store
+            .apply_scan(None, &checkpoint, &rows, 120_000, false)
+            .unwrap();
+
+        let rates = store.recent_session_token_rates(120_000).unwrap();
+        assert_eq!(rates.len(), 1);
+        assert_eq!(rates[0].session_id, session_id);
+        assert_eq!(rates[0].tokens, 330);
+        assert!(store
+            .recent_session_token_rates(180_001)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
     fn dashboard_keeps_scope_and_reasoning_semantics_separate() {
         let mut store = LocalStore::open_in_memory().unwrap();
         store

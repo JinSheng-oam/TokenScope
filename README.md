@@ -21,6 +21,17 @@ npm --prefix apps/desktop run tauri:dev
 
 开发与打包命令会构建并暂存同版本 Agent。构建桌面安装包使用 `npm --prefix apps/desktop run tauri:build`。升级时配套使用桌面端和 Agent，避免旧程序读取新版本数据库。
 
+## 发布桌面版本
+
+将桌面端、Agent 和前端清单中的版本号及相应锁文件更新为同一版本，并先将改动合入 `main`。然后为该提交推送稳定版标签（例如 `v0.1.1`）：
+
+```text
+git tag -a v0.1.1 -m "TokenScope v0.1.1"
+git push origin v0.1.1
+```
+
+发布 CI 会核对标签与版本，测试并构建 Windows x64（MSI / NSIS）、macOS Apple Silicon（DMG）、Linux x64（DEB / AppImage）。五个安装包齐全后，GitHub 会创建包含安装包和 `SHA256SUMS.txt` 的 Release 草稿。通过真机安装、升级和退出验证后，再在 [Releases](https://github.com/JinSheng-oam/TokenScope/releases) 发布为正式版；设置里的「检查更新」只查询已发布的正式版。
+
 ## 命令行
 
 在仓库根目录运行：

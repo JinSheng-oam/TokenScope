@@ -1,11 +1,32 @@
 name: Desktop UI, Agent and Installer CI
 on:
   push:
-    paths: ['apps/desktop/**', 'crates/**', 'scripts/stage-agent.mjs', 'scripts/verify_m012.py', 'scripts/verify_m102.py', 'scripts/verify_m104.py', 'scripts/verify_m105.py', 'scripts/verify_m106.py', 'scripts/verify_m107.py', 'Cargo.toml', 'rust-toolchain.toml', '.github/workflows/desktop-ci.yml']
+    paths: ['apps/desktop/**', 'crates/**', 'scripts/stage-agent.mjs', 'scripts/verify_m012.py', 'scripts/verify_m102.py', 'scripts/verify_m104.py', 'scripts/verify_m105.py', 'scripts/verify_m106.py', 'scripts/verify_m107.py', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.github/workflows/desktop-ci.yml']
   pull_request:
-    paths: ['apps/desktop/**', 'crates/**', 'scripts/stage-agent.mjs', 'scripts/verify_m012.py', 'scripts/verify_m102.py', 'scripts/verify_m104.py', 'scripts/verify_m105.py', 'scripts/verify_m106.py', 'scripts/verify_m107.py', 'Cargo.toml', 'rust-toolchain.toml', '.github/workflows/desktop-ci.yml']
+    paths: ['apps/desktop/**', 'crates/**', 'scripts/stage-agent.mjs', 'scripts/verify_m012.py', 'scripts/verify_m102.py', 'scripts/verify_m104.py', 'scripts/verify_m105.py', 'scripts/verify_m106.py', 'scripts/verify_m107.py', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.github/workflows/desktop-ci.yml']
   workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+env:
+  PYTHONUTF8: '1'
 jobs:
+  legacy-contracts:
+    # These historical source-pattern checks are kept in branch CI.
+    # Release builds use the compiled tests and the installer artifact gate.
+    if: github.ref_type != 'tag'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Historical milestone contracts
+        run: |
+          for gate in m012 m102 m104 m105 m106 m107; do
+            python "scripts/verify_${gate}.py" || failed=1
+          done
+          exit "${failed:-0}"
+
   desktop:
     strategy:
       fail-fast: false
@@ -15,7 +36,7 @@ jobs:
             bundles: deb,appimage
           - os: windows-2022
             bundles: msi,nsis
-          - os: macos-14
+          - os: macos-15
             bundles: dmg
     runs-on: ${{ matrix.os }}
     defaults:
@@ -23,6 +44,8 @@ jobs:
         working-directory: apps/desktop
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -37,13 +60,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libfuse2 libdbus-1-dev
         working-directory: .
       - name: Install frontend dependencies
-        run: npm install --no-audit --no-fund
-      - name: M1-05 Change Feed and remote cache contract
-        run: python scripts/verify_m105.py
-      - name: M1-06 remote breakdown contract
-        run: python scripts/verify_m106.py
-      - name: M1-07 production-readiness static gates
-        run: python scripts/verify_m107.py
+        run: npm ci --no-audit --no-fund
       - name: Type and Svelte checks
         run: npm run check
       - name: UI tests
@@ -56,25 +73,23 @@ jobs:
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
         working-directory: .
-      - name: M0-12 packaging and lifecycle contract
-        run: python scripts/verify_m012.py
-        working-directory: .
-      - name: M1-02 pairing and credential security contract (static; not Rust compilation)
-        run: python scripts/verify_m102.py
-        working-directory: .
-      - name: M1-04 durable sync retry and dashboard status contract (static; not Rust compilation)
-        run: python scripts/verify_m104.py
-        working-directory: .
+      - name: Stage the release Agent
+        run: npm run pretauri:build
       - name: Desktop Rust shell lint
         run: |
           cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
           cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
         working-directory: .
       - name: Build installer with embedded Agent
-        run: npm run pretauri:build && npx tauri build --bundles ${{ matrix.bundles }}
+        run: npx tauri build --bundles ${{ matrix.bundles }}
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         with:
           name: tokenscope-${{ runner.os }}
-          path: apps/desktop/src-tauri/target/release/bundle/**
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+            apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error

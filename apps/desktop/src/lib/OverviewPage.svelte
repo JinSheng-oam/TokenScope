@@ -8,11 +8,13 @@ import { formatCompactTokens, resolveSessionActivityState, findActivityForSessio
   import type { HeatmapCalendar, HeatmapCell } from '../lib/heatmap';
   import { icons } from '../lib/icons';
   import RollingNumber from './RollingNumber.svelte';
+  import { sessionRateLabel, sessionRateTitle, type SessionRates } from './sessionRates';
   import { liveNow } from '../lib/liveClock';
   import type { DashboardSnapshot, SessionActivity, SessionUsage, UsageBreakdown, UsageTotals } from '../lib/types';
 
   export let snapshot: DashboardSnapshot;
   export let sessionActivity: SessionActivity[] = [];
+  export let sessionRates: SessionRates | null = null;
   export let local: UsageTotals | undefined;
   export let tools: UsageBreakdown[] | undefined = undefined;
   export let deviceScope: string = 'all';
@@ -272,6 +274,7 @@ import { formatCompactTokens, resolveSessionActivityState, findActivityForSessio
               {#if pendingActivity.length > 0 || visibleRecentSessions.length > 0}
                 <div class="recent-session-list">
                   {#each pendingActivity as activity, index (`${activity.tool_id}:${activity.session_id}`)}
+                    {@const rate = sessionRateLabel(sessionRates, activity, $liveNow)}
                     <div class="recent-session-row">
                       <span class="recent-session-rank tabular">{String(index + 1).padStart(2, '0')}</span>
                       <span class="recent-session-main">
@@ -288,12 +291,16 @@ import { formatCompactTokens, resolveSessionActivityState, findActivityForSessio
                             <span class="recent-session-live-dot" aria-hidden="true"></span>近期活跃
                           </span>
                         {/if}
-                        <span class="recent-session-pending-value">用量待更新</span>
+                        <span class="recent-session-pending-value">
+                          用量待更新
+                          {#if rate}<small class="session-token-rate" title={sessionRateTitle}>{rate}</small>{/if}
+                        </span>
                       </span>
                     </div>
                   {/each}
                   {#each visibleRecentSessions as session, index}
                     {@const actState = resolveSessionActivityState(session, sessionActivity, $liveNow)}
+                    {@const rate = sessionRateLabel(sessionRates, session, $liveNow)}
                     <div class="recent-session-row">
                       <span class="recent-session-rank tabular">{String(index + pendingActivity.length + 1).padStart(2, '0')}</span>
                       <span class="recent-session-main">
@@ -320,7 +327,10 @@ import { formatCompactTokens, resolveSessionActivityState, findActivityForSessio
                             <span class="recent-session-live-dot" aria-hidden="true"></span>近期活跃
                           </span>
                         {/if}
-                        <span class="recent-session-value tabular">{formatNumber(session.total_tokens)}</span>
+                        <span class="recent-session-value tabular">
+                          {formatNumber(session.total_tokens)}
+                          {#if rate}<small class="session-token-rate" title={sessionRateTitle}>{rate}</small>{/if}
+                        </span>
                       </span>
                     </div>
                   {/each}

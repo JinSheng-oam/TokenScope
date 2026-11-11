@@ -19,6 +19,8 @@
   export let handleSelectRange: (range: Exclude<DashboardRange, "custom">) => void;
   export let applyCustomRange: (selection: { start: string; end: string }) => void;
   export let loadDashboard: () => Promise<void>;
+  export let isEditingOverviewLayout: boolean = false;
+  export let onToggleOverviewLayout: () => void = () => {};
 
   let customOpen = false;
   let deviceMenuOpen = false;
@@ -174,6 +176,19 @@
           {/if}
         </div>
       </div>
+
+      {#if activeTabLabel === '使用总览'}
+        <button
+          type="button"
+          class="icon-btn"
+          class:active={isEditingOverviewLayout}
+          aria-label={isEditingOverviewLayout ? '完成看板编辑' : '自定义看板布局'}
+          title={isEditingOverviewLayout ? '完成看板编辑' : '自定义看板布局'}
+          onclick={onToggleOverviewLayout}
+        >
+          {@html isEditingOverviewLayout ? icons.check : icons.layout}
+        </button>
+      {/if}
 
       <button
         class="icon-btn"

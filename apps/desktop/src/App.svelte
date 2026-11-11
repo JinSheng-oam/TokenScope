@@ -42,6 +42,7 @@
 
   type Tab = 'overview' | 'devices' | 'tools' | 'models' | 'pricing' | 'sessions' | 'projects' | 'quota' | 'settings' | 'customizations';
   let activeTab: Tab = 'overview';
+  let isEditingOverviewLayout = false;
   let customizationDirty = false;
   let range: DashboardRange = 'all';
   let customStart = '';
@@ -489,12 +490,15 @@
     <!-- Topbar -->
     <DashboardTopbar {activeTabLabel} {deviceScope} {deviceScopeLabel} {selectableRemoteDevices} {snapshot}
       {range} {todayIso} {customStart} {customEnd}
-      {refreshing} {selectDeviceScope} {handleSelectRange} {applyCustomRange} {loadDashboard} showControls={activeTab !== 'pricing'} />
+      {refreshing} {selectDeviceScope} {handleSelectRange} {applyCustomRange} {loadDashboard} showControls={activeTab !== 'pricing'}
+      {isEditingOverviewLayout}
+      onToggleOverviewLayout={() => (isEditingOverviewLayout = !isEditingOverviewLayout)}
+    />
 
     <!-- Page Content Area -->
     <section
       class="page-content"
-      class:fit-viewport={(activeTab === 'overview' && !!snapshot) || (loading && activeTab !== 'pricing')}
+      class:fit-viewport={loading && activeTab !== 'pricing'}
       class:compact-session={activeTab === 'sessions' && ($sessionState.pageSize <= 6 || ($sessionState.loading && !$sessionState.analysis))}
     >
       {#if errorMessage && activeTab !== 'pricing'}
@@ -633,6 +637,10 @@
             {sessionRates}
             local={dashboardView.local}
             tools={dashboardView.scopedTools}
+            sortedModels={dashboardView.sortedModels}
+            topModelTotal={dashboardView.topModelTotal}
+            scopedProjects={dashboardView.scopedProjects}
+            {activeAntigravityQuotas}
             exactRatio={dashboardView.exactRatio}
             cacheHitRate={dashboardView.tokenShares.cacheHitRate}
             inputShareRate={dashboardView.tokenShares.inputShareRate}
@@ -653,6 +661,11 @@
             rollingNumbersEnabled={$settingsState.rollingNumbersEnabled}
             onNavigateTools={() => handleSelectTab('tools')}
             onNavigateSessions={() => handleSelectTab('sessions')}
+            onNavigateModels={() => handleSelectTab('models')}
+            onNavigateProjects={() => handleSelectTab('projects')}
+            onNavigateQuota={() => handleSelectTab('quota')}
+            isEditingLayout={isEditingOverviewLayout}
+            onToggleEditLayout={() => (isEditingOverviewLayout = !isEditingOverviewLayout)}
           />
         <!-- TAB 2: MULTI-DEVICE (多设备网络) -->
         {:else if activeTab === 'devices'}

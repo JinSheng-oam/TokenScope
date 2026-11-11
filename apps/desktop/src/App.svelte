@@ -717,6 +717,7 @@
         {:else if activeTab === 'sessions'}
           <SessionsPage
             sessionAnalysis={$sessionState.analysis}
+            timeZone={snapshot?.time_zone ?? 'UTC'}
             {sessionActivity}
             {sessionRates}
             {sessionPage}

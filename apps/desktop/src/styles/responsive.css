@@ -16,23 +16,6 @@
   .panel-card {
     padding: 14px 16px;
   }
-
-  .session-pagination {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .session-filter-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .session-search-field {
-    grid-column: 1 / -1;
-  }
-
-  .session-clear-btn {
-    justify-self: start;
-  }
 }
 
 @media (max-width: 860px) {

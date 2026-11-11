@@ -1,6 +1,7 @@
 <script lang="ts">
   import './sessionTimeline.css';
   import { tick } from 'svelte';
+  import SessionLoading from './SessionLoading.svelte';
   import SessionDetailsDrawer from './SessionDetailsDrawer.svelte';
   import { groupSessionTimeline, sessionCacheRate, sessionEventTime, sessionProjectLabels } from './sessionTimeline';
   import CustomSelect from './CustomSelect.svelte';
@@ -19,13 +20,11 @@
   import type {
     DashboardRange,
     SessionActivity,
-    SessionAnalysisPage,
     SessionFilterOptions,
     SessionUsage,
     SessionUsagePage,
   } from '../lib/types';
 
-  export let sessionAnalysis: SessionAnalysisPage | null;
   export let sessionPage: SessionUsagePage | undefined;
   export let sessionPageStart: number;
   export let sessionPageEnd: number;
@@ -56,7 +55,7 @@
   export let sessionActionKey: (session: Pick<SessionUsage, 'tool_id' | 'session_id'>) => string;
   export let onScheduleSessionAnalysis: () => void;
   export let onClearSessionFilters: () => void;
-  export let onSessionPage: (nextOffset: number) => void;
+  export let onSessionPage: (nextOffset: number) => Promise<void>;
   export let getSessionProjectLabel: (projectId: string) => string;
   export let onRequestSessionDelete: (session: SessionUsage) => void;
   export let onCancelSessionDelete: () => void;
@@ -74,14 +73,18 @@
   let sortDir: SessionSortDirection = 'desc';
 
   let isPaginating = false;
+  let timelineStart: HTMLDivElement;
 
-  $: if (!sessionLoading) {
-    isPaginating = false;
-  }
-
-  function handleSessionPage(nextOffset: number) {
+  async function handleSessionPage(nextOffset: number) {
     isPaginating = true;
-    onSessionPage(nextOffset);
+    const request = onSessionPage(nextOffset);
+    await tick();
+    timelineStart?.scrollIntoView({ block: 'start' });
+    try {
+      await request;
+    } finally {
+      isPaginating = false;
+    }
   }
 
   let selectedKey: string | null = null;
@@ -200,7 +203,9 @@
     <div class="session-action-notice error" role="alert">{sessionError}</div>
   {/if}
 
-  {#if sessionPage && sessionPage.sessions.length > 0}
+  {#if sessionLoading && (!sessionPage || sessionPage.sessions.length === 0)}
+    <SessionLoading rows={sessionPageSize} />
+  {:else if sessionPage && sessionPage.sessions.length > 0}
     <div class="session-sort-bar" role="group" aria-label="会话排序，仅对本页生效">
       <span class="session-sort-label" title="仅对本页排序">排序：</span>
       {#each sortOptions as opt}
@@ -216,63 +221,67 @@
         </button>
       {/each}
     </div>
-    <div class="session-timeline" aria-busy={sessionLoading}>
-      {#each groups as group (group.key)}
-        <div class="session-day" class:dated={!!group.label}>
-          {#if group.label}<h2><span>{group.label}</span></h2>{/if}
-          <ul>
-            {#each group.sessions as session (sessionActionKey(session))}
-              {@const projects = sessionProjectLabels(session, getSessionProjectLabel)}
-              {@const state = resolveSessionActivityState(session, sessionActivity, $liveNow)}
-              {@const rate = sessionRateLabel(sessionRates, session, $liveNow)}
-              {@const eventTime = sessionEventTime(session)}
-              <li>
-                <button type="button" class="session-entry" class:chosen={selectedKey === sessionActionKey(session)}
-                  aria-haspopup="dialog" onclick={(event) => openDetails(session, event)}>
-                  <span class="session-entry-main">
-                    <span class="session-entry-title">
-                      <strong title={session.display_name ?? undefined}>{session.display_name ?? '未命名会话'}</strong>
-                      {#if state}<span class="session-activity">{state === 'generating' ? '进行中' : '近期活跃'}</span>{/if}
-                    </span>
-                    <span class="session-entry-meta">
-                      {#if projects[0]}<span title={projects.join(' · ')}>{@html icons.projects}{projects[0]}</span>{/if}
-                      <span>{@html icons.tools}{formatToolLabel(session.tool_id)}</span>
-                      {#if session.models[0]?.model_id}
-                        <span title={session.models[0].model_id}>{@html icons.models}{session.models[0].model_id}</span>
-                      {/if}
-                      {#if session.models.length > 1}<span>+{session.models.length - 1}</span>{/if}
-                    </span>
-                    <span class="session-entry-usage">
-                      <span class="session-usage-track" title="相对本页最高 Token 用量" aria-hidden="true">
-                        <span style:width={percentOf(session.total_tokens, largestTokens) + '%'}></span>
+    <div class="session-timeline" bind:this={timelineStart} aria-busy={sessionLoading}>
+      {#if sessionLoading && (isPaginating || sessionPage.offset !== sessionOffset || sessionPage.limit !== sessionPageSize)}
+        <SessionLoading rows={sessionPageSize} paginating={isPaginating} />
+      {:else}
+        {#each groups as group (group.key)}
+          <div class="session-day" class:dated={!!group.label}>
+            {#if group.label}<h2><span>{group.label}</span></h2>{/if}
+            <ul>
+              {#each group.sessions as session (sessionActionKey(session))}
+                {@const projects = sessionProjectLabels(session, getSessionProjectLabel)}
+                {@const state = resolveSessionActivityState(session, sessionActivity, $liveNow)}
+                {@const rate = sessionRateLabel(sessionRates, session, $liveNow)}
+                {@const eventTime = sessionEventTime(session)}
+                <li>
+                  <button type="button" class="session-entry" class:chosen={selectedKey === sessionActionKey(session)}
+                    aria-haspopup="dialog" onclick={(event) => openDetails(session, event)}>
+                    <span class="session-entry-main">
+                      <span class="session-entry-title">
+                        <strong title={session.display_name ?? undefined}>{session.display_name ?? '未命名会话'}</strong>
+                        {#if state}<span class="session-activity">{state === 'generating' ? '进行中' : '近期活跃'}</span>{/if}
                       </span>
-                      <span>缓存率 {sessionCacheRate(session)}</span>
+                      <span class="session-entry-meta">
+                        {#if projects[0]}<span title={projects.join(' · ')}>{@html icons.projects}{projects[0]}</span>{/if}
+                        <span>{@html icons.tools}{formatToolLabel(session.tool_id)}</span>
+                        {#if session.models[0]?.model_id}
+                          <span title={session.models[0].model_id}>{@html icons.models}{session.models[0].model_id}</span>
+                        {/if}
+                        {#if session.models.length > 1}<span>+{session.models.length - 1}</span>{/if}
+                      </span>
+                      <span class="session-entry-usage">
+                        <span class="session-usage-track" title="相对本页最高 Token 用量" aria-hidden="true">
+                          <span style:width={percentOf(session.total_tokens, largestTokens) + '%'}></span>
+                        </span>
+                        <span>缓存率 {sessionCacheRate(session)}</span>
+                      </span>
                     </span>
-                  </span>
-                  <span class="session-entry-metric">
-                    <span>Token 用量</span>
-                    <span class="session-token-value">
-                      <strong>{formatNumber(session.total_tokens)}</strong>
-                      {#if session.usage_record_count > 0 && session.exact_records === session.usage_record_count}
-                        <small class="session-entry-precision">精确</small>
+                    <span class="session-entry-metric">
+                      <span>Token 用量</span>
+                      <span class="session-token-value">
+                        <strong>{formatNumber(session.total_tokens)}</strong>
+                        {#if session.usage_record_count > 0 && session.exact_records === session.usage_record_count}
+                          <small class="session-entry-precision">精确</small>
+                        {/if}
+                      </span>
+                      {#if rate}<small title={sessionRateTitle}>{rate}</small>{/if}
+                    </span>
+                    <span class="session-entry-metric session-entry-responses">
+                      <span>{session.tool_id === 'antigravity' ? '响应 · 来源累计' : '响应次数'}</span>
+                      <strong>{session.known_response_count === null ? '—' : formatNumber(session.known_response_count)}</strong>
+                      {#if sortBy !== 'time'}
+                        <small>{eventTime === null ? '时间未知' : relativeTime(eventTime, $liveNow)}</small>
                       {/if}
                     </span>
-                    {#if rate}<small title={sessionRateTitle}>{rate}</small>{/if}
-                  </span>
-                  <span class="session-entry-metric session-entry-responses">
-                    <span>{session.tool_id === 'antigravity' ? '响应 · 来源累计' : '响应次数'}</span>
-                    <strong>{session.known_response_count === null ? '—' : formatNumber(session.known_response_count)}</strong>
-                    {#if sortBy !== 'time'}
-                      <small>{eventTime === null ? '时间未知' : relativeTime(eventTime, $liveNow)}</small>
-                    {/if}
-                  </span>
-                  <span class="session-entry-arrow" aria-hidden="true">{@html icons.chevronRight}</span>
-                </button>
-              </li>
-            {/each}
-          </ul>
-        </div>
-      {/each}
+                    <span class="session-entry-arrow" aria-hidden="true">{@html icons.chevronRight}</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/each}
+      {/if}
     </div>
     <div class="session-pagination">
       <span role="status">{sessionLoading ? '更新中…' : formatNumber(sessionPageStart) + '–' + formatNumber(sessionPageEnd) + ' / ' + formatNumber(sessionPage.total) + ' 条'}</span>
@@ -293,8 +302,6 @@
         </div>
       </div>
     </div>
-  {:else if sessionLoading && !sessionAnalysis}
-    <div class="session-empty-state" role="status">正在读取会话统计…</div>
   {:else if sessionPage && sessionPage.total === 0 && hasSessionFilters}
     <div class="session-empty-state">
       <strong>没有匹配的会话</strong>

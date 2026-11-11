@@ -35,6 +35,7 @@
   import ProjectsPage from './lib/ProjectsPage.svelte';
   import QuotaPage from './lib/QuotaPage.svelte';
   import SessionsPage from './lib/SessionsPage.svelte';
+  import LoadingStatus from './lib/LoadingStatus.svelte';
   import SettingsPage from './lib/SettingsPage.svelte';
   import ToolsPage from './lib/ToolsPage.svelte';
   import AgentCustomizations from './lib/AgentCustomizations.svelte';
@@ -495,7 +496,6 @@
       class="page-content"
       class:fit-viewport={(activeTab === 'overview' && !!snapshot) || (loading && activeTab !== 'pricing')}
       class:compact-session={activeTab === 'sessions' && ($sessionState.pageSize <= 6 || ($sessionState.loading && !$sessionState.analysis))}
-      class:session-loading={activeTab === 'sessions' && $sessionState.loading && !$sessionState.analysis}
     >
       {#if errorMessage && activeTab !== 'pricing'}
         <div class="notice-box" role="alert">
@@ -511,15 +511,7 @@
         <AgentCustomizations {runtimeAvailable} bind:dirty={customizationDirty} />
       {:else if loading}
         <div class="loading-state" role="status" aria-live="polite">
-          <div class="loading-status-bar">
-            <div class="loading-message">
-              <span class="loading-spinner-ring" aria-hidden="true">
-                <span class="loading-spinner-core"></span>
-              </span>
-              <p>正在加载用量…</p>
-            </div>
-            <span class="loading-stage-pill" aria-hidden="true">WAL 并发只读通道</span>
-          </div>
+          <LoadingStatus message="正在加载用量…" stage="WAL 并发只读通道" />
 
           <div class="loading-skeleton-grid" aria-hidden="true">
             {#each [
@@ -714,7 +706,6 @@
           />
         {:else if activeTab === 'sessions'}
           <SessionsPage
-            sessionAnalysis={$sessionState.analysis}
             timeZone={snapshot?.time_zone ?? 'UTC'}
             {sessionActivity}
             {sessionRates}

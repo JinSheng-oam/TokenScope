@@ -8,7 +8,8 @@
 </script>
 
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
+  import { selectMenuPosition } from './selectMenuPosition';
 
   export let options: SelectOption[] = [];
   export let value: string = '';
@@ -19,59 +20,83 @@
   export let onChange: ((val: string) => void) | undefined = undefined;
 
   let isOpen = false;
-  let autoRight = false;
   let containerRef: HTMLDivElement | null = null;
-  const listboxId = `select-listbox-${Math.random().toString(36).slice(2, 9)}`;
+  let triggerRef: HTMLButtonElement;
+  let dropdownRef: HTMLDivElement;
+  let optionsRef: HTMLDivElement;
+  const listboxId = `select-listbox-cpk4ooe`;
 
   $: selectedOption = options.find((opt) => opt.key === value);
-  $: isRightAligned = align === 'right' || autoRight;
 
-  function updateAlignment() {
-    if (containerRef && typeof window !== 'undefined') {
-      const rect = containerRef.getBoundingClientRect();
-      autoRight = window.innerWidth - rect.left < 180;
-    }
+  function positionDropdown() {
+    if (!isOpen || !dropdownRef || !optionsRef) return;
+    const rect = triggerRef.getBoundingClientRect();
+    const viewport = document.documentElement;
+    const position = selectMenuPosition(rect, viewport.clientWidth, viewport.clientHeight, optionsRef.scrollHeight + 2, align);
+    dropdownRef.style.width = position.width + 'px';
+    dropdownRef.style.left = position.left + 'px';
+    dropdownRef.style.top = position.top + 'px';
+    dropdownRef.style.maxHeight = position.maxHeight + 'px';
+    optionsRef.style.maxHeight = Math.max(0, position.maxHeight - 2) + 'px';
+    dropdownRef.style.transform = position.up ? 'translateY(-100%)' : '';
   }
 
-  function toggleOpen() {
+  async function toggleOpen() {
     if (disabled) return;
-    if (!isOpen) updateAlignment();
-    isOpen = !isOpen;
+    if (isOpen) {
+      close();
+      return;
+    }
+    isOpen = true;
+    await tick();
+    if (!isOpen || !dropdownRef) return;
+    dropdownRef.showPopover?.();
+    positionDropdown();
+  }
+
+  function close(restoreFocus = false) {
+    if (!isOpen) return;
+    if (dropdownRef?.hidePopover && dropdownRef.matches(':popover-open')) dropdownRef.hidePopover();
+    isOpen = false;
+    if (restoreFocus) triggerRef.focus();
   }
 
   function handleSelect(optionKey: string) {
     if (disabled) return;
     value = optionKey;
-    isOpen = false;
+    close(true);
     onChange?.(optionKey);
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (disabled) return;
-    if (event.key === 'Escape') {
-      isOpen = false;
-    } else if (event.key === 'Enter' || event.key === ' ') {
-      if (!isOpen) {
-        updateAlignment();
-        isOpen = true;
-        event.preventDefault();
-      }
+    if (isOpen && event.key === 'Escape' && containerRef?.contains(document.activeElement)) {
+      event.preventDefault();
+      close(true);
     }
   }
 
-  function handleClickOutside(event: MouseEvent) {
-    if (containerRef && !containerRef.contains(event.target as Node)) {
-      isOpen = false;
-    }
+  function handleClickOutside(event: PointerEvent) {
+    if (containerRef && !containerRef.contains(event.target as Node)) close();
+  }
+
+  function handleScroll(event: Event) {
+    const target = event.target;
+    if (isOpen && (!(target instanceof Node) || !dropdownRef?.contains(target))) close();
   }
 
   onMount(() => {
     document.addEventListener('pointerdown', handleClickOutside);
+    window.addEventListener('scroll', handleScroll, true);
+    window.addEventListener('resize', positionDropdown);
     return () => {
       document.removeEventListener('pointerdown', handleClickOutside);
+      window.removeEventListener('scroll', handleScroll, true);
+      window.removeEventListener('resize', positionDropdown);
     };
   });
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <div
   class="custom-select-container"
@@ -85,7 +110,7 @@
     type="button"
     class="select-trigger"
     onclick={toggleOpen}
-    onkeydown={handleKeydown}
+    bind:this={triggerRef}
     {disabled}
     aria-label={ariaLabel}
     aria-haspopup="listbox"
@@ -108,8 +133,8 @@
   </button>
 
   {#if isOpen}
-    <div id={listboxId} class="select-dropdown" class:align-right={isRightAligned} role="listbox" aria-label={ariaLabel}>
-      <div class="options-scroll">
+    <div id={listboxId} class="select-dropdown" bind:this={dropdownRef} popover="manual" role="listbox" aria-label={ariaLabel}>
+      <div class="options-scroll" bind:this={optionsRef}>
         {#each options as opt}
           {@const isSelected = opt.key === value}
           <button
@@ -237,12 +262,10 @@
 
   /* Dropdown Popover */
   .select-dropdown {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    right: 0;
-    width: 100%;
-    min-width: 100%;
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    padding: 0;
     box-sizing: border-box;
     background-color: var(--bg-card);
     border: 1px solid var(--border-subtle);
@@ -250,23 +273,11 @@
     box-shadow: var(--shadow-lg, 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1));
     z-index: 999;
     overflow: hidden;
-    animation: selectFadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  @keyframes selectFadeIn {
-    from {
-      opacity: 0;
-      transform: translateY(-4px) scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
   }
 
   .options-scroll {
-    max-height: 240px;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 4px;
     display: flex;
     flex-direction: column;
@@ -282,6 +293,7 @@
   }
 
   .select-option {
+    flex: 0 0 auto;
     width: 100%;
     padding: 6px 8px;
     display: flex;

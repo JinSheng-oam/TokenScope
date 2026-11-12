@@ -111,6 +111,13 @@
     return tokens >= 1_000_000 ? `${modelMillionsFormat.format(tokens / 1_000_000)}M` : formatCompactTokens(tokens);
   }
 
+  function compactModelLabel(label: string): string {
+    const [provider, model, ...rest] = label.split('/');
+    return provider && model && rest.length === 0 && model.toLowerCase().startsWith(`${provider.toLowerCase()}-`)
+      ? model
+      : label;
+  }
+
   function handleDragStart(e: DragEvent, index: number) {
     draggedIndex = index;
     if (e.dataTransfer) {
@@ -576,11 +583,19 @@
             {#if sortedModels.length > 0}
               <div class="rank-list">
                 {#each sortedModels.slice(0, 5) as model, idx}
+                  {@const shortLabel = compactModelLabel(model.label)}
                   <div class="rank-item">
                     <div class="rank-row">
                       <span class="rank-title">
                         <span class="rank-num tabular">{String(idx + 1).padStart(2, '0')}</span>
-                        <strong title={model.label}>{model.label}</strong>
+                        <strong title={model.label}>
+                          {#if shortLabel === model.label}
+                            {model.label}
+                          {:else}
+                            <span class="model-label-full">{model.label}</span>
+                            <span class="model-label-compact" aria-hidden="true">{shortLabel}</span>
+                          {/if}
+                        </strong>
                       </span>
                       <span class="rank-meta">
                         <span class="rank-value tabular" title={`${formatNumber(model.total_tokens)} Token`}>

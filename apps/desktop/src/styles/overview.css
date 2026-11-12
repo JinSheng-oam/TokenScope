@@ -752,7 +752,8 @@
   white-space: nowrap;
 }
 
-.model-tokens-compact {
+.model-tokens-compact,
+.model-label-compact {
   display: none;
 }
 
@@ -762,12 +763,11 @@
   }
 
   .model-usage-card .rank-title {
-    min-width: 4.5rem;
+    flex: 1;
   }
 
   .model-usage-card .rank-meta {
-    flex-shrink: 1;
-    min-width: 0;
+    max-width: calc(100% - 4.5rem - 6px);
     gap: 4px;
   }
 
@@ -783,7 +783,8 @@
     min-width: 0;
   }
 
-  .model-tokens-full {
+  .model-tokens-full,
+  .model-label-full {
     /* Preserve the full value for assistive technology. */
     position: absolute;
     clip-path: inset(50%);
@@ -792,7 +793,8 @@
     overflow: hidden;
   }
 
-  .model-tokens-compact {
+  .model-tokens-compact,
+  .model-label-compact {
     display: inline;
   }
 }

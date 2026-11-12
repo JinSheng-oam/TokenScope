@@ -1,9 +1,9 @@
 name: Go Hub CI
 on:
   push:
-    paths: ['hub/**', 'scripts/verify_m101_sql.py', 'scripts/verify_m106.py', 'scripts/verify_m107.py', '.github/workflows/hub-ci.yml']
+    paths: ['hub/**', 'scripts/verify_m101_sql.py', 'scripts/verify_m106.py', 'scripts/verify_m107.py', '.gitattributes', '.github/workflows/hub-ci.yml']
   pull_request:
-    paths: ['hub/**', 'scripts/verify_m101_sql.py', 'scripts/verify_m106.py', 'scripts/verify_m107.py', '.github/workflows/hub-ci.yml']
+    paths: ['hub/**', 'scripts/verify_m101_sql.py', 'scripts/verify_m106.py', 'scripts/verify_m107.py', '.gitattributes', '.github/workflows/hub-ci.yml']
   workflow_dispatch:
 env:
   PYTHONUTF8: '1'

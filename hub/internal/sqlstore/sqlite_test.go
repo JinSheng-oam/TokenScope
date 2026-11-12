@@ -14,9 +14,16 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func testDBPath(t *testing.T) string {
+	t.Helper()
+	// Open creates the private directory itself. On older Go versions,
+	// t.TempDir() alone does not guarantee mode 0700.
+	return filepath.Join(t.TempDir(), "data", "hub.db")
+}
+
 func TestSQLitePairingLifecycleAndPersistence(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "hub.db")
+	path := testDBPath(t)
 	repo, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +85,7 @@ func TestSQLitePairingLifecycleAndPersistence(t *testing.T) {
 
 func TestDuplicateDeviceRollsBackPairingCodeConsumption(t *testing.T) {
 	ctx := context.Background()
-	repo, err := Open(filepath.Join(t.TempDir(), "hub.db"))
+	repo, err := Open(testDBPath(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +113,7 @@ func TestDuplicateDeviceRollsBackPairingCodeConsumption(t *testing.T) {
 
 func TestUsageBatchIdempotencyRevisionAndDeviceScope(t *testing.T) {
 	ctx := context.Background()
-	repo, err := Open(filepath.Join(t.TempDir(), "hub.db"))
+	repo, err := Open(testDBPath(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +187,7 @@ func TestUsageBatchIdempotencyRevisionAndDeviceScope(t *testing.T) {
 
 func TestUsageChangeFeedPersistsEachAcceptedRevision(t *testing.T) {
 	ctx := context.Background()
-	repo, err := Open(filepath.Join(t.TempDir(), "hub.db"))
+	repo, err := Open(testDBPath(t))
 	if err != nil {
 		t.Fatal(err)
 	}

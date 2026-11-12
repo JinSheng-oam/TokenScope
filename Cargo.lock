@@ -1971,7 +1971,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tokenscope-agent"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -1994,11 +1994,11 @@ dependencies = [
 
 [[package]]
 name = "tokenscope-collector-engine"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "tokenscope-core-domain"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2008,7 +2008,7 @@ dependencies = [
 
 [[package]]
 name = "tokenscope-local-ipc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2017,7 +2017,7 @@ dependencies = [
 
 [[package]]
 name = "tokenscope-local-store"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rusqlite",
  "serde",
@@ -2028,7 +2028,7 @@ dependencies = [
 
 [[package]]
 name = "tokenscope-source-antigravity"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rusqlite",
  "serde_json",
@@ -2040,7 +2040,7 @@ dependencies = [
 
 [[package]]
 name = "tokenscope-source-claude"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "serde_json",
@@ -2052,7 +2052,7 @@ dependencies = [
 
 [[package]]
 name = "tokenscope-source-codex"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "serde",
@@ -2066,7 +2066,7 @@ dependencies = [
 
 [[package]]
 name = "tokenscope-source-deepseek-harness"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde_json",
  "sha2",
@@ -2077,11 +2077,11 @@ dependencies = [
 
 [[package]]
 name = "tokenscope-source-opencode"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "tokenscope-sync-client"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "hex",
  "keyring",

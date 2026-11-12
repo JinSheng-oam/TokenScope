@@ -559,7 +559,7 @@
 
         {:else if card.id === 'models'}
           <!-- Model Usage Distribution -->
-          <section class="panel-card">
+          <section class="panel-card model-usage-card">
             <div class="panel-head">
               <div>
                 <h2>模型用量分布</h2>

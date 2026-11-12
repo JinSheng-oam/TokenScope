@@ -736,6 +736,40 @@
   height: 12px;
 }
 
+/* Model ranks follow the card's actual width, including in layout edit mode. */
+.model-usage-card {
+  container: model-usage / inline-size;
+}
+
+.model-usage-card .rank-title strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-usage-card .rank-value {
+  white-space: nowrap;
+}
+
+@container model-usage (max-width: 360px) {
+  .model-usage-card .rank-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+  }
+
+  .model-usage-card .rank-meta {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .model-usage-card .rank-share {
+    min-width: 0;
+    margin-inline-start: auto;
+  }
+}
+
 /* Models & Projects Rank Colors */
 .rank-fill.model-fill {
   background: linear-gradient(90deg, #7C3AED 0%, #A855F7 100%);

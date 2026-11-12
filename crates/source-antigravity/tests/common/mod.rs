@@ -1,27 +1,24 @@
 #![allow(dead_code)]
 
 use rusqlite::{params, Connection};
-use std::{
-    fs,
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{fs, path::PathBuf};
 use tokenscope_local_store::{LocalIdentity, LocalStore};
 
 pub struct Fixture {
     pub root: PathBuf,
+    _temp_dir: tempfile::TempDir,
 }
 
 impl Fixture {
     pub fn new() -> Self {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("tokenscope-ag-{}-{stamp}", std::process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        let temp_dir = tempfile::Builder::new()
+            .prefix("tokenscope-ag-")
+            .tempdir()
+            .unwrap();
+        Self {
+            root: temp_dir.path().to_path_buf(),
+            _temp_dir: temp_dir,
+        }
     }
 
     pub fn file(&self, dir: &str, stem: &str) -> PathBuf {
@@ -43,12 +40,6 @@ impl Fixture {
                 .unwrap();
         }
         path
-    }
-}
-
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
     }
 }
 

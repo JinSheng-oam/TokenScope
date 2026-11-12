@@ -7,7 +7,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 schema_source = (ROOT/'crates/local-store/src/schema.rs').read_text()
-source = (ROOT/'crates/local-store/src/repository.rs').read_text()
+source = '\n'.join((ROOT/'crates/local-store/src/repository'/p).read_text(encoding='utf-8') for p in ('records.rs', 'ingest/scans.rs', 'sync.rs'))
 def migration(version):
     m = re.search(rf'pub const MIGRATION_00{version}: &str = r#"(.*?)"#;', schema_source, re.S)
     assert m, version

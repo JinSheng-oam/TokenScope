@@ -5,12 +5,14 @@ on:
   pull_request:
     paths: ['hub/**', 'scripts/verify_m101_sql.py', 'scripts/verify_m106.py', 'scripts/verify_m107.py', '.github/workflows/hub-ci.yml']
   workflow_dispatch:
+env:
+  PYTHONUTF8: '1'
 jobs:
   go:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2022, macos-14]
+        os: [ubuntu-24.04, windows-2022, macos-15]
     runs-on: ${{ matrix.os }}
     defaults:
       run:

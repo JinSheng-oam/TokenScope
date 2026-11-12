@@ -85,8 +85,8 @@ def source_contract_check() -> None:
         'Hub route': 'GET /api/v1/usage/changes' in (ROOT/'hub/internal/httpapi/server.go').read_text(),
         'append-only feed transaction': 'INSERT INTO usage_change_feed' in (ROOT/'hub/internal/sqlstore/sqlite.go').read_text(),
         'client pull': 'pull_usage_changes' in (ROOT/'crates/sync-client/src/client.rs').read_text(),
-        'atomic local cache': 'apply_remote_changes' in (ROOT/'crates/local-store/src/repository.rs').read_text(),
-        'agent push+pull': 'pull_device_once' in (ROOT/'crates/tokenscope-agent/src/main.rs').read_text(),
+        'atomic local cache': 'apply_remote_changes' in (ROOT/'crates/local-store/src/repository/sync.rs').read_text(),
+        'agent push+pull': 'pull_device_once' in (ROOT/'crates/tokenscope-agent/src/daemon.rs').read_text(),
         'per-device dashboard': 'remote_by_device' in (ROOT/'apps/desktop/src/App.svelte').read_text(),
     }
     for label, ok in checks.items():

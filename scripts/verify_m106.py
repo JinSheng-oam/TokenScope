@@ -6,16 +6,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = (ROOT / 'crates/local-store/src/schema.rs').read_text()
-REPO = (ROOT / 'crates/local-store/src/repository.rs').read_text()
-UI = (ROOT / 'apps/desktop/src/App.svelte').read_text()
+REPO = '\n'.join((ROOT/'crates/local-store/src/repository'/p).read_text(encoding='utf-8') for p in ('analytics/remote.rs', 'analytics/dashboard.rs'))
+UI = (ROOT / 'apps/desktop/src/lib/DevicesPage.svelte').read_text()
 DOCKER = (ROOT / 'deploy/compose.yaml').read_text()
 
 assert 'remote_by_tool' in REPO and 'remote_by_model' in REPO and 'remote_by_project' in REPO
-assert '"tool_id" => "$.tool_id"' in REPO
-assert '"model_id" => "$.model_id"' in REPO
-assert '"project_id" => "$.project_id"' in REPO
+assert all(f"json_extract(payload_json,'$.{dimension}_id')" in REPO for dimension in ('tool', 'model', 'project'))
 assert 'remote_by_tool' in SCHEMA or 'remote_usage_cache' in SCHEMA
-assert 'REMOTE CACHE' in UI and 'remoteSelectedDevice' in UI
+assert '远端设备用量' in UI and 'remoteSelectedDevice' in UI
 assert 'read_only: true' in DOCKER and 'no-new-privileges:true' in DOCKER
 assert 'hub-data-init:' in DOCKER and 'chown -R 10001:10001 /data' in DOCKER
 assert '172.30.0.0/24' in DOCKER

@@ -2033,6 +2033,7 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "sha2",
+ "tempfile",
  "tokenscope-core-domain",
  "tokenscope-local-store",
 ]
@@ -2044,6 +2045,7 @@ dependencies = [
  "chrono",
  "serde_json",
  "sha2",
+ "tempfile",
  "tokenscope-core-domain",
  "tokenscope-local-store",
 ]
@@ -2056,6 +2058,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "tokenscope-core-domain",
  "tokenscope-local-store",
  "zstd",

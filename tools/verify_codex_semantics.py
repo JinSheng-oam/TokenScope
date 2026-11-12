@@ -32,13 +32,13 @@ assert last['input_tokens'] - last['cached_input_tokens'] == 110
 assert last['output_tokens'] == 30
 assert sum(x['total_tokens'] for x in totals) != last['total_tokens']
 
-source = (root/'crates/source-codex/src/lib.rs').read_text()
+source = '\n'.join((root/'crates/source-codex/src'/p).read_text(encoding='utf-8') for p in ('lib.rs', 'model.rs', 'rollout.rs', 'scanner.rs'))
 assert 'total_token_usage' in source and 'last_token_usage' in source
 assert 'session-total-v1' in source
 assert 'read_offset' in source and 'bounded_line' in source
-agent = (root/'crates/tokenscope-agent/src/main.rs').read_text()
-assert '--scan-codex' in agent and 'collect_codex_precise(' in agent
-precise = (root/'crates/source-codex/src/precise.rs').read_text()
+agent = '\n'.join((root/'crates/tokenscope-agent/src'/p).read_text(encoding='utf-8') for p in ('cli.rs', 'collection.rs'))
+assert '--scan-codex' in agent and 'collect_codex_precise_tolerant(' in agent
+precise = '\n'.join((root/'crates/source-codex/src/precise'/p).read_text(encoding='utf-8') for p in ('collector.rs', 'model.rs', 'scanner.rs'))
 assert 'token_usage_record' in precise and 'total_token_usage' in source
 assert 'full_reconcile' in precise and 'tombstone' in precise
 cargo = tomllib.loads((root/'crates/source-codex/Cargo.toml').read_text())

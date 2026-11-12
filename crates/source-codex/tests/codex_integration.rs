@@ -1,7 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokenscope_local_store::{LocalIdentity, LocalStore};
 use tokenscope_source_codex::{collect_codex, discover_codex_files};
 
@@ -10,20 +9,24 @@ const SESSION: &str = "019a9b8c-b777-4d55-9222-121212121212";
 struct Fixture {
     home: PathBuf,
     file: PathBuf,
+    _temp_dir: tempfile::TempDir,
 }
 impl Fixture {
     fn new() -> Self {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let home =
-            std::env::temp_dir().join(format!("tokenscope-codex-{}-{stamp}", std::process::id()));
+        let temp_dir = tempfile::Builder::new()
+            .prefix("tokenscope-codex-")
+            .tempdir()
+            .unwrap();
+        let home = temp_dir.path().to_path_buf();
         let dir = home.join("sessions/2026/11/02");
         fs::create_dir_all(&dir).unwrap();
         let file = dir.join("rollout-test.jsonl");
         fs::write(&file,format!("{{\"timestamp\":\"2026-11-02T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{SESSION}\",\"originator\":\"Codex CLI\",\"cwd\":\"/secret/work\"}}}}\n")).unwrap();
-        Self { home, file }
+        Self {
+            home,
+            file,
+            _temp_dir: temp_dir,
+        }
     }
     fn append(&self, text: &str) {
         OpenOptions::new()
@@ -35,11 +38,6 @@ impl Fixture {
     }
     fn add(&self, input: u64, cached: u64, output: u64) {
         self.append(&packet(input, cached, output))
-    }
-}
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.home);
     }
 }
 fn packet(input: u64, cached: u64, output: u64) -> String {

@@ -4,7 +4,7 @@ from pathlib import Path
 import sqlite3, re, tempfile
 root = Path(__file__).resolve().parents[1]
 schema = (root/'crates/local-store/src/schema.rs').read_text()
-repo = (root/'crates/local-store/src/repository.rs').read_text()
+repo = '\n'.join((root/'crates/local-store/src/repository'/p).read_text(encoding='utf-8') for p in ('ingest/scans.rs', 'analytics/activity.rs', 'quota.rs'))
 def migration(n):
     m=re.search(r'pub const MIGRATION_00%s: &str = r#"(.*?)"#;' % n,schema,re.S)
     assert m, n

@@ -2,7 +2,6 @@ use serde_json::json;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokenscope_core_domain::{aggregate_device_local, session_key, CanonicalRecord};
 use tokenscope_local_store::{LocalIdentity, LocalStore};
 use tokenscope_source_claude::{collect_claude, discover_claude_files};
@@ -10,20 +9,24 @@ use tokenscope_source_claude::{collect_claude, discover_claude_files};
 struct Fixture {
     root: PathBuf,
     file: PathBuf,
+    _temp_dir: tempfile::TempDir,
 }
 impl Fixture {
     fn new() -> Self {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("tokenscope-m006-{}-{stamp}", std::process::id()));
+        let temp_dir = tempfile::Builder::new()
+            .prefix("tokenscope-m006-")
+            .tempdir()
+            .unwrap();
+        let root = temp_dir.path().to_path_buf();
         let dir = root.join("projects/sample-project");
         fs::create_dir_all(&dir).unwrap();
         let file = dir.join("session.jsonl");
         fs::write(&file, "").unwrap();
-        Self { root, file }
+        Self {
+            root,
+            file,
+            _temp_dir: temp_dir,
+        }
     }
     fn append(&self, text: &str) {
         OpenOptions::new()
@@ -47,11 +50,6 @@ impl Fixture {
             .to_str()
             .unwrap();
         session_key("claude", relative.as_bytes()).unwrap()
-    }
-}
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
     }
 }
 fn store() -> LocalStore {

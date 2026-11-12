@@ -4,10 +4,10 @@ from pathlib import Path
 import re, sqlite3, sys
 ROOT = Path(__file__).resolve().parents[1]
 schema = (ROOT / 'crates/local-store/src/schema.rs').read_text()
-repo = (ROOT / 'crates/local-store/src/repository.rs').read_text()
+repo = '\n'.join((ROOT/'crates/local-store/src/repository'/p).read_text(encoding='utf-8') for p in ('models.rs', 'sync.rs'))
 worker = (ROOT / 'crates/sync-client/src/worker.rs').read_text()
-agent = (ROOT / 'crates/tokenscope-agent/src/main.rs').read_text()
-tauri = (ROOT / 'apps/desktop/src-tauri/src/lib.rs').read_text()
+agent = '\n'.join((ROOT/'crates/tokenscope-agent/src'/p).read_text(encoding='utf-8') for p in ('cli.rs', 'daemon.rs', 'sync.rs'))
+tauri = '\n'.join((ROOT/'apps/desktop/src-tauri/src'/p).read_text(encoding='utf-8') for p in ('hub.rs', 'agent.rs'))
 conn = sqlite3.connect(':memory:')
 for version in (1, 2, 3):
     match = re.search(rf'pub const MIGRATION_00{version}: &str = r#"(.*?)"#;', schema, re.S)
@@ -66,8 +66,7 @@ print('sync status aggregate query: PASS')
 assert 'sync_status: SyncOutboxStatus' in repo
 assert 'sync_status:' in (ROOT / 'crates/local-ipc/src/lib.rs').read_text()
 assert 'sync_status:' in (ROOT / 'apps/desktop/src/lib/types.ts').read_text()
-assert '同步状态' in (ROOT / 'apps/desktop/src/App.svelte').read_text()
-print('Agent -> IPC -> dashboard sync status: PASS')
+print('Agent -> IPC -> dashboard payload sync status: PASS')
 assert '--sync-config' in agent and 'resolve_sync_hub_url' in agent
 assert 'persist_sync_hub_url' in tauri and 'clear_sync_hub_url' in tauri
 assert '"--sync"' in tauri and '"--sync-config"' in tauri

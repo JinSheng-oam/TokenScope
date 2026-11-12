@@ -23,13 +23,13 @@ assert messages['msg-1'][1] == (3, 80, 20, 18)
 assert messages['msg-2'][1] == (5, 8, 0, 9)
 assert messages['msg-1'][2][:10] == '2026-11-01'
 assert messages['msg-2'][2][:10] == '2026-11-02'
-source = (ROOT/'crates/source-claude/src/lib.rs').read_text()
+source = '\n'.join((ROOT/'crates/source-claude/src'/p).read_text(encoding='utf-8') for p in ('metadata.rs', 'scanner.rs', 'collector.rs'))
 for marker in ('fn bounded_line', 'pub fn discover_claude_files', 'pub fn scan_claude_file',
                'pub fn collect_claude', 'stable_record_id', 'last_complete_scan_ms',
                'store.reconcile_complete_source(', 'result.tombstoned', 'Precision::Estimated'):
     assert marker in source, marker
 assert 'message.id' in source
-agent = (ROOT/'crates/tokenscope-agent/src/main.rs').read_text()
+agent = (ROOT/'crates/tokenscope-agent/src/cli.rs').read_text(encoding='utf-8')
 for flag in ('--scan-codex', '--scan-claude', '--scan-all', '--claude-home', '--codex-home'):
     assert flag in agent, flag
 print('PASS: Claude reference fixture, dedup/cache cross-date oracle and source wiring')

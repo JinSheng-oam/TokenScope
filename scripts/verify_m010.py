@@ -4,10 +4,10 @@ from pathlib import Path
 import json
 
 ROOT = Path(__file__).resolve().parents[1]
-rpc = (ROOT / "crates/tokenscope-agent/src/antigravity_rpc.rs").read_text()
-main = (ROOT / "crates/tokenscope-agent/src/main.rs").read_text()
+rpc = '\n'.join(p.read_text(encoding='utf-8') for p in sorted((ROOT / 'crates/tokenscope-agent/src/antigravity_rpc').glob('*.rs')))
+main = '\n'.join((ROOT/'crates/tokenscope-agent/src'/p).read_text(encoding='utf-8') for p in ('cli.rs', 'daemon.rs'))
 manifest = (ROOT / "crates/tokenscope-agent/Cargo.toml").read_text()
-store = (ROOT / "crates/local-store/src/repository.rs").read_text()
+store = (ROOT / 'crates/local-store/src/repository/quota.rs').read_text(encoding='utf-8')
 
 checks = {
     "loopback URL is hard-coded": '"{scheme}://127.0.0.1:{}/{SERVICE}/{method}"' in rpc,
@@ -17,7 +17,7 @@ checks = {
     "CSRF header is sent": '"x-codeium-csrf-token"' in rpc,
     "CSRF is not logged": "println!(\"{}\", endpoint.csrf" not in rpc and "eprintln!(\"{}\", endpoint.csrf" not in rpc,
     "OAuth/browser credential code absent": all(x not in rpc.lower() for x in ["refresh_token", "access_token", "authorization_url", 'header("cookie"']),
-    "response size bounded": "MAX_RESPONSE_BYTES" in rpc and "response.take(" in rpc,
+    "response size bounded": "MAX_RESPONSE_BYTES" in rpc and ".take((MAX_RESPONSE_BYTES + 1) as u64)" in rpc,
     "quota is persisted through separate quota table API": "upsert_antigravity_quotas" in rpc and "antigravity_quota_snapshots" in store,
     "quota refresh CLI wired": "--refresh-antigravity-quota" in main and "refresh_and_store" in main,
     "legacy windows are not guessed": 'window_id: "other"' in rpc,

@@ -153,6 +153,7 @@ pub fn run() {
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen {
             has_visible_windows: false,
+            ..
         } => {
             let handle = app_handle.clone();
             thread::spawn(move || {

@@ -17,3 +17,6 @@ serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 zstd = "0.13"
+
+[dev-dependencies]
+tempfile = "3"

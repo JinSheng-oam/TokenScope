@@ -1,7 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokenscope_core_domain::{aggregate_device_local, CanonicalRecord};
 use tokenscope_local_store::{LocalIdentity, LocalStore};
 use tokenscope_source_codex::{
@@ -12,20 +11,24 @@ const SESSION: &str = "019a9b8c-b777-4d55-9222-121212121212";
 struct Fx {
     root: PathBuf,
     file: PathBuf,
+    _temp_dir: tempfile::TempDir,
 }
 impl Fx {
     fn new() -> Self {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("tokenscope-m005-{}-{stamp}", std::process::id()));
+        let temp_dir = tempfile::Builder::new()
+            .prefix("tokenscope-m005-")
+            .tempdir()
+            .unwrap();
+        let root = temp_dir.path().to_path_buf();
         let folder = root.join("sessions/2026/11/02");
         fs::create_dir_all(&folder).unwrap();
         let file = folder.join("rollout-sample.jsonl");
         fs::write(&file,format!("{{\"timestamp\":\"2026-11-01T23:59:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{SESSION}\",\"originator\":\"Codex CLI\"}}}}\n")).unwrap();
-        Self { root, file }
+        Self {
+            root,
+            file,
+            _temp_dir: temp_dir,
+        }
     }
     fn append(&self, s: &str) {
         OpenOptions::new()
@@ -52,11 +55,6 @@ impl Fx {
     }
     fn total(&self, input: u64, cache: u64, output: u64) {
         self.append(&total(input, cache, output));
-    }
-}
-impl Drop for Fx {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
     }
 }
 fn store() -> LocalStore {

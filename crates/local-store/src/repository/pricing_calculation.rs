@@ -306,13 +306,12 @@ fn model_candidates<'a>(
     ]
     .into_iter()
     .find_map(|(prefix, provider)| model.starts_with(prefix).then_some(provider));
-    let Some(provider) = native.or(explicit).or_else(|| provider_for_tool(tool_id)) else {
+    // A named channel has its own rates. If those are missing, a manufacturer's
+    // price would be a different quote for the same model, not a fallback.
+    let Some(provider) = explicit.or(native).or_else(|| provider_for_tool(tool_id)) else {
         return Vec::new();
     };
     let mut candidates = vec![(provider, model)];
-    if let Some(proxy) = explicit.filter(|proxy| *proxy != provider) {
-        candidates.push((proxy, model));
-    }
     if !keywords {
         return candidates;
     }

@@ -254,6 +254,34 @@ fn antigravity_backfill_uses_reference_without_reclassifying_tokens() {
 }
 
 #[test]
+fn named_channel_uses_its_own_quote_without_falling_back_to_the_manufacturer() {
+    let mut db = store();
+    let native = entry("gpt-5.4", 2_000_000_000, 8_000_000_000);
+    let mut channel = entry("gpt-5.4", 1_000_000_000, 2_000_000_000);
+    channel.provider_id = "opencode-go".into();
+    install(&mut db, 'a', &[native, channel]);
+    let quoted = record('a', "opencode-go/gpt-5.4");
+    let unavailable = record('b', "xiaomi/gpt-5.4");
+    db.apply_scan(
+        None,
+        &checkpoint("source", 1_000),
+        &[quoted.clone(), unavailable.clone()],
+        1_000,
+        false,
+    )
+    .unwrap();
+    let cost = |id| {
+        db.get_record(id)
+            .unwrap()
+            .unwrap()
+            .record
+            .estimated_cost_microusd
+    };
+    assert_eq!(cost(&quoted.record_id), Some(578));
+    assert_eq!(cost(&unavailable.record_id), None);
+}
+
+#[test]
 fn manual_price_and_exact_match_preference_apply_to_backfill() {
     let dir = std::env::temp_dir().join(format!(
         "tokenscope-pricing-test-{}-{}",

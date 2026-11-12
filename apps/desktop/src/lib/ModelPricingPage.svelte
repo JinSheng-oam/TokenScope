@@ -173,13 +173,14 @@
         <p>
           {#if catalog}
             共收录 <strong>{formatNumber(entries.length)}</strong> 个模型 · 覆盖 <strong>{formatNumber(providerCounts.size)}</strong> 家厂商{#if manual.length > 0} · 含 <strong>{formatNumber(manual.length)}</strong> 条手动报价{/if}
-            · {shownCurrency} ({currencySymbol}) / 百万 Token{#if catalog.updated_at_ms} · 更新于 {dateFormat.format(catalog.updated_at_ms)}{/if}
+            · {shownCurrency} ({currencySymbol}) / 百万 Token{#if catalog.updated_at_ms} · 目录刷新于 {dateFormat.format(catalog.updated_at_ms)}{/if}
           {:else if loading}
             正在同步模型价格目录…
           {:else}
             按每百万 Token 计费
           {/if}
         </p>
+        <p>公开费率来自 Models.dev，仅用于基础 API 费用估算，未计入时段、长上下文等阶梯费率。</p>
       </div>
 
       <div class="pricing-head-controls">

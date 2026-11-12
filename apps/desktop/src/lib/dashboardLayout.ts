@@ -105,6 +105,31 @@ export const DEFAULT_DASHBOARD_CARDS: DashboardCardConfig[] = [
 ];
 
 export const STORAGE_KEY = 'tokenscope.dashboardLayout.v2';
+const GAP_STORAGE_KEY = 'tokenscope.dashboardCardGap';
+export const CARD_GAP_OPTIONS = [
+  { value: 8, label: '紧凑' },
+  { value: 14, label: '默认' },
+  { value: 22, label: '宽松' },
+] as const;
+export type CardGap = (typeof CARD_GAP_OPTIONS)[number]['value'];
+export const DEFAULT_CARD_GAP: CardGap = 14;
+
+export function loadDashboardCardGap(): CardGap {
+  try {
+    const stored = localStorage.getItem(GAP_STORAGE_KEY);
+    return CARD_GAP_OPTIONS.find(({ value }) => String(value) === stored)?.value ?? DEFAULT_CARD_GAP;
+  } catch {
+    return DEFAULT_CARD_GAP;
+  }
+}
+
+export function saveDashboardCardGap(gap: CardGap): void {
+  try {
+    localStorage.setItem(GAP_STORAGE_KEY, String(gap));
+  } catch {
+    // Keep the active setting when storage is unavailable.
+  }
+}
 
 const VALID_CARD_IDS = new Set<CardId>([
   'metrics',
@@ -190,6 +215,7 @@ export function resetDashboardLayout(): DashboardCardConfig[] {
   if (typeof localStorage !== 'undefined') {
     try {
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(GAP_STORAGE_KEY);
     } catch {
       // Ignore
     }

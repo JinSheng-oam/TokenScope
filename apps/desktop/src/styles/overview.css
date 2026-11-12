@@ -470,6 +470,15 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.edit-banner-spacing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .btn-banner-action {
@@ -526,7 +535,7 @@
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 14px;
+  gap: var(--overview-card-gap, 14px);
   width: 100%;
 }
 
@@ -1023,6 +1032,6 @@
   .overview-card-wrapper.col-span-6,
   .overview-card-wrapper.col-span-8,
   .overview-card-wrapper.col-span-12 {
-    grid-column: span 12;
+    grid-column: 1 / -1;
   }
 }

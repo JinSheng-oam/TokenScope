@@ -13,12 +13,17 @@
   import type { DashboardSnapshot, SessionActivity, SessionUsage, UsageBreakdown, UsageTotals } from '../lib/types';
   import {
     loadDashboardLayout,
+    loadDashboardCardGap,
     saveDashboardLayout,
+    saveDashboardCardGap,
     resetDashboardLayout,
     reorderCards,
     updateCardWidth,
     setCardVisibility,
     CARD_CATALOG,
+    CARD_GAP_OPTIONS,
+    DEFAULT_CARD_GAP,
+    type CardGap,
     type CardId,
     type CardWidth,
     type DashboardCardConfig,
@@ -61,6 +66,7 @@
   export let onToggleEditLayout: () => void = () => {};
 
   let cards: DashboardCardConfig[] = loadDashboardLayout();
+  let cardGap = loadDashboardCardGap();
   let showAddCardModal = false;
   let draggedIndex: number | null = null;
   let dragOverIndex: number | null = null;
@@ -187,6 +193,12 @@
 
   function handleResetDefaultLayout() {
     cards = resetDashboardLayout();
+    cardGap = DEFAULT_CARD_GAP;
+  }
+
+  function handleSetCardGap(gap: CardGap) {
+    cardGap = gap;
+    saveDashboardCardGap(gap);
   }
 </script>
 
@@ -216,6 +228,20 @@
         <span class="edit-banner-desc">拖拽卡片调整排序，点击卡片右上角尺寸按钮调整宽度，或增删数据显示模块</span>
       </div>
       <div class="edit-banner-actions">
+        <div class="edit-banner-spacing">
+          <span>卡片间距</span>
+          <div class="card-size-group" role="group" aria-label="卡片间距">
+            {#each CARD_GAP_OPTIONS as option (option.value)}
+              <button
+                type="button"
+                class="size-pill"
+                class:active={cardGap === option.value}
+                aria-pressed={cardGap === option.value}
+                onclick={() => handleSetCardGap(option.value)}
+              >{option.label}</button>
+            {/each}
+          </div>
+        </div>
         <button type="button" class="btn-banner-action" onclick={() => (showAddCardModal = true)}>
           {@html icons.plus} 添加卡片
         </button>
@@ -230,7 +256,7 @@
   {/if}
 
   <!-- Unified 12-Column Responsive Overview Grid -->
-  <div class="overview-grid" class:is-editing={isEditingLayout} class:is-dragging-any={draggedIndex !== null}>
+  <div class="overview-grid" style:--overview-card-gap={`${cardGap}px`} class:is-editing={isEditingLayout} class:is-dragging-any={draggedIndex !== null}>
     {#each visibleCards as card, idx (card.id)}
       {@const meta = CARD_CATALOG[card.id]}
       <div

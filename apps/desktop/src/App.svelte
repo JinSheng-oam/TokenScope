@@ -761,7 +761,6 @@
         {:else if activeTab === 'quota'}
           <QuotaPage
             snapshot={snapshot}
-            antigravityUsage={dashboardView.antigravityUsage}
             {codexQuotaOverride}
             {codexQuotaRefreshing}
             {codexQuotaError}

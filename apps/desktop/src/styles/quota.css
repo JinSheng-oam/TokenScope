@@ -205,10 +205,6 @@
   white-space: nowrap;
 }
 
-.quota-usage-summary {
-  margin-top: 14px;
-}
-
 @container quota-layout (max-width: 760px) {
   .quota-layout-grid {
     grid-template-columns: minmax(0, 1fr);

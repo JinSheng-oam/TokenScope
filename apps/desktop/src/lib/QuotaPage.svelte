@@ -7,14 +7,13 @@
     quotaIsStale,
     quotaWindowLabel,
   } from '../lib/dashboardView';
-  import { formatNumber, formatPercent, relativeTime } from '../lib/format';
+  import { formatPercent, relativeTime } from '../lib/format';
   import { icons } from '../lib/icons';
   import { groupUpcomingResets } from './quotaPageView';
   import { liveNow } from '../lib/liveClock';
-  import type { CodexQuota, DashboardSnapshot, UsageBreakdown } from '../lib/types';
+  import type { CodexQuota, DashboardSnapshot } from '../lib/types';
 
   export let snapshot: DashboardSnapshot;
-  export let antigravityUsage: UsageBreakdown | undefined;
   export let codexQuotaOverride: CodexQuota[] | null = null;
   export let codexQuotaRefreshing = false;
   export let codexQuotaError = '';
@@ -52,16 +51,6 @@
   $: antigravityRows = displayedAntigravityQuotas.map(antigravityRow);
   $: resetCandidates = [...codexRows, ...activeAntigravityQuotas.map(antigravityRow)];
   $: resetGroups = groupUpcomingResets(resetCandidates, $liveNow);
-
-  $: quotaPrecision = !antigravityUsage
-    ? null
-    : antigravityUsage.exact_records === antigravityUsage.record_count
-      ? { className: 'exact', label: '精确事实' }
-      : antigravityUsage.estimated_records === antigravityUsage.record_count
-        ? { className: 'estimated', label: '显式估算' }
-        : antigravityUsage.unknown_precision_records === antigravityUsage.record_count
-          ? { className: 'muted', label: '精度未知' }
-          : { className: 'aggregate', label: '混合精度' };
 </script>
 
 {#snippet quotaRows(rows: QuotaRow[])}
@@ -176,29 +165,3 @@
     </section>
   </div>
 </div>
-
-<section class="panel-card quota-usage-summary">
-  <div class="panel-head">
-    <div>
-      <h2>Antigravity Token 用量</h2>
-    </div>
-    {#if quotaPrecision}
-      <span class={`precision-chip ${quotaPrecision.className}`}>{quotaPrecision.label}</span>
-    {:else}
-      <span class="precision-chip muted">无 Token 记录</span>
-    {/if}
-  </div>
-  {#if antigravityUsage}
-    <div class="device-summary-strip quota-summary-strip">
-      <div class="summary-pill-card"><span>Token 总量</span><strong class="tabular">{formatNumber(antigravityUsage.total_tokens)}</strong></div>
-      <div class="summary-pill-card"><span>来源记录</span><strong class="tabular">{formatNumber(antigravityUsage.record_count)}</strong></div>
-      <div class="summary-pill-card"><span>精确 / 聚合</span><strong class="tabular">{formatNumber(antigravityUsage.exact_records)} / {formatNumber(antigravityUsage.aggregate_records)}</strong></div>
-      <div class="summary-pill-card"><span>显式估算</span><strong class="tabular">{formatNumber(antigravityUsage.estimated_records)}</strong></div>
-    </div>
-    {#if antigravityUsage.untimed_records > 0}
-      <p class="usage-note">{formatNumber(antigravityUsage.untimed_records)} 条记录没有可靠事件时间，因此不会进入所选日期范围和日趋势。</p>
-    {/if}
-  {:else}
-    <div class="empty-box">当前范围无 Antigravity Token 记录。</div>
-  {/if}
-</section>

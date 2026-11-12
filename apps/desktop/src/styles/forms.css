@@ -495,10 +495,6 @@
   margin-top: 16px;
 }
 
-.quota-summary-strip {
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-}
-
 .quota-observed {
   margin-top: 6px;
   color: var(--text-secondary);
@@ -568,12 +564,6 @@
 
 .session-pagination .btn-secondary {
   min-width: 72px;
-}
-
-.usage-note {
-  margin: 10px 0 0;
-  color: var(--text-secondary);
-  font-size: 11.5px;
 }
 
 .activity-table {

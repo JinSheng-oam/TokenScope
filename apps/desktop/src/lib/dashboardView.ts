@@ -243,7 +243,6 @@ export function buildDashboardProjection(options: DashboardProjectionOptions) {
     ),
     topToolTotal: Math.max(1, ...scopedTools.map((item) => item.total_tokens)),
     topModelTotal: Math.max(1, ...scopedModels.map((item) => item.total_tokens)),
-    antigravityUsage: scopedTools.find((item) => item.key === 'antigravity'),
     remoteToolRows: (snapshot?.remote_by_tool ?? []).filter(remoteFilter),
     remoteModelRows: (snapshot?.remote_by_model ?? []).filter(remoteFilter),
     sortedModels: sortModelsBy(scopedModels, options.modelSortBy),

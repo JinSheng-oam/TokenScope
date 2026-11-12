@@ -485,7 +485,7 @@
                 <p>
                   {trendViewMode === 'heatmap'
                     ? `完整历史 · ${heatmapCalendar.weeks.length} 周 · ${heatmapRangeLabel}`
-                    : '按本机时区自然日汇集（悬浮或用方向键查看当日明细）'}
+                    : '按本机时区自然日汇集'}
                 </p>
               </div>
               <div class="panel-head-actions">

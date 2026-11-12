@@ -131,33 +131,23 @@
   }
 
   function handleDrop(e: DragEvent, targetIndex: number) {
+    const fromIndex = draggedIndex;
+    if (fromIndex === null) return;
+
     e.preventDefault();
     e.stopPropagation();
-
-    const rawFrom = e.dataTransfer?.getData('text/plain');
-    const fromIndex = rawFrom !== undefined && rawFrom !== '' ? Number(rawFrom) : draggedIndex;
-
-    if (fromIndex == null || isNaN(fromIndex) || fromIndex === targetIndex) {
-      draggedIndex = null;
-      dragOverIndex = null;
-      return;
-    }
+    handleDragEnd();
+    if (fromIndex === targetIndex) return;
 
     const sourceCard = visibleCards[fromIndex];
     const targetCard = visibleCards[targetIndex];
-    if (!sourceCard || !targetCard) {
-      draggedIndex = null;
-      dragOverIndex = null;
-      return;
-    }
+    if (!sourceCard || !targetCard) return;
 
     const sourceIndexInAll = cards.findIndex((c) => c.id === sourceCard.id);
     const targetIndexInAll = cards.findIndex((c) => c.id === targetCard.id);
 
     cards = reorderCards(cards, sourceIndexInAll, targetIndexInAll);
     saveDashboardLayout(cards);
-    draggedIndex = null;
-    dragOverIndex = null;
   }
 
   function handleDragEnd() {

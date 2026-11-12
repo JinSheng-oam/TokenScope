@@ -1,9 +1,9 @@
 name: Hub Deployment Template CI
 on:
   push:
-    paths: ['deploy/**', 'scripts/verify_m107.py', '.github/workflows/deploy-ci.yml']
+    paths: ['deploy/**', 'hub/**', 'scripts/verify_m107.py', '.github/workflows/deploy-ci.yml']
   pull_request:
-    paths: ['deploy/**', 'scripts/verify_m107.py', '.github/workflows/deploy-ci.yml']
+    paths: ['deploy/**', 'hub/**', 'scripts/verify_m107.py', '.github/workflows/deploy-ci.yml']
   workflow_dispatch:
 jobs:
   compose:

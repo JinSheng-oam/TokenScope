@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import CustomSelect from './CustomSelect.svelte';
-  import { currencyPreference, displayCurrency, setDisplayCurrency, setDisplayExchangeRate, DEFAULT_EXCHANGE_RATE } from './displayCurrency';
+  import { COST_DECIMAL_PLACES, DEFAULT_EXCHANGE_RATE, currencyPreference, displayCurrency, setCostDecimalPlaces, setDisplayCurrency, setDisplayExchangeRate } from './displayCurrency';
   import { formatNumber } from './format';
   import { icons } from './icons';
   import ManualModelPrice from './ManualModelPrice.svelte';
@@ -14,6 +14,10 @@
   const pageSizeOptions = PAGE_SIZES.map((n) => ({
     key: String(n),
     label: `${n} 条 / 页`,
+  }));
+  const costDecimalOptions = COST_DECIMAL_PLACES.map((places) => ({
+    key: String(places),
+    label: places === 0 ? '整数' : `${places} 位`,
   }));
 
   const rateFormat = new Intl.NumberFormat('en-US', { maximumFractionDigits: 9 });
@@ -220,6 +224,17 @@
             <span>CNY</span>
           </label>
         {/if}
+
+        <div class="pricing-cost-precision">
+          <span class="page-size-label">费用小数位</span>
+          <CustomSelect
+            value={String($currencyPreference.costDecimalPlaces)}
+            options={costDecimalOptions}
+            align="right"
+            ariaLabel="费用小数位"
+            onChange={(value) => setCostDecimalPlaces(Number(value))}
+          />
+        </div>
 
         <label class="matching-pill" title="自动匹配模型费率；已计价的历史记录保留原估算">
           <input
@@ -579,11 +594,19 @@
     accent-color: var(--brand-strong);
   }
 
-  .pricing-page-size {
+  .pricing-page-size,
+  .pricing-cost-precision {
     display: inline-flex;
     align-items: center;
     gap: 6px;
+  }
+
+  .pricing-page-size {
     width: 146px;
+  }
+
+  .pricing-cost-precision {
+    width: 132px;
   }
 
   .page-size-label {

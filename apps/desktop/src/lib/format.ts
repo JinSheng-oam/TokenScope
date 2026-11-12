@@ -18,9 +18,15 @@ export function formatToolLabel(toolId: string): string {
 
 export function formatCost(microUsd: number | null | undefined, display: DisplayCurrency = USD_DISPLAY): string {
   if (microUsd === null || microUsd === undefined) return '暂无价格数据';
-  return new Intl.NumberFormat(display.code === 'CNY' ? 'zh-CN' : 'en-US', {
-    style: 'currency', currency: display.code, maximumFractionDigits: 2,
-  }).format((microUsd / 1_000_000) * display.multiplier);
+  const places = display.costDecimalPlaces;
+  const amount = (microUsd / 1_000_000) * display.multiplier;
+  const formatter = new Intl.NumberFormat(display.code === 'CNY' ? 'zh-CN' : 'en-US', {
+    style: 'currency', currency: display.code, minimumFractionDigits: places, maximumFractionDigits: places,
+  });
+  const smallestUnit = 10 ** -places;
+  return amount > 0 && amount < smallestUnit / 2
+    ? `< ${formatter.format(smallestUnit)}`
+    : formatter.format(amount);
 }
 
 export function formatPercent(basisPoints: number | null | undefined): string {

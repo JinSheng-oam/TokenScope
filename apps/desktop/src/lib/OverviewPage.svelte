@@ -105,6 +105,12 @@
     }
   }
 
+  const modelMillionsFormat = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1, useGrouping: false });
+
+  function formatNarrowModelTokens(tokens: number): string {
+    return tokens >= 1_000_000 ? `${modelMillionsFormat.format(tokens / 1_000_000)}M` : formatCompactTokens(tokens);
+  }
+
   function handleDragStart(e: DragEvent, index: number) {
     draggedIndex = index;
     if (e.dataTransfer) {
@@ -577,10 +583,14 @@
                         <strong title={model.label}>{model.label}</strong>
                       </span>
                       <span class="rank-meta">
-                        <span class="rank-value tabular">{formatNumber(model.total_tokens)}</span>
+                        <span class="rank-value tabular" title={`${formatNumber(model.total_tokens)} Token`}>
+                          <span class="model-tokens-full">{formatNumber(model.total_tokens)}</span>
+                          <span class="model-tokens-compact" aria-hidden="true">{formatNarrowModelTokens(model.total_tokens)}</span>
+                        </span>
                         {#if model.estimated_cost_microusd != null}
-                          <span class="panel-tag small-cost-tag tabular" title="预估费用">
-                            {formatCost(model.estimated_cost_microusd, $displayCurrency)}
+                          {@const cost = formatCost(model.estimated_cost_microusd, $displayCurrency)}
+                          <span class="panel-tag small-cost-tag tabular" title={`预估费用：${cost}`}>
+                            {cost}
                           </span>
                         {/if}
                         <span class="rank-share tabular">{percentOf(model.total_tokens, allModelTokens).toFixed(1)}%</span>

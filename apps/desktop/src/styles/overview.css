@@ -752,21 +752,48 @@
   white-space: nowrap;
 }
 
+.model-tokens-compact {
+  display: none;
+}
+
 @container model-usage (max-width: 360px) {
   .model-usage-card .rank-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 3px;
+    gap: 6px;
+  }
+
+  .model-usage-card .rank-title {
+    min-width: 4.5rem;
   }
 
   .model-usage-card .rank-meta {
-    flex-wrap: wrap;
-    row-gap: 2px;
+    flex-shrink: 1;
+    min-width: 0;
+    gap: 4px;
+  }
+
+  .model-usage-card .small-cost-tag {
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .model-usage-card .rank-share {
+    flex-shrink: 0;
     min-width: 0;
-    margin-inline-start: auto;
+  }
+
+  .model-tokens-full {
+    /* Preserve the full value for assistive technology. */
+    position: absolute;
+    clip-path: inset(50%);
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+  }
+
+  .model-tokens-compact {
+    display: inline;
   }
 }
 

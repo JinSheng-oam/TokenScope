@@ -14,16 +14,13 @@
   import type { CodexQuota, DashboardSnapshot } from '../lib/types';
 
   export let snapshot: DashboardSnapshot;
-  export let codexQuotaOverride: CodexQuota[] | null = null;
+  export let codexQuotas: CodexQuota[];
   export let codexQuotaRefreshing = false;
   export let codexQuotaError = '';
   export let onRefreshCodexQuota: () => void = () => {};
 
   let showStaleAntigravity = false;
 
-  $: codexQuotas = [...(codexQuotaOverride ?? snapshot.codex_quota)].sort(
-    (a, b) => a.window_duration_minutes - b.window_duration_minutes
-  );
   $: activeAntigravityQuotas = filterActiveAntigravityQuotas(snapshot.antigravity_quota, false);
   $: allDedupedAntigravityQuotas = filterActiveAntigravityQuotas(snapshot.antigravity_quota, true);
   $: hiddenStaleCount = Math.max(0, allDedupedAntigravityQuotas.length - activeAntigravityQuotas.length);
@@ -34,7 +31,7 @@
   type QuotaSnapshot = Pick<CodexQuota, 'remaining_basis_points' | 'reset_at_ms' | 'observed_at_ms'>;
   type QuotaRow = QuotaSnapshot & { key: string; name: string; period: string };
 
-  $: codexRows = codexQuotas.map((q): QuotaRow => ({
+  $: codexRows = [...codexQuotas].sort((a, b) => a.window_duration_minutes - b.window_duration_minutes).map((q): QuotaRow => ({
     ...q,
     key: JSON.stringify(['codex', q.source_id, q.pool_id, q.window_duration_minutes]),
     name: 'Codex',

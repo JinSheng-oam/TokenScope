@@ -338,6 +338,7 @@ export function quotaWindowLabel(durationMinutes: number): string {
   if (durationMinutes === 300) return '5 小时周期';
   if (durationMinutes === 10_080) return '每周周期';
   if (durationMinutes === 1_440) return '每日周期';
+  if (durationMinutes % 1_440 === 0) return `${formatNumber(durationMinutes / 1_440)} 天周期`;
   return `${formatNumber(durationMinutes)} 分钟周期`;
 }
 

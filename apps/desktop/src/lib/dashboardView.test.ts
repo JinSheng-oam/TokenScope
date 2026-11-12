@@ -41,6 +41,7 @@ describe('dashboardView quota utilities', () => {
   it('labels standard quota window durations', () => {
     expect(quotaWindowLabel(300)).toBe('5 小时周期');
     expect(quotaWindowLabel(10_080)).toBe('每周周期');
+    expect(quotaWindowLabel(43_200)).toBe('30 天周期');
   });
 
   it('keeps actual device components, reasoning, pricing and precision', () => {

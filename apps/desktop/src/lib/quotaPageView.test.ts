@@ -1,5 +1,18 @@
 import { expect, it } from 'vitest';
-import { groupUpcomingResets } from './quotaPageView';
+import { filterActiveCodexQuotas, groupUpcomingResets } from './quotaPageView';
+
+it('keeps only the newest batch per Codex source and pool, regardless of window duration', () => {
+  const row = (window_duration_minutes: number, observed_at_ms: number, source_id = 'local_codex') => ({
+    source_id, pool_id: 'codex', window_duration_minutes, observed_at_ms,
+    remaining_basis_points: 9800, reset_at_ms: null,
+  });
+  const oldMonthly = row(43_200, 1_000);
+  const fiveHours = row(300, 2_000);
+  const weekly = row(10_080, 2_000);
+  const activeMonthly = row(43_200, 1_500, 'another_source');
+  expect(filterActiveCodexQuotas([fiveHours, oldMonthly, weekly, activeMonthly])).toEqual([fiveHours, weekly, activeMonthly]);
+  expect(filterActiveCodexQuotas([fiveHours, row(43_200, 3_000)])).toEqual([row(43_200, 3_000)]);
+});
 
 it('orders fresh future resets and groups them by local midnight', () => {
   const now = new Date(2026, 10, 12, 23, 50).getTime();

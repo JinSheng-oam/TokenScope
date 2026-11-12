@@ -13,6 +13,7 @@
     type ModelSortBy,
     type TrendViewMode,
   } from './lib/dashboardView';
+  import { filterActiveCodexQuotas } from './lib/quotaPageView';
   import {
     getDashboardSnapshot,
     getRecentSessionActivity,
@@ -119,12 +120,13 @@
   let hoveredHeatmapCell: HeatmapCell | null = null;
 
   $: activeAntigravityQuotas = filterActiveAntigravityQuotas(snapshot?.antigravity_quota ?? []);
+  $: activeCodexQuotas = filterActiveCodexQuotas(codexQuotaOverride ?? snapshot?.codex_quota ?? []);
   $: exhaustedQuotaCount = (
-    ((codexQuotaOverride ?? snapshot?.codex_quota ?? []).filter((q) => q.remaining_basis_points === 0).length) +
+    activeCodexQuotas.filter((q) => q.remaining_basis_points === 0).length +
     activeAntigravityQuotas.filter((q) => q.remaining_basis_points !== null && q.remaining_basis_points === 0).length
   );
   $: warningQuotaCount = (
-    ((codexQuotaOverride ?? snapshot?.codex_quota ?? []).filter((q) => q.remaining_basis_points !== null && q.remaining_basis_points > 0 && q.remaining_basis_points < 2000).length) +
+    activeCodexQuotas.filter((q) => q.remaining_basis_points !== null && q.remaining_basis_points > 0 && q.remaining_basis_points < 2000).length +
     activeAntigravityQuotas.filter((q) => q.remaining_basis_points !== null && q.remaining_basis_points > 0 && q.remaining_basis_points < 2000).length
   );
 
@@ -243,7 +245,8 @@
   function quotaCovers(stored: CodexQuota[], candidate: CodexQuota[]) {
     return candidate.length > 0 && candidate.every((q) => stored.some((s) =>
       s.source_id === q.source_id && s.pool_id === q.pool_id &&
-      s.window_duration_minutes === q.window_duration_minutes && s.observed_at_ms >= q.observed_at_ms
+      (s.observed_at_ms > q.observed_at_ms ||
+        (s.observed_at_ms === q.observed_at_ms && s.window_duration_minutes === q.window_duration_minutes))
     ));
   }
 
@@ -761,7 +764,7 @@
         {:else if activeTab === 'quota'}
           <QuotaPage
             snapshot={snapshot}
-            {codexQuotaOverride}
+            codexQuotas={activeCodexQuotas}
             {codexQuotaRefreshing}
             {codexQuotaError}
             onRefreshCodexQuota={handleRefreshCodexQuota}

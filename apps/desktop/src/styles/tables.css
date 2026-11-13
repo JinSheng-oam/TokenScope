@@ -38,6 +38,52 @@ td.tabular {
   text-align: right;
 }
 
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  user-select: none;
+  transition: color var(--transition-fast);
+}
+
+th.tabular .th-sort {
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.th-sort:hover {
+  color: var(--text-primary);
+}
+
+.th-sort.active {
+  color: var(--brand-primary);
+}
+
+.th-sort .sort-arrow {
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+.table-wrap.is-skeleton-table {
+  position: relative;
+}
+
+.session-table-progress {
+  height: 2px;
+  width: 100%;
+  background: linear-gradient(90deg, transparent 0%, var(--brand-primary) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: loading-shimmer 1.4s ease-in-out infinite;
+}
+
 .table-track-cell {
   display: inline-flex;
   align-items: center;

@@ -10,7 +10,7 @@
 
   export let runtimeAvailable: boolean;
 
-  const PAGE_SIZES = [10, 25, 50, 100] as const;
+  const PAGE_SIZES = [10, 15, 25, 50, 100] as const;
   const pageSizeOptions = PAGE_SIZES.map((n) => ({
     key: String(n),
     label: `${n} 条 / 页`,
@@ -26,7 +26,7 @@
   let catalog: Catalog | null = null;
   let search = '';
   let provider = '';
-  let pageSize = 25;
+  let pageSize = 10;
   let page = 1;
   let loading = false;
   let error = '';
@@ -57,7 +57,7 @@
   $: currencySymbol = shownCurrency === 'CNY' ? '¥' : '$';
 
   $: if (pageSizeReady) {
-    try { localStorage.setItem('tokenscope.pricePageSize', String(pageSize)); } catch { /* Keep the in-memory page size. */ }
+    try { localStorage.setItem('tokenscope.pricePageSize.v3', String(pageSize)); } catch { /* Keep the in-memory page size. */ }
   }
 
   $: providerCounts = entries.reduce((acc, entry) => {
@@ -152,8 +152,7 @@
 
   onMount(() => {
     try {
-      const legacy = JSON.parse(localStorage.getItem('tokenscope.priceCurrency') ?? '{}');
-      const savedPageSize = Number(localStorage.getItem('tokenscope.pricePageSize') ?? legacy?.pageSize);
+      const savedPageSize = Number(localStorage.getItem('tokenscope.pricePageSize.v3'));
       if ((PAGE_SIZES as readonly number[]).includes(savedPageSize)) pageSize = savedPageSize;
     } catch {
       /* Ignore malformed display preferences. */
@@ -245,20 +244,6 @@
           />
           <span>关键词匹配</span>
         </label>
-
-        <div class="pricing-page-size">
-          <span class="page-size-label">每页</span>
-          <CustomSelect
-            value={String(pageSize)}
-            options={pageSizeOptions}
-            align="right"
-            ariaLabel="设置每页显示模型数量"
-            onChange={(val) => {
-              pageSize = Number(val);
-              page = 1;
-            }}
-          />
-        </div>
       </div>
     </div>
 
@@ -437,16 +422,31 @@
         </table>
       </div>
 
-      <div class="pricing-footer">
-        <span class="pricing-footer-info" role="status">
+      <div class="data-pagination">
+        <span class="data-pagination-info tabular" role="status">
           显示 <strong>{formatNumber(offset + 1)}–{formatNumber(offset + visible.length)}</strong> / 共 <strong>{formatNumber(sorted.length)}</strong> 条报价（单位：{shownCurrency} / 百万 Token）
         </span>
-        <div class="pricing-pagination" role="group" aria-label="报价分页">
-          <button type="button" class="btn-secondary btn-page" disabled={currentPage <= 1} onclick={() => (page = 1)} title="第一页">首页</button>
-          <button type="button" class="btn-secondary btn-page" disabled={currentPage <= 1} onclick={() => (page = currentPage - 1)}>上一页</button>
-          <span class="page-indicator tabular">第 <strong>{currentPage}</strong> / {pages} 页</span>
-          <button type="button" class="btn-secondary btn-page" disabled={currentPage >= pages} onclick={() => (page = currentPage + 1)}>下一页</button>
-          <button type="button" class="btn-secondary btn-page" disabled={currentPage >= pages} onclick={() => (page = pages)} title="最后一页">末页</button>
+        <div class="data-pagination-controls">
+          <div class="data-page-size">
+            <span>每页</span>
+            <CustomSelect
+              value={String(pageSize)}
+              options={pageSizeOptions}
+              align="right"
+              ariaLabel="设置每页显示模型数量"
+              onChange={(val) => {
+                pageSize = Number(val);
+                page = 1;
+              }}
+            />
+          </div>
+          <div class="data-page-nav" role="group" aria-label="报价分页">
+            <button type="button" class="btn-secondary btn-page" disabled={currentPage <= 1} onclick={() => (page = 1)} title="第一页">首页</button>
+            <button type="button" class="btn-secondary btn-page" disabled={currentPage <= 1} onclick={() => (page = currentPage - 1)}>上一页</button>
+            <span class="data-page-indicator tabular">第 <strong>{currentPage}</strong> / {pages} 页</span>
+            <button type="button" class="btn-secondary btn-page" disabled={currentPage >= pages} onclick={() => (page = currentPage + 1)}>下一页</button>
+            <button type="button" class="btn-secondary btn-page" disabled={currentPage >= pages} onclick={() => (page = pages)} title="最后一页">末页</button>
+          </div>
         </div>
       </div>
     {:else if loading}
@@ -463,10 +463,10 @@
             </tr>
           </thead>
           <tbody>
-            {#each ['52%', '44%', '62%', '38%', '56%', '48%', '50%', '42%'] as w, idx}
+            {#each ['52%', '44%', '62%', '38%', '56%', '48%', '50%', '42%', '54%', '46%'] as w, idx}
               <tr style={`--delay: ${idx * 55}ms`}>
                 <td class="col-model"><span class="sk-bone" style={`width: ${w}; height: 13px; --delay: ${idx * 55}ms`}></span></td>
-                <td class="col-provider"><span class="sk-bone" style={`width: ${['88px', '72px', '108px', '64px', '96px', '80px', '100px', '76px'][idx]}; height: 20px; border-radius: 6px; --delay: ${idx * 55 + 30}ms`}></span></td>
+                <td class="col-provider"><span class="sk-bone" style={`width: ${['88px', '72px', '108px', '64px', '96px', '80px', '100px', '76px', '92px', '68px'][idx]}; height: 20px; border-radius: 6px; --delay: ${idx * 55 + 30}ms`}></span></td>
                 {#each columns as _, cIdx}
                   <td class="col-rate tabular">
                     <span class="sk-bone" style={`width: ${cIdx < 2 ? '44px' : '32px'}; height: 12px; margin-left: auto; --delay: ${idx * 55 + cIdx * 20}ms`}></span>
@@ -492,12 +492,14 @@
 <style>
   .pricing-panel {
     min-width: 0;
+    padding: 12px 16px;
   }
 
   .pricing-panel-head {
     align-items: center;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: 10px 12px;
+    margin-bottom: 10px;
   }
 
   .pricing-panel-head p strong {
@@ -515,6 +517,7 @@
   .currency-segment {
     display: inline-flex;
     align-items: center;
+    gap: 2px;
     padding: 2px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-subtle);
@@ -526,25 +529,33 @@
   .seg-btn {
     height: 28px;
     padding: 0 10px;
-    border: none;
-    border-radius: 4px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-xs);
     background: transparent;
     color: var(--text-secondary);
     font: inherit;
     font-size: 11.5px;
-    font-weight: 600;
+    font-weight: 500;
     cursor: pointer;
-    transition: all var(--transition-fast);
+    white-space: nowrap;
+    transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
   }
 
   .seg-btn:hover {
     color: var(--text-primary);
   }
 
+  .seg-btn:focus-visible {
+    outline: 2px solid var(--brand-primary);
+    outline-offset: 1px;
+  }
+
   .seg-btn.active {
     background: var(--bg-card);
     color: var(--brand-primary);
+    border-color: var(--border-subtle);
     box-shadow: var(--shadow-card);
+    font-weight: 600;
   }
 
   .rate-inline-box {
@@ -594,18 +605,10 @@
     accent-color: var(--brand-strong);
   }
 
-  .pricing-page-size,
   .pricing-cost-precision {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-  }
-
-  .pricing-page-size {
-    width: 146px;
-  }
-
-  .pricing-cost-precision {
     width: 132px;
   }
 
@@ -620,8 +623,8 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
-    padding: 10px 12px;
-    margin-bottom: 12px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
     background: color-mix(in srgb, var(--bg-secondary) 72%, var(--bg-card));
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
@@ -747,7 +750,7 @@
 
   .pricing-table th,
   .pricing-table td {
-    padding: 9px 10px;
+    padding: 7px 10px;
   }
 
   .pricing-table th:first-child,
@@ -893,39 +896,5 @@
 
   .is-manual-row td {
     background: color-mix(in srgb, var(--brand-subtle) 32%, transparent);
-  }
-
-  .pricing-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 14px;
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-
-  .pricing-footer-info strong,
-  .page-indicator strong {
-    color: var(--text-primary);
-    font-weight: 600;
-  }
-
-  .pricing-pagination {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .btn-page {
-    min-height: 30px;
-    padding: 0 10px;
-    font-size: 11.5px;
-  }
-
-  .page-indicator {
-    padding: 0 6px;
-    font-size: 12px;
   }
 </style>

@@ -12,8 +12,9 @@
   padding: 18px max(24px, calc((100% - 1392px) / 2)) 32px;
 }
 
-.page-content.compact-session {
-  padding-bottom: 12px;
+.page-content.compact-session,
+.page-content.compact-page {
+  padding-bottom: 14px;
 }
 
 .page-header {

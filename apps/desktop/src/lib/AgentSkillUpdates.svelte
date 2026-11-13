@@ -149,8 +149,8 @@
 
   .adopt-panel {
     padding: 12px 18px;
-    background: rgba(245, 158, 11, 0.06);
-    border-bottom: 1px solid rgba(245, 158, 11, 0.2);
+    background: var(--color-estimated-bg);
+    border-bottom: 1px solid var(--color-estimated-border);
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -161,7 +161,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    color: #d97706;
+    color: var(--color-estimated);
   }
 
   .adopt-form {
@@ -185,23 +185,6 @@
   .adopt-buttons {
     display: flex;
     gap: 8px;
-  }
-
-  .btn-compact {
-    min-height: 22px;
-    padding: 0 8px;
-    font-size: 10.5px;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-xs);
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .btn-compact:hover {
-    border-color: var(--border-default);
-    background: var(--bg-card-hover);
   }
 
 </style>

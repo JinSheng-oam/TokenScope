@@ -48,10 +48,15 @@
 >
   <div class="session-drawer-inner">
     <header class="session-drawer-header">
-      <div>
+      <div class="session-drawer-title-group">
         <h2 id="session-details-heading">{session.display_name ?? '未命名会话'}</h2>
-        <p>{[...projects, formatToolLabel(session.tool_id)].join(' · ')}</p>
-        <code title={session.session_id}>…{session.session_id.slice(-8)}</code>
+        <div class="session-drawer-subtitle">
+          {#if projects.length > 0}
+            <span class="session-drawer-meta-item" title={projects.join(' · ')}>{@html icons.projects}{projects.join(' · ')}</span>
+          {/if}
+          <span class="session-drawer-meta-item">{@html icons.tools}{formatToolLabel(session.tool_id)}</span>
+          <code class="session-drawer-id" title={session.session_id}>…{session.session_id.slice(-8)}</code>
+        </div>
       </div>
       <button type="button" class="session-icon-button" bind:this={closeButton} onclick={onClose} aria-label="关闭会话详情">
         {@html icons.close}
@@ -61,8 +66,26 @@
     <div class="session-drawer-body">
       {#if actionError}<p class="session-action-notice error" role="alert">{actionError}</p>{/if}
       <div class="session-drawer-total">
-        <span>Token 用量 · {rangeLabel}</span>
+        <div class="session-drawer-total-head">
+          <span>Token 用量 · {rangeLabel}</span>
+          {#if session.model_count > 0}
+            <span class="panel-tag">{formatNumber(session.model_count)} 个模型</span>
+          {/if}
+        </div>
         <strong>{formatNumber(session.total_tokens)}</strong>
+        {#if session.input_uncached_tokens !== undefined || session.cache_read_tokens !== undefined || session.cache_write_tokens !== undefined}
+          <div class="session-drawer-token-parts tabular">
+            {#if session.input_uncached_tokens !== undefined}
+              <span>非缓存输入 <strong>{formatNumber(session.input_uncached_tokens)}</strong></span>
+            {/if}
+            {#if session.cache_read_tokens !== undefined}
+              <span>缓存读取 <strong>{formatNumber(session.cache_read_tokens)}</strong></span>
+            {/if}
+            {#if session.cache_write_tokens !== undefined && session.cache_write_tokens > 0}
+              <span>缓存写入 <strong>{formatNumber(session.cache_write_tokens)}</strong></span>
+            {/if}
+          </div>
+        {/if}
       </div>
       <dl class="session-drawer-metrics">
         <div>
@@ -84,17 +107,26 @@
 
       <section class="session-drawer-models" aria-label="模型用量">
         <h3>模型用量</h3>
-        {#each session.models as model (model.model_id)}
-          {@const share = percentOf(model.total_tokens, session.total_tokens)}
-          <div class="session-model-detail">
-            <span>{model.model_id ?? '来源未提供模型'}</span>
-            <strong>{formatNumber(model.total_tokens)}</strong>
-            <small>{session.total_tokens > 0 ? share.toFixed(1) + '%' : '—'}</small>
-            <div class="session-usage-track" aria-hidden="true"><span style:width={share + '%'}></span></div>
-          </div>
-        {:else}
-          <p>来源未提供模型用量。</p>
-        {/each}
+        <div class="session-model-list">
+          {#each session.models as model (model.model_id)}
+            {@const share = percentOf(model.total_tokens, session.total_tokens)}
+            <div class="session-model-detail">
+              <div class="session-model-row">
+                <span class="session-model-name" title={model.model_id ?? undefined}>{model.model_id ?? '来源未提供模型'}</span>
+                <span class="session-model-numbers tabular">
+                  <strong>{formatNumber(model.total_tokens)}</strong>
+                  <small>{session.total_tokens > 0 ? share.toFixed(1) + '%' : '—'}</small>
+                </span>
+              </div>
+              <div class="session-usage-track" aria-hidden="true"><span style:width={share + '%'}></span></div>
+              <div class="session-model-foot tabular">
+                <span>记录 {formatNumber(model.record_count)} 笔</span>
+              </div>
+            </div>
+          {:else}
+            <p class="session-model-empty">来源未提供模型用量。</p>
+          {/each}
+        </div>
       </section>
 
       <dl class="session-drawer-events">
@@ -114,7 +146,7 @@
         <button type="button" class="btn-secondary" disabled={deleting} onclick={() => { onCancelDelete(); requestAnimationFrame(() => deleteButton?.focus()); }}>取消</button>
         <button type="button" class="btn-danger" disabled={deleting} onclick={onConfirmDelete}>{deleting ? '移除中…' : '确认移除'}</button>
       {:else}
-        <button type="button" class="btn-secondary session-remove-button" bind:this={deleteButton} disabled={deleteDisabled} onclick={() => { onRequestDelete(); closeButton.focus(); }}>从统计移除</button>
+        <button type="button" class="btn-danger-ghost session-remove-button" bind:this={deleteButton} disabled={deleteDisabled} onclick={() => { onRequestDelete(); closeButton.focus(); }}>{@html icons.trash} 从统计移除</button>
         {#if historyLabel}
           <button type="button" class="btn-secondary session-history-action" onclick={onHistory}>
             {@html icons.quota} {historyLabel}

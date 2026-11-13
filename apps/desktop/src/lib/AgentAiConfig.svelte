@@ -467,29 +467,6 @@
     gap: 8px;
   }
 
-  .btn-sm {
-    height: 28px;
-    padding: 0 12px;
-    font-size: 11.5px;
-  }
-
-  .btn-compact {
-    min-height: 22px;
-    padding: 0 8px;
-    font-size: 10.5px;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-xs);
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .btn-compact:hover {
-    border-color: var(--border-default);
-    background: var(--bg-card-hover);
-  }
-
   @media (max-width: 900px) {
     .ai-config-grid {
       grid-template-columns: 1fr;

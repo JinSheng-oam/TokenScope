@@ -3,7 +3,7 @@
   export let rows: number;
   export let paginating = false;
 
-  const widths = [42, 57, 33, 51, 38];
+  const widths = [42, 57, 33, 51, 38, 46, 54];
 </script>
 
 <div class="session-loading-preview" role="status">
@@ -25,8 +25,8 @@
 </div>
 
 <style>
-  .session-loading-preview { display: grid; gap: 10px; padding-block: 10px; animation: loading-fade-in 180ms ease-out; }
-  .sk-session-row { min-height: 53px; }
+  .session-loading-preview { display: grid; gap: 10px; padding-block: 6px; animation: loading-fade-in 180ms ease-out; }
+  .sk-session-row { min-height: 46px; }
   .sk-stack { flex: 1; min-width: 0; }
   @media (prefers-reduced-motion: reduce) {
     .session-loading-preview { animation: none; }

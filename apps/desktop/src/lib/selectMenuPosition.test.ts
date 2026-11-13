@@ -15,4 +15,11 @@ describe('select menu placement', () => {
       width: 156, left: 236, top: 148, maxHeight: 144, up: false,
     });
   });
+
+  it('matches trigger width when content fits without overflowing', () => {
+    const anchor = { left: 836, right: 940, top: 650, bottom: 678, width: 104 };
+    expect(selectMenuPosition(anchor, 1000, 720, 150, 'right', 96)).toEqual({
+      width: 104, left: 836, top: 646, maxHeight: 242, up: true,
+    });
+  });
 });

@@ -59,7 +59,7 @@ export const CARD_CATALOG: Record<CardId, CardMeta> = {
     id: 'models',
     title: '模型用量分布',
     description: '各 AI 模型（GPT-4、Claude 3.7、Gemini 等）用量排行、费用与占比',
-    defaultWidth: '1/2',
+    defaultWidth: '1/3',
     canResize: true,
   },
   sessions: {
@@ -94,17 +94,17 @@ export const CARD_CATALOG: Record<CardId, CardMeta> = {
 
 export const DEFAULT_DASHBOARD_CARDS: DashboardCardConfig[] = [
   { id: 'metrics', visible: true, width: 'full' },
-  { id: 'integrity', visible: true, width: 'full' },
   { id: 'trend', visible: true, width: '2/3' },
-  { id: 'tools', visible: true, width: '1/3' },
+  { id: 'models', visible: true, width: '1/3' },
   { id: 'sessions', visible: true, width: '2/3' },
   { id: 'sources', visible: true, width: '1/3' },
-  { id: 'models', visible: true, width: '1/2' },
-  { id: 'projects', visible: true, width: '1/2' },
+  { id: 'integrity', visible: false, width: 'full' },
+  { id: 'tools', visible: false, width: '1/3' },
+  { id: 'projects', visible: false, width: '1/2' },
   { id: 'quotas', visible: false, width: '1/3' },
 ];
 
-export const STORAGE_KEY = 'tokenscope.dashboardLayout.v2';
+export const STORAGE_KEY = 'tokenscope.dashboardLayout.v3';
 const GAP_STORAGE_KEY = 'tokenscope.dashboardCardGap';
 export const CARD_GAP_OPTIONS = [
   { value: 8, label: '紧凑' },

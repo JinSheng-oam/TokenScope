@@ -59,15 +59,15 @@
   <div class="mcp-heading">
     <div>
       <strong>MCP 配置</strong>
-      {#if view}<p>{view.path}</p>{/if}
+      {#if view}<p class="mcp-path mono">{view.path}</p>{/if}
     </div>
-    <button type="button" class="btn-secondary" disabled={busy} onclick={onClose}>收起</button>
+    <button type="button" class="btn-secondary btn-sm" disabled={busy} onclick={onClose}>收起</button>
   </div>
 
   {#if provider === 'deepseek'}
     <div class="mcp-actions">
       <label for="dsh-mcp-profile">配置档案</label>
-      <select id="dsh-mcp-profile" value={profile} disabled={busy} onchange={switchProfile}>
+      <select id="dsh-mcp-profile" class="mcp-select" value={profile} disabled={busy} onchange={switchProfile}>
         <option value="desktop">Desktop</option>
         <option value="web">Web</option>
       </select>
@@ -75,7 +75,7 @@
     <p>这里只管理通过 TokenScope 添加的服务器。手写、继承和插件注册的配置请在 DeepSeek 中查看。</p>
   {/if}
     {#if error}<p class="mcp-error" role="alert">{error}</p>{/if}
-    {#if notice}<p role="status">{notice}</p>{/if}
+    {#if notice}<p class="mcp-notice" role="status">{notice}</p>{/if}
     {#if view}
       <p>仅编辑 MCP 段。配置可能包含密钥，只保存在本机。</p>
       {#if reveal}
@@ -96,12 +96,95 @@
 </section>
 
 <style>
-  .mcp-panel { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--bg-card); }
-  .mcp-heading, .mcp-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .mcp-heading { justify-content: space-between; }
-  .mcp-heading > div { min-width: 0; }
-  p { margin: 0; overflow-wrap: anywhere; color: var(--text-secondary); font-size: 12px; }
-  .mcp-error { color: var(--color-danger, #b42318); }
-  label { font-size: 12px; }
-  textarea { width: 100%; min-height: 220px; resize: vertical; padding: 10px; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); font: 12px/1.5 var(--font-mono, monospace); }
+  .mcp-panel {
+    display: grid;
+    gap: 10px;
+    padding: 16px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+    box-shadow: var(--shadow-card);
+  }
+  .mcp-heading, .mcp-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .mcp-heading {
+    justify-content: space-between;
+  }
+  .mcp-heading > div {
+    min-width: 0;
+  }
+  .mcp-heading strong {
+    font-size: 13.5px;
+    color: var(--text-primary);
+  }
+  .mcp-path {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  p {
+    margin: 0;
+    overflow-wrap: anywhere;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+  .mcp-error,
+  .mcp-notice {
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+  }
+  .mcp-error {
+    color: var(--color-danger);
+    background: var(--color-danger-bg);
+    border: 1px solid var(--color-danger-border);
+  }
+  .mcp-notice {
+    color: var(--color-exact);
+    background: var(--color-exact-bg);
+    border: 1px solid var(--color-exact-border);
+  }
+  label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+  .mcp-select {
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--border-input);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 12px;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  .mcp-select:focus {
+    border-color: var(--brand-primary);
+    box-shadow: 0 0 0 2px var(--brand-subtle);
+    outline: none;
+  }
+  textarea {
+    width: 100%;
+    min-height: 220px;
+    resize: vertical;
+    padding: 10px 12px;
+    border: 1px solid var(--border-input);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font: 12px/1.55 var(--font-mono);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+  }
+  textarea:focus {
+    border-color: var(--brand-primary);
+    background: var(--bg-card);
+    box-shadow: 0 0 0 2px var(--brand-subtle);
+    outline: none;
+  }
 </style>

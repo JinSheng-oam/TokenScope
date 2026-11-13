@@ -26,9 +26,9 @@
 }
 
 .custom-page .instruction-badge.warning {
-  border-color: rgba(245, 158, 11, 0.32);
-  background: rgba(245, 158, 11, 0.1);
-  color: #d97706;
+  border-color: var(--color-estimated-border);
+  background: var(--color-estimated-bg);
+  color: var(--color-estimated);
 }
 
 .custom-page .instruction-badge.auxiliary {
@@ -57,9 +57,9 @@
 }
 
 .custom-page .status-badge.disabled {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
-  border: 1px solid rgba(239, 68, 68, 0.25);
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-border);
 }
 
 .custom-page .status-dot {

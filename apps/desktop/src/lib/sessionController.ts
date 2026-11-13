@@ -34,12 +34,12 @@ type SessionControllerDependencies = {
   deleteUsage?: typeof deleteSession;
 };
 
-export const SESSION_PAGE_SIZES = [5, 6, 8, 10, 15, 20, 50, 100] as const;
-const DEFAULT_PAGE_SIZE = 50;
+export const SESSION_PAGE_SIZES = [7, 10, 15, 20, 50, 100] as const;
+const DEFAULT_PAGE_SIZE = 7;
 const MAX_BATCH_SIZE = 100;
 const CACHED_PAGES = 6;
 const PAGE_CACHE_MS = 60_000;
-const PAGE_SIZE_STORAGE_KEY = 'tokenscope.sessionPageSize';
+const PAGE_SIZE_STORAGE_KEY = 'tokenscope.sessionPageSize.v3';
 
 function restorePageSize(): number {
   try {

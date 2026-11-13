@@ -32,7 +32,13 @@
     if (!isOpen || !dropdownRef || !optionsRef) return;
     const rect = triggerRef.getBoundingClientRect();
     const viewport = document.documentElement;
-    const position = selectMenuPosition(rect, viewport.clientWidth, viewport.clientHeight, optionsRef.scrollHeight + 2, align);
+    dropdownRef.style.width = 'max-content';
+    const contentWidth = Math.ceil(dropdownRef.getBoundingClientRect().width);
+    const contentHeight = optionsRef.scrollHeight + 2;
+    const availableHeight = Math.max(viewport.clientHeight - rect.bottom - 12, rect.top - 12);
+    const scrollbarReserve = contentHeight > Math.min(242, availableHeight) ? 6 : 0;
+    const desiredWidth = Math.min(contentWidth + scrollbarReserve, Math.max(rect.width, 280));
+    const position = selectMenuPosition(rect, viewport.clientWidth, viewport.clientHeight, contentHeight, align, desiredWidth);
     dropdownRef.style.width = position.width + 'px';
     dropdownRef.style.left = position.left + 'px';
     dropdownRef.style.top = position.top + 'px';
@@ -208,7 +214,7 @@
   .select-trigger:focus-visible {
     border-color: var(--brand-primary);
     background-color: var(--bg-card);
-    box-shadow: 0 0 0 1px var(--brand-primary);
+    box-shadow: 0 0 0 2px var(--brand-subtle);
   }
 
   .select-trigger:disabled {
@@ -225,6 +231,7 @@
     min-width: 0;
     color: var(--text-primary);
     font-weight: 500;
+    font-variant-numeric: tabular-nums;
   }
 
   .trigger-label.is-placeholder {
@@ -281,7 +288,7 @@
     padding: 4px;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 2px;
   }
 
   .options-scroll::-webkit-scrollbar {
@@ -295,10 +302,10 @@
   .select-option {
     flex: 0 0 auto;
     width: 100%;
-    padding: 6px 8px;
+    padding: 5px 8px;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     background: transparent;
     border: none;
     border-radius: 4px;
@@ -324,10 +331,12 @@
   }
 
   .option-label {
-    flex: 1;
+    flex: 1 1 auto;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
 
   .option-count,

@@ -967,25 +967,25 @@
   .provider-tabs {
     display: inline-flex;
     align-items: center;
-    gap: 3px;
-    padding: 3px;
+    gap: 2px;
+    padding: 2px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
   }
 
   .provider-tab-btn {
-    height: 28px;
-    padding: 0 14px;
-    border: none;
+    min-height: 28px;
+    padding: 3px 12px;
+    border: 1px solid transparent;
     background: transparent;
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
     font: inherit;
     font-size: 12px;
     font-weight: 500;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-fast);
+    transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
     white-space: nowrap;
   }
 
@@ -993,11 +993,17 @@
     color: var(--text-primary);
   }
 
+  .provider-tab-btn:focus-visible {
+    outline: 2px solid var(--brand-primary);
+    outline-offset: 1px;
+  }
+
   .provider-tab-btn.selected {
     background: var(--bg-card);
-    color: var(--brand-strong);
+    color: var(--brand-primary);
+    border-color: var(--border-subtle);
     font-weight: 600;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    box-shadow: var(--shadow-card);
   }
 
   .provider-tab-btn:disabled {
@@ -1015,17 +1021,6 @@
     min-height: 560px;
     overflow: hidden;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
-  }
-
-  .btn-danger {
-    color: #ef4444;
-    border-color: rgba(239, 68, 68, 0.28);
-    background: rgba(239, 68, 68, 0.06);
-  }
-
-  .btn-danger:hover:not(:disabled) {
-    border-color: rgba(239, 68, 68, 0.5);
-    background: rgba(239, 68, 68, 0.12);
   }
 
   /* Editor Area (Right Column) */
@@ -1093,7 +1088,7 @@
   }
 
   .instruction-status-note.warning {
-    color: #d97706;
+    color: var(--color-estimated);
   }
 
   .aux-reference-bar {
@@ -1537,23 +1532,6 @@
     font-size: 14px;
     color: var(--text-primary);
     margin: 0;
-  }
-
-  .btn-compact {
-    min-height: 22px;
-    padding: 0 8px;
-    font-size: 10.5px;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-xs);
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .btn-compact:hover {
-    border-color: var(--border-default);
-    background: var(--bg-card-hover);
   }
 
   .message {

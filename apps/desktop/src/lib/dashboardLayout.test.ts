@@ -32,7 +32,11 @@ describe('dashboardLayout', () => {
     expect(layout.length).toBe(DEFAULT_DASHBOARD_CARDS.length);
     expect(layout.find((c) => c.id === 'trend')?.width).toBe('2/3');
     expect(layout.find((c) => c.id === 'models')?.visible).toBe(true);
-    expect(layout.find((c) => c.id === 'projects')?.visible).toBe(true);
+    expect(layout.find((c) => c.id === 'models')?.width).toBe('1/3');
+    expect(layout.find((c) => c.id === 'sessions')?.visible).toBe(true);
+    expect(layout.find((c) => c.id === 'sources')?.visible).toBe(true);
+    expect(layout.find((c) => c.id === 'integrity')?.visible).toBe(false);
+    expect(layout.find((c) => c.id === 'projects')?.visible).toBe(false);
     expect(layout.find((c) => c.id === 'quotas')?.visible).toBe(false);
   });
 

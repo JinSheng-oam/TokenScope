@@ -532,6 +532,59 @@
 }
 
 /* 12-Column Overview Grid */
+.page-content.overview-page {
+  padding-bottom: 12px;
+}
+
+.page-content.overview-page .overview-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 100%;
+}
+
+.page-content.overview-page .overview-grid:not(.is-editing) .metric-card {
+  min-height: 92px;
+  padding: 11px 14px 10px;
+  gap: 2px;
+}
+
+.page-content.overview-page .overview-grid:not(.is-editing) .metric-val {
+  margin: 2px 0 3px;
+  font-size: clamp(19px, 1.8vw, 22px);
+}
+
+.page-content.overview-page .overview-grid:not(.is-editing) .metric-split-bar {
+  margin: 2px 0 4px;
+}
+
+.page-content.overview-page .overview-grid:not(.is-editing) .overview-card-wrapper > section.panel-card {
+  min-height: 0;
+  padding: 12px 16px;
+}
+
+.page-content.overview-page .overview-grid:not(.is-editing) .panel-head {
+  margin-bottom: 8px;
+}
+
+.page-content.overview-page .overview-grid:not(.is-editing) .chart-stage,
+.page-content.overview-page .overview-grid:not(.is-editing) .heatmap-stage {
+  height: 156px;
+}
+
+.page-content.overview-page .overview-grid:not(.is-editing) .rank-list {
+  gap: 9px;
+}
+
+.page-content.overview-page .overview-grid:not(.is-editing) .recent-session-row {
+  padding: 4px 0;
+}
+
+.page-content.overview-page .overview-grid:not(.is-editing) .source-health-row {
+  min-height: 28px;
+  padding: 4px 0;
+}
+
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));

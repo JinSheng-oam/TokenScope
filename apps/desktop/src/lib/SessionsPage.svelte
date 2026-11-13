@@ -38,7 +38,7 @@
   export let sessionLoading: boolean;
   export let sessionError: string;
   export let sessionOffset: number;
-  export let sessionPageSize: number = 50;
+  export let sessionPageSize: number = 7;
   export let onSetSessionPageSize: (size: number) => void = () => {};
 
   const pageSizeOptions = SESSION_PAGE_SIZES.map((n) => ({
@@ -79,7 +79,12 @@
     isPaginating = true;
     const request = onSessionPage(nextOffset);
     await tick();
-    timelineStart?.scrollIntoView({ block: 'start' });
+    if (timelineStart) {
+      const pageContainer = timelineStart.closest('.page-content');
+      if (pageContainer && pageContainer.scrollTop > 0 && timelineStart.getBoundingClientRect().top < 68) {
+        timelineStart.scrollIntoView({ block: 'start' });
+      }
+    }
     try {
       await request;
     } finally {
@@ -129,6 +134,8 @@
     : [];
   $: groups = groupSessionTimeline(sortedSessions, sortBy === 'time', timeZone, groupClock);
   $: largestTokens = sortedSessions.reduce((max, session) => Math.max(max, session.total_tokens), 0);
+  $: sessionTotalPages = sessionPage ? Math.max(1, Math.ceil(sessionPage.total / sessionPage.limit)) : 1;
+  $: sessionCurrentPage = sessionPage ? Math.min(sessionTotalPages, Math.floor(sessionOffset / sessionPage.limit) + 1) : 1;
   $: detailSession = selectedKey === null ? null
     : sessionPage?.sessions.find((session) => sessionActionKey(session) === selectedKey) ?? null;
   $: if (selectedKey && !detailSession && !sessionLoading) void closeDetails();
@@ -221,11 +228,12 @@
         </button>
       {/each}
     </div>
-    <div class="session-timeline" bind:this={timelineStart} aria-busy={sessionLoading}>
-      {#if sessionLoading && (isPaginating || sessionPage.offset !== sessionOffset || sessionPage.limit !== sessionPageSize)}
-        <SessionLoading rows={sessionPageSize} paginating={isPaginating} />
-      {:else}
-        {#each groups as group (group.key)}
+    {@const timelineUpdating = sessionLoading && (isPaginating || sessionPage.offset !== sessionOffset || sessionPage.limit !== sessionPageSize)}
+    <div class="session-timeline" class:is-updating={timelineUpdating} bind:this={timelineStart} aria-busy={sessionLoading}>
+      {#if timelineUpdating}
+        <div class="session-table-progress session-timeline-progress" aria-hidden="true"></div>
+      {/if}
+      {#each groups as group (group.key)}
           <div class="session-day" class:dated={!!group.label}>
             {#if group.label}<h2><span>{group.label}</span></h2>{/if}
             <ul>
@@ -281,13 +289,14 @@
             </ul>
           </div>
         {/each}
-      {/if}
     </div>
-    <div class="session-pagination">
-      <span role="status">{sessionLoading ? '更新中…' : formatNumber(sessionPageStart) + '–' + formatNumber(sessionPageEnd) + ' / ' + formatNumber(sessionPage.total) + ' 条'}</span>
-      <div class="session-pagination-controls">
-        <div class="session-page-size">
-          <span class="session-page-size-label">每页</span>
+    <div class="data-pagination">
+      <span class="data-pagination-info tabular" role="status">
+        显示 <strong>{formatNumber(sessionPageStart)}–{formatNumber(sessionPageEnd)}</strong> / 共 <strong>{formatNumber(sessionPage.total)}</strong> 条会话
+      </span>
+      <div class="data-pagination-controls">
+        <div class="data-page-size">
+          <span>每页</span>
           <CustomSelect
             value={String(sessionPageSize)}
             options={pageSizeOptions}
@@ -296,9 +305,12 @@
             onChange={(val) => onSetSessionPageSize(Number(val))}
           />
         </div>
-        <div aria-label="会话分页">
-          <button class="btn-secondary" disabled={sessionOffset === 0 || refreshing || isPaginating} onclick={() => handleSessionPage(Math.max(0, sessionOffset - sessionPage.limit))}>上一页</button>
-          <button class="btn-secondary" disabled={sessionOffset + sessionPage.limit >= sessionPage.total || refreshing || isPaginating} onclick={() => handleSessionPage(sessionOffset + sessionPage.limit)}>下一页</button>
+        <div class="data-page-nav" role="group" aria-label="会话分页">
+          <button type="button" class="btn-secondary btn-page" disabled={sessionOffset === 0 || refreshing || isPaginating} onclick={() => handleSessionPage(0)} title="第一页">首页</button>
+          <button type="button" class="btn-secondary btn-page" disabled={sessionOffset === 0 || refreshing || isPaginating} onclick={() => handleSessionPage(Math.max(0, sessionOffset - sessionPage.limit))}>上一页</button>
+          <span class="data-page-indicator tabular">第 <strong>{sessionCurrentPage}</strong> / {sessionTotalPages} 页</span>
+          <button type="button" class="btn-secondary btn-page" disabled={sessionOffset + sessionPage.limit >= sessionPage.total || refreshing || isPaginating} onclick={() => handleSessionPage(sessionOffset + sessionPage.limit)}>下一页</button>
+          <button type="button" class="btn-secondary btn-page" disabled={sessionOffset + sessionPage.limit >= sessionPage.total || refreshing || isPaginating} onclick={() => handleSessionPage((sessionTotalPages - 1) * sessionPage.limit)} title="最后一页">末页</button>
         </div>
       </div>
     </div>

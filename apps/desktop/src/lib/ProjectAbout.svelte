@@ -85,10 +85,16 @@
 <style>
   .about-card { margin: 0; }
   .project-details {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px 28px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
     margin: 0;
+  }
+  .project-details > div {
+    padding: 10px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
   }
   dt, .release-row {
     font-size: 12px;
@@ -97,17 +103,25 @@
   dd {
     margin: 4px 0 0;
     font-size: 13px;
+    font-weight: 500;
     color: var(--text-primary);
   }
   a {
     color: var(--brand-primary);
+    text-decoration: none;
     text-underline-offset: 3px;
+    transition: color var(--transition-fast);
+  }
+  a:hover {
+    color: var(--brand-primary-hover);
+    text-decoration: underline;
   }
   .release-row {
     display: flex;
-    align-items: baseline;
+    align-items: center;
+    justify-content: space-between;
     flex-wrap: wrap;
-    gap: 6px 14px;
+    gap: 8px 14px;
     padding-top: 12px;
     margin-top: 12px;
     border-top: 1px solid var(--border-subtle);

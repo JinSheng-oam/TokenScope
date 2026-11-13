@@ -9,6 +9,7 @@
   --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Segoe UI Variable Text', 'SF Mono', Consolas, monospace;
 
   /* Universal Constants */
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
@@ -58,11 +59,13 @@
   --bg-sidebar: #101319;
   --bg-card: #151921;
   --bg-card-hover: #1B202B;
+  --bg-hover: #1B202B;
   --bg-elevated: #212734;
   --bg-input: #0F1218;
   --bg-secondary: rgba(255, 255, 255, 0.045);
 
   --border-subtle: rgba(255, 255, 255, 0.075);
+  --border-default: rgba(255, 255, 255, 0.11);
   --border-strong: rgba(255, 255, 255, 0.15);
   --border-input: rgba(255, 255, 255, 0.13);
 
@@ -74,6 +77,7 @@
 
   --brand-primary: #8E99F3;
   --brand-primary-hover: #A5AEFF;
+  --brand-text: #A5AEFF;
   --brand-strong: #5E6AD2;
   --brand-strong-hover: #6E79DF;
   --brand-subtle: rgba(117, 129, 245, 0.14);
@@ -85,8 +89,10 @@
   --color-quota: #38BDF8;
   --color-danger: #F87171;
 
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.28);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.36);
   --shadow-elevated: 0 8px 24px -4px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 12px 32px -4px rgba(0, 0, 0, 0.62);
 
   --chart-grid: rgba(255, 255, 255, 0.06);
   --chart-fill-start: rgba(94, 106, 210, 0.30);
@@ -109,11 +115,13 @@
   --bg-sidebar: #EFF1F5;
   --bg-card: #FFFFFF;
   --bg-card-hover: #FAFBFD;
+  --bg-hover: #F1F4F9;
   --bg-elevated: #FFFFFF;
   --bg-input: #FFFFFF;
   --bg-secondary: #E7EBF0;
 
   --border-subtle: #E1E5EC;
+  --border-default: #D5DCE6;
   --border-strong: #C6CEDB;
   --border-input: #CBD3DF;
 
@@ -125,6 +133,7 @@
 
   --brand-primary: #4F5BD5;
   --brand-primary-hover: #404BC2;
+  --brand-text: #404BC2;
   --brand-strong: #4F5BD5;
   --brand-strong-hover: #424EC0;
   --brand-subtle: rgba(79, 91, 213, 0.09);
@@ -136,8 +145,10 @@
   --color-quota: #0369A1;
   --color-danger: #B91C1C;
 
+  --shadow-sm: 0 2px 6px rgba(15, 23, 42, 0.06);
   --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04);
   --shadow-elevated: 0 8px 20px -4px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 12px 28px -4px rgba(15, 23, 42, 0.12);
 
   --chart-grid: #E8ECF2;
   --chart-fill-start: rgba(79, 91, 213, 0.16);
@@ -210,7 +221,8 @@ button:focus {
 
 button:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+textarea:focus-visible {
   outline: 2px solid var(--brand-primary);
   outline-offset: 2px;
 }
@@ -226,4 +238,8 @@ button:disabled {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1, "cv05" 1;
   letter-spacing: -0.01em;
+}
+
+.mono {
+  font-family: var(--font-mono);
 }

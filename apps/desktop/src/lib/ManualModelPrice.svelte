@@ -45,7 +45,7 @@
     <label>厂商标识<input bind:value={provider} maxlength="128" placeholder="例如 openai" readonly={!!entry} required /></label>
     <label>完整模型名<input bind:value={model} maxlength="256" placeholder="例如 gpt-5.6-luna" readonly={!!entry} required /></label>
     {#each rateColumns as { key, label }}
-      <label>{label}<input inputmode="decimal" bind:value={fields[key]} placeholder={key.startsWith('cache_') ? '默认按输入价' : key === 'reasoning_rate_nanos' ? '默认按输出价' : '0.00'} /></label>
+      <label>{label}<input class="tabular" inputmode="decimal" bind:value={fields[key]} placeholder={key.startsWith('cache_') ? '默认按输入价' : key === 'reasoning_rate_nanos' ? '默认按输出价' : '0.00'} /></label>
     {/each}
   </div>
   {#if error}<div class="notice-box" role="alert">{error}</div>{/if}
@@ -56,11 +56,67 @@
 </form>
 
 <style>
-  .price-form { display:grid; gap:10px; margin-bottom:12px; padding:12px; background:var(--bg-secondary); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); }
-  .form-heading, .form-actions { display:flex; align-items:center; gap:10px; }
-  .form-heading span { color:var(--text-muted); font-size:12px; }
-  .fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); gap:8px; }
-  label { display:grid; gap:4px; font-size:12px; color:var(--text-secondary); }
-  input { width:100%; min-width:0; height:32px; padding:0 8px; font:inherit; color:var(--text-primary); background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); }
+  .price-form {
+    display: grid;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding: 14px 16px;
+    background: color-mix(in srgb, var(--bg-secondary) 65%, var(--bg-card));
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+  }
+  .form-heading, .form-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .form-heading {
+    justify-content: space-between;
+  }
+  .form-heading strong {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .form-heading span {
+    color: var(--text-muted);
+    font-size: 11.5px;
+  }
+  .fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+  }
+  label {
+    display: grid;
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+  input {
+    width: 100%;
+    min-width: 0;
+    height: 34px;
+    padding: 0 10px;
+    font: inherit;
+    font-size: 12.5px;
+    color: var(--text-primary);
+    background: var(--bg-input);
+    border: 1px solid var(--border-input);
+    border-radius: var(--radius-sm);
+    transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  input:focus {
+    border-color: var(--brand-primary);
+    background: var(--bg-card);
+    box-shadow: 0 0 0 2px var(--brand-subtle);
+    outline: none;
+  }
+  input:read-only {
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    cursor: default;
+  }
 </style>
 

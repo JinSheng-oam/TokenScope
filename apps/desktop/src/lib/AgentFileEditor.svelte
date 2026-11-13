@@ -99,7 +99,7 @@
   }
 
   .foot-status.dirty {
-    color: #f59e0b;
+    color: var(--color-estimated);
   }
 
   .foot-status.saved {
@@ -107,7 +107,7 @@
   }
 
   .foot-status .status-dot.dirty {
-    background: #f59e0b;
+    background: var(--color-estimated);
   }
 
   .foot-status .status-dot.saved {

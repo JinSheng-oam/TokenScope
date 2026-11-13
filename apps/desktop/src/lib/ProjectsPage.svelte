@@ -1,4 +1,5 @@
 <script lang="ts">
+  import CustomSelect from './CustomSelect.svelte';
   import { formatCompactTokens } from '../lib/dashboardView';
   import { formatNumber, percentOf } from '../lib/format';
   import type { DashboardSnapshot, UsageBreakdown, UsageTotals } from '../lib/types';
@@ -7,8 +8,13 @@
   export let local: UsageTotals | undefined;
   export let projects: UsageBreakdown[] | undefined = undefined;
 
+  const PAGE_SIZES = [12, 20, 30, 50] as const;
+  const pageSizeOptions = PAGE_SIZES.map((n) => ({ key: String(n), label: `${n} 条 / 页` }));
+
   let groupMode: 'merged' | 'raw' = 'merged';
   let copiedKey = '';
+  let pageSize = 12;
+  let page = 1;
 
   $: rawProjects = projects ?? snapshot.by_project;
   $: workspaceProjects = rawProjects.filter((project) => !isUnassignedProject(project));
@@ -126,6 +132,10 @@
   $: totalProjectTokens = workspaceProjects.reduce((sum, prj) => sum + prj.total_tokens, 0);
   $: shareDenominator = Math.max(local?.total_tokens ?? 0, totalProjectTokens, 1);
   $: topProjectTokens = Math.max(1, ...displayProjects.map((p) => p.total_tokens));
+  $: totalPages = Math.max(1, Math.ceil(displayProjects.length / pageSize));
+  $: currentPage = Math.min(page, totalPages);
+  $: offset = (currentPage - 1) * pageSize;
+  $: visibleProjects = displayProjects.slice(offset, offset + pageSize);
 </script>
 
 <div class="page-header">
@@ -137,7 +147,7 @@
         class="range-btn"
         class:selected={groupMode === 'merged'}
         aria-pressed={groupMode === 'merged'}
-        onclick={() => (groupMode = 'merged')}
+        onclick={() => { groupMode = 'merged'; page = 1; }}
       >
         智能归并 ({displayProjects.length})
       </button>
@@ -146,7 +156,7 @@
         class="range-btn"
         class:selected={groupMode === 'raw'}
         aria-pressed={groupMode === 'raw'}
-        onclick={() => (groupMode = 'raw')}
+        onclick={() => { groupMode = 'raw'; page = 1; }}
       >
         按工作区展开 ({workspaceProjects.length})
       </button>
@@ -155,7 +165,7 @@
 </div>
 
 <!-- Project Summary Strip -->
-<div class="device-summary-strip" style="margin-bottom: 16px;">
+<div class="device-summary-strip project-summary-strip">
   <div class="summary-pill-card">
     <div class="summary-head-row">
       <span class="summary-label">已识别项目数</span>
@@ -184,7 +194,7 @@
   </div>
 </div>
 
-<section class="panel-card">
+<section class="panel-card project-matrix-panel">
   <div class="panel-head">
     <div>
       <h2>项目用量矩阵</h2>
@@ -198,7 +208,7 @@
             class="trend-mode-btn"
             class:selected={groupMode === 'merged'}
             aria-pressed={groupMode === 'merged'}
-            onclick={() => (groupMode = 'merged')}
+            onclick={() => { groupMode = 'merged'; page = 1; }}
           >
             智能归并
           </button>
@@ -207,7 +217,7 @@
             class="trend-mode-btn"
             class:selected={groupMode === 'raw'}
             aria-pressed={groupMode === 'raw'}
-            onclick={() => (groupMode = 'raw')}
+            onclick={() => { groupMode = 'raw'; page = 1; }}
           >
             按工作区 ({workspaceProjects.length})
           </button>
@@ -231,10 +241,10 @@
           </tr>
         </thead>
         <tbody>
-          {#each displayProjects as prj, idx}
+          {#each visibleProjects as prj, idx}
             {@const avgTokens = prj.record_count > 0 ? Math.round(prj.total_tokens / prj.record_count) : 0}
             <tr class:project-row-anon={prj.isAnonymous}>
-              <td><span class="rank-num tabular">{String(idx + 1).padStart(2, '0')}</span></td>
+              <td><span class="rank-num tabular">{String(offset + idx + 1).padStart(2, '0')}</span></td>
               <td>
                 <div class="project-identity-cell">
                   <strong class="project-title" class:anon={prj.isAnonymous} title={prj.label}>
@@ -292,9 +302,58 @@
         </tbody>
       </table>
     </div>
+
+    <div class="data-pagination">
+      <span class="data-pagination-info tabular" role="status">
+        显示 <strong>{formatNumber(offset + 1)}–{formatNumber(offset + visibleProjects.length)}</strong> / 共 <strong>{formatNumber(displayProjects.length)}</strong> 个条目
+      </span>
+      <div class="data-pagination-controls">
+        <div class="data-page-size">
+          <span>每页</span>
+          <CustomSelect
+            value={String(pageSize)}
+            options={pageSizeOptions}
+            align="right"
+            ariaLabel="设置项目每页显示数量"
+            onChange={(val) => { pageSize = Number(val); page = 1; }}
+          />
+        </div>
+        <div class="data-page-nav" role="group" aria-label="项目分页">
+          <button type="button" class="btn-secondary btn-page" disabled={currentPage <= 1} onclick={() => (page = 1)}>首页</button>
+          <button type="button" class="btn-secondary btn-page" disabled={currentPage <= 1} onclick={() => (page = currentPage - 1)}>上一页</button>
+          <span class="data-page-indicator tabular">第 <strong>{currentPage}</strong> / {totalPages} 页</span>
+          <button type="button" class="btn-secondary btn-page" disabled={currentPage >= totalPages} onclick={() => (page = currentPage + 1)}>下一页</button>
+          <button type="button" class="btn-secondary btn-page" disabled={currentPage >= totalPages} onclick={() => (page = totalPages)}>末页</button>
+        </div>
+      </div>
+    </div>
   {:else}
     <div class="session-empty-state" style="min-height: 160px; padding: 32px 20px;">
       <strong>当前范围尚未解析出项目标识</strong>
     </div>
   {/if}
 </section>
+
+<style>
+  .project-summary-strip {
+    margin-bottom: 10px;
+  }
+
+  .project-summary-strip :global(.summary-pill-card) {
+    padding: 10px 14px;
+  }
+
+  .project-matrix-panel {
+    padding: 12px 16px;
+  }
+
+  .project-matrix-panel .panel-head {
+    margin-bottom: 10px;
+  }
+
+  .project-matrix-panel :global(.project-table th),
+  .project-matrix-panel :global(.project-table td) {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+</style>

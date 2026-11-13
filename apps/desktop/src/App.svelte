@@ -502,7 +502,9 @@
     <section
       class="page-content"
       class:fit-viewport={loading && activeTab !== 'pricing'}
-      class:compact-session={activeTab === 'sessions' && ($sessionState.pageSize <= 6 || ($sessionState.loading && !$sessionState.analysis))}
+      class:overview-page={activeTab === 'overview' && !loading}
+      class:compact-page={activeTab === 'models' || activeTab === 'pricing' || activeTab === 'projects'}
+      class:compact-session={activeTab === 'sessions' && ($sessionState.pageSize <= 7 || ($sessionState.loading && !$sessionState.analysis))}
     >
       {#if errorMessage && activeTab !== 'pricing'}
         <div class="notice-box" role="alert">

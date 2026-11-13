@@ -6,10 +6,11 @@ export function selectMenuPosition(
   viewportHeight: number,
   contentHeight: number,
   align: 'left' | 'right',
+  desiredWidth = 156,
 ) {
   const edge = 8;
   const gap = 4;
-  const width = Math.max(0, Math.min(viewportWidth - 2 * edge, Math.max(anchor.width, 156)));
+  const width = Math.max(0, Math.min(viewportWidth - 2 * edge, Math.max(anchor.width, desiredWidth)));
   const preferredLeft = align === 'right' ? anchor.right - width : anchor.left;
   const left = Math.max(edge, Math.min(viewportWidth - edge - width, preferredLeft));
   const below = viewportHeight - anchor.bottom - gap - edge;

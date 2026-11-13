@@ -5,7 +5,6 @@ mod cli;
 mod codex_rpc;
 mod collection;
 mod daemon;
-mod dashboard;
 mod diagnostics;
 mod identity;
 mod lock;

@@ -1,6 +1,7 @@
 mod activity;
 mod dashboard;
 mod filters;
+pub(super) mod projection;
 mod remote;
 mod sessions;
 mod usage;

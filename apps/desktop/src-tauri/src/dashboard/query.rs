@@ -1,11 +1,10 @@
 use crate::{
-    paths::{agent_is_running, database_path, read_pipe_bounded, resolve_agent},
+    paths::{agent_is_running, database_path},
     state::{DashboardRequest, DashboardWatch},
 };
 use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
-    process::{Command, Stdio},
     sync::atomic::Ordering,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -15,6 +14,7 @@ use tokenscope_local_ipc::{
     DashboardResponse, SessionAnalysisResponse, SessionDeleteRequest, SessionDeleteResponse,
     AGENT_CONTROL_DIRECTORY,
 };
+use tokenscope_local_store::{LocalStore, SessionAnalysisOptions};
 pub(super) fn dashboard_key(
     range: &str,
     start: Option<&str>,
@@ -138,75 +138,11 @@ pub(crate) fn query_agent_fresh(
     if !db.is_file() {
         return Err("本地数据库尚未初始化，请确认 Agent 已成功启动".into());
     }
-    let agent =
-        resolve_agent(app).ok_or_else(|| "未找到 tokenscope-agent 可执行文件".to_string())?;
-    let mut command = Command::new(agent);
-    command
-        .arg("--dashboard-json")
-        .arg("--range")
-        .arg(range)
-        .arg("--session-offset")
-        .arg(session_offset.to_string())
-        .arg("--db")
-        .arg(&db);
-    if let Some(value) = start_date {
-        command.arg("--start-date").arg(value);
-    }
-    if let Some(value) = end_date {
-        command.arg("--end-date").arg(value);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("启动 Dashboard 查询失败：{e}"))?;
-
-    let stdout_pipe = child.stdout.take().ok_or("Agent stdout pipe unavailable")?;
-    let stderr_pipe = child.stderr.take().ok_or("Agent stderr pipe unavailable")?;
-    let stdout_reader = thread::spawn(move || read_pipe_bounded(stdout_pipe, 16_777_216));
-    let stderr_reader = thread::spawn(move || read_pipe_bounded(stderr_pipe, 65_536));
-    // A cold `全部` aggregate over a large local history can exceed five
-    // seconds on slower disks; background pushes keep the UI responsive while
-    // this bounded wait prevents an orphaned child process.
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|e| format!("等待 Dashboard 查询失败：{e}"))?
-        {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = stdout_reader.join();
-            let _ = stderr_reader.join();
-            return Err("Dashboard 查询超时（20 秒）".into());
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
-    let stdout = stdout_reader
-        .join()
-        .map_err(|_| "Agent stdout reader panicked")?
-        .map_err(|e| format!("读取 Agent stdout 失败：{e}"))?;
-    let stderr = stderr_reader
-        .join()
-        .map_err(|_| "Agent stderr reader panicked")?
-        .map_err(|e| format!("读取 Agent stderr 失败：{e}"))?;
-    if !status.success() {
-        return Err(format!(
-            "Agent 查询失败：{}",
-            String::from_utf8_lossy(&stderr).trim()
-        ));
-    }
-    let mut response: DashboardResponse =
-        serde_json::from_slice(&stdout).map_err(|e| format!("Agent 返回的数据格式无效：{e}"))?;
+    let store = LocalStore::open_readonly(&db).map_err(|e| format!("读取本地数据库失败：{e}"))?;
+    let snapshot = store
+        .dashboard_snapshot_for_range(range, session_offset, start_date, end_date)
+        .map_err(|e| format!("查询 Dashboard 数据失败：{e}"))?;
+    let mut response = DashboardResponse::new(snapshot);
     response.validate().map_err(|e| e.to_string())?;
     response.request_key = dashboard_key(range, start_date, end_date, session_offset);
     Ok(response)
@@ -231,6 +167,10 @@ pub(super) fn query_agent_session_analysis(
     if range == "custom" && (start_date.is_none() || end_date.is_none()) {
         return Err("自定义范围需要开始和结束日期".into());
     }
+    let session_limit = session_limit.unwrap_or(50);
+    if !(1..=200).contains(&session_limit) {
+        return Err("每页会话数必须在 1 到 200 之间".into());
+    }
     let filter_cache_key = format!(
         "{}|{range}|{}|{}",
         app.state::<DashboardWatch>()
@@ -249,86 +189,22 @@ pub(super) fn query_agent_session_analysis(
     if !db.is_file() {
         return Err("本地数据库尚未初始化，请确认 Agent 已成功启动".into());
     }
-    let agent =
-        resolve_agent(app).ok_or_else(|| "未找到 tokenscope-agent 可执行文件".to_string())?;
-    let mut command = Command::new(agent);
-    command
-        .arg("--session-analysis-json")
-        .arg("--range")
-        .arg(range)
-        .arg("--session-offset")
-        .arg(session_offset.to_string())
-        .arg("--db")
-        .arg(&db);
-    if cached_filter_options.is_some() {
-        command.arg("--skip-session-filter-options");
-    }
-    let session_limit = session_limit.unwrap_or(50);
-    if !(1..=200).contains(&session_limit) {
-        return Err("每页会话数必须在 1 到 200 之间".into());
-    }
-    let limit_text = session_limit.to_string();
-    for (name, value) in [
-        ("--start-date", start_date),
-        ("--end-date", end_date),
-        ("--session-search", search),
-        ("--session-tool", tool_id),
-        ("--session-model", model_id),
-        ("--session-project", project_id),
-        ("--session-limit", Some(limit_text.as_str())),
-    ] {
-        if let Some(value) = value.filter(|value| !value.is_empty()) {
-            command.arg(name).arg(value);
-        }
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("启动会话查询失败：{e}"))?;
-    let stdout_pipe = child.stdout.take().ok_or("Agent stdout pipe unavailable")?;
-    let stderr_pipe = child.stderr.take().ok_or("Agent stderr pipe unavailable")?;
-    let stdout_reader = thread::spawn(move || read_pipe_bounded(stdout_pipe, 4_194_304));
-    let stderr_reader = thread::spawn(move || read_pipe_bounded(stderr_pipe, 65_536));
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|e| format!("等待会话查询失败：{e}"))?
-        {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = stdout_reader.join();
-            let _ = stderr_reader.join();
-            return Err("会话查询超时（20 秒）".into());
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
-    let stdout = stdout_reader
-        .join()
-        .map_err(|_| "Agent stdout reader panicked")?
-        .map_err(|e| format!("读取 Agent stdout 失败：{e}"))?;
-    let stderr = stderr_reader
-        .join()
-        .map_err(|_| "Agent stderr reader panicked")?
-        .map_err(|e| format!("读取 Agent stderr 失败：{e}"))?;
-    if !status.success() {
-        return Err(format!(
-            "Agent 会话查询失败：{}",
-            String::from_utf8_lossy(&stderr).trim()
-        ));
-    }
-    let mut response: SessionAnalysisResponse = serde_json::from_slice(&stdout)
-        .map_err(|e| format!("Agent 返回的会话数据格式无效：{e}"))?;
+    let store = LocalStore::open_readonly(&db).map_err(|e| format!("读取本地数据库失败：{e}"))?;
+    let analysis = store
+        .session_analysis_for_range(SessionAnalysisOptions {
+            range,
+            session_offset,
+            session_limit,
+            search: search.filter(|value| !value.is_empty()),
+            tool_id: tool_id.filter(|value| !value.is_empty()),
+            model_id: model_id.filter(|value| !value.is_empty()),
+            project_id: project_id.filter(|value| !value.is_empty()),
+            start_date,
+            end_date,
+            include_filter_options: cached_filter_options.is_none(),
+        })
+        .map_err(|e| format!("查询会话分析失败：{e}"))?;
+    let mut response = SessionAnalysisResponse::new(analysis);
     response.validate().map_err(|e| e.to_string())?;
     let watch = app.state::<DashboardWatch>();
     if let Some(options) = cached_filter_options {

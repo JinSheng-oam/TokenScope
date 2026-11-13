@@ -2,13 +2,16 @@ use crate::{
     antigravity_rpc, codex_rpc,
     collection::{collect_once, CollectionOptions},
     daemon::{self, DaemonOptions},
-    dashboard, diagnostics, identity,
+    diagnostics, identity,
     lock::AgentLock,
     pricing, quota, shutdown, sync,
 };
 use std::{env, path::PathBuf};
 use tokenscope_local_ipc::{DashboardResponse, SessionAnalysisResponse};
-use tokenscope_local_store::{LocalIdentity, LocalStore};
+use tokenscope_local_store::{
+    read_dashboard_snapshot, read_session_analysis, LocalIdentity, LocalStore,
+    SessionAnalysisOptions,
+};
 fn arg(args: &[String], name: &str) -> Option<String> {
     args.windows(2)
         .find(|parts| parts[0] == name)
@@ -196,7 +199,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         let db = PathBuf::from(arg(&args, "--db").ok_or("missing --db")?);
         let start_date = arg(&args, "--start-date");
         let end_date = arg(&args, "--end-date");
-        let snapshot = dashboard::read_snapshot(
+        let snapshot = read_dashboard_snapshot(
             &db,
             &dashboard_range,
             session_offset,
@@ -243,9 +246,9 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         if !(1..=200).contains(&session_limit) {
             return Err("--session-limit must be 1..200".into());
         }
-        let analysis = dashboard::read_session_analysis(
+        let analysis = read_session_analysis(
             &db,
-            dashboard::SessionAnalysisOptions {
+            SessionAnalysisOptions {
                 range: &dashboard_range,
                 session_offset,
                 session_limit,

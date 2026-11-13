@@ -9,11 +9,12 @@ pub mod schema;
 pub use error::{Result, StoreError};
 pub use repository::PricingPreferences;
 pub use repository::{
-    AntigravityActivity, AntigravityActivitySummary, AntigravityQuota, ApplyReport, CodexQuota,
-    DailyUsage, DashboardObservations, DashboardQuery, DashboardSnapshot, LocalIdentity,
-    LocalStore, ModelActivityBreakdown, ModelPriceCatalogState, ModelPriceEntry,
-    ModelPriceInstallReport, OutboxEntry, ProjectName, ReconcileReport, RemoteDailyUsage,
-    RemoteDeviceUsage, RemoteUsageBreakdown, RemoteUsageChange, RemoteUsageTotals,
+    read_dashboard_snapshot, read_session_analysis, AntigravityActivity,
+    AntigravityActivitySummary, AntigravityQuota, ApplyReport, CodexQuota, DailyUsage,
+    DashboardObservations, DashboardQuery, DashboardSnapshot, LocalIdentity, LocalStore,
+    ModelActivityBreakdown, ModelPriceCatalogState, ModelPriceEntry, ModelPriceInstallReport,
+    OutboxEntry, ProjectName, ReconcileReport, RemoteDailyUsage, RemoteDeviceUsage,
+    RemoteUsageBreakdown, RemoteUsageChange, RemoteUsageTotals, SessionAnalysisOptions,
     SessionAnalysisPage, SessionFilterOption, SessionFilterOptions, SessionUsage, SessionUsagePage,
     SourceCheckpoint, SourceHealth, SyncOutboxStatus, ToolUsageOverview, UsageBreakdown,
     UsageOverview, UsageTotals,

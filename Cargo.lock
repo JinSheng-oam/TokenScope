@@ -2020,6 +2020,8 @@ dependencies = [
 name = "tokenscope-local-store"
 version = "0.1.1"
 dependencies = [
+ "chrono",
+ "chrono-tz",
  "rusqlite",
  "serde",
  "serde_json",

@@ -3,6 +3,9 @@ mod ingest;
 mod migration;
 mod models;
 mod pricing;
+pub use analytics::projection::{
+    read_dashboard_snapshot, read_session_analysis, SessionAnalysisOptions,
+};
 pub use pricing::PricingPreferences;
 mod quota;
 mod records;

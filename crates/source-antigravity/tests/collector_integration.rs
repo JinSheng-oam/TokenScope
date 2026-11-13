@@ -243,3 +243,232 @@ fn divergent_duplicate_sources_are_not_summed() {
     assert_eq!(r.ambiguous_conversations, 1);
     assert!(active(&s).is_empty());
 }
+
+#[test]
+fn title_import_supports_nulls_preview_transcript_and_subagent_fallbacks() {
+    let f = Fixture::new();
+    f.write("antigravity", "explicit-id", &[Some("gemini-pro")]);
+    f.write("antigravity", "preview-id", &[Some("gemini-pro")]);
+    f.write("antigravity", "missing-summary-id", &[Some("gemini-pro")]);
+    f.write("antigravity", "subagent-id", &[Some("gemini-pro")]);
+    f.write("antigravity", "cleared-id", &[Some("gemini-pro")]);
+
+    let summary_db = f.root.join("antigravity").join("conversation_summaries.db");
+    let conn = Connection::open(&summary_db).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE conversation_summaries(
+            conversation_id TEXT PRIMARY KEY,
+            title TEXT,
+            preview TEXT,
+            parent_conversation_id TEXT,
+            agent_name TEXT,
+            last_modified_time TEXT
+        );",
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES(?1,?2,?3,?4,?5,?6)",
+        params![
+            "explicit-id",
+            "  Explicit   Title  ",
+            "ignored preview",
+            "",
+            "",
+            "2026-11-13T10:00:00Z"
+        ],
+    )
+    .unwrap();
+    let long_preview = format!("Preview fallback {}", "a".repeat(220));
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES(?1,NULL,?2,NULL,NULL,?3)",
+        params!["preview-id", long_preview, "2026-11-13T10:01:00Z"],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES(?1,'','','missing-summary-id','research',?2)",
+        params!["subagent-id", "2026-11-13T10:02:00Z"],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES(?1,'','',NULL,NULL,?2)",
+        params!["cleared-id", "2026-11-13T09:00:00Z"],
+    )
+    .unwrap();
+    drop(conn);
+
+    let root_log = f
+        .root
+        .join("antigravity")
+        .join("brain")
+        .join("missing-summary-id")
+        .join(".system_generated")
+        .join("logs");
+    std::fs::create_dir_all(&root_log).unwrap();
+    std::fs::write(
+        root_log.join("transcript.jsonl"),
+        concat!(
+            r#"{"source":"SYSTEM","type":"SYSTEM_MESSAGE","content":"ignore system"}"#,
+            "\n",
+            r#"{"source":"USER_EXPLICIT","type":"USER_INPUT","content":"<USER_REQUEST>\nFix   unnamed   sessions\n</USER_REQUEST>\n<ADDITIONAL_METADATA>noise</ADDITIONAL_METADATA>"}"#,
+            "\n"
+        ),
+    )
+    .unwrap();
+
+    let sub_log = f
+        .root
+        .join("antigravity")
+        .join("brain")
+        .join("subagent-id")
+        .join(".system_generated")
+        .join("logs");
+    std::fs::create_dir_all(&sub_log).unwrap();
+    std::fs::write(
+        sub_log.join("transcript.jsonl"),
+        concat!(
+            r#"{"source":"SYSTEM","type":"SYSTEM_MESSAGE","content":"subagent prompt"}"#,
+            "\n"
+        ),
+    )
+    .unwrap();
+
+    let mut s = store();
+    let cleared_key =
+        tokenscope_core_domain::stable_record_id("antigravity", b"conversation", b"cleared-id")
+            .unwrap();
+    s.upsert_session_name(&cleared_key, "antigravity", "Old Stale Title", 1)
+        .unwrap();
+
+    collect_antigravity(&f.root, &mut s, "test-device", true).unwrap();
+
+    let page = s
+        .session_analysis_page(
+            "test-device",
+            None,
+            None,
+            0,
+            20,
+            None,
+            Some("antigravity"),
+            None,
+            None,
+        )
+        .unwrap();
+    let by_id: std::collections::HashMap<String, Option<String>> = page
+        .page
+        .sessions
+        .into_iter()
+        .map(|row| (row.session_id, row.display_name))
+        .collect();
+
+    let key_for = |id: &str| {
+        tokenscope_core_domain::stable_record_id("antigravity", b"conversation", id.as_bytes())
+            .unwrap()
+    };
+
+    assert_eq!(
+        by_id.get(&key_for("explicit-id")).cloned().flatten(),
+        Some("Explicit Title".into())
+    );
+    let preview_name = by_id
+        .get(&key_for("preview-id"))
+        .cloned()
+        .flatten()
+        .unwrap();
+    assert!(preview_name.starts_with("Preview fallback "));
+    assert_eq!(preview_name.chars().count(), 80);
+    assert_eq!(
+        by_id.get(&key_for("missing-summary-id")).cloned().flatten(),
+        Some("Fix unnamed sessions".into())
+    );
+    assert_eq!(
+        by_id.get(&key_for("subagent-id")).cloned().flatten(),
+        Some("[research] Fix unnamed sessions".into())
+    );
+    assert_eq!(by_id.get(&key_for("cleared-id")).cloned().flatten(), None);
+}
+
+#[test]
+fn import_titles_supports_minimal_schema_and_ignores_unsafe_ids() {
+    let f = Fixture::new();
+    f.write("antigravity", "minimal-id", &[Some("gemini-pro")]);
+    let summary_db = f.root.join("antigravity").join("conversation_summaries.db");
+    let conn = Connection::open(&summary_db).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE conversation_summaries(conversation_id TEXT PRIMARY KEY, title TEXT);",
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES('minimal-id', 'Minimal Schema Title')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES('../escape', '')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let mut s = store();
+    collect_antigravity(&f.root, &mut s, "test-device", true).unwrap();
+    let imported = tokenscope_source_antigravity::import_titles(&f.root, &mut s).unwrap();
+    assert_eq!(imported, 1);
+
+    let page = s
+        .session_analysis_page(
+            "test-device",
+            None,
+            None,
+            0,
+            20,
+            None,
+            Some("antigravity"),
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        page.page.sessions[0].display_name.as_deref(),
+        Some("Minimal Schema Title")
+    );
+}
+
+#[test]
+fn side_question_wrapper_extracts_actual_question() {
+    let f = Fixture::new();
+    f.write("antigravity", "side-q", &[Some("gemini-pro")]);
+    let root_log = f
+        .root
+        .join("antigravity")
+        .join("brain")
+        .join("side-q")
+        .join(".system_generated")
+        .join("logs");
+    std::fs::create_dir_all(&root_log).unwrap();
+    std::fs::write(
+        root_log.join("transcript.jsonl"),
+        r#"{"source":"USER_EXPLICIT","type":"USER_INPUT","content":"<USER_REQUEST>\nThis is a side question from the user. Your tools are disabled. Here is the question: How does cache rate work?\n</USER_REQUEST>\n<ADDITIONAL_METADATA>meta</ADDITIONAL_METADATA>"}"#,
+    )
+    .unwrap();
+
+    let mut s = store();
+    collect_antigravity(&f.root, &mut s, "test-device", true).unwrap();
+    let page = s
+        .session_analysis_page(
+            "test-device",
+            None,
+            None,
+            0,
+            20,
+            None,
+            Some("antigravity"),
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        page.page.sessions[0].display_name.as_deref(),
+        Some("How does cache rate work?")
+    );
+}

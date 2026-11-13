@@ -1,5 +1,5 @@
 use crate::{
-    metadata::{import_titles, project_index},
+    metadata::{import_titles_for_conversations, project_index},
     models::Snapshot,
     now_ms,
     snapshot::{discover_databases, dominates, read_db, source_fingerprint, source_records},
@@ -105,6 +105,7 @@ fn collect_antigravity_with_policy(
         .filter(|stem| !ambiguous.contains(*stem) && !incomplete.contains(*stem))
         .count();
     report.ambiguous_conversations = ambiguous.len();
+    let snapshot_stems: Vec<String> = snapshots.keys().cloned().collect();
     for (stem, snapshot) in snapshots {
         if ambiguous.contains(&stem) || incomplete.contains(&stem) {
             continue;
@@ -211,8 +212,14 @@ fn collect_antigravity_with_policy(
         report.revised += result.applied.revised;
         report.tombstoned += result.tombstoned;
     }
+    let conversation_ids: Vec<&str> = snapshot_stems
+        .iter()
+        .chain(ambiguous.iter())
+        .chain(incomplete.iter())
+        .map(String::as_str)
+        .collect();
     // Titles live in a separate summaries DB; failing to read them must not
     // fail usage collection.
-    let _ = import_titles(gemini_home, store);
+    let _ = import_titles_for_conversations(gemini_home, store, &conversation_ids);
     Ok(report)
 }

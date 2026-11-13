@@ -112,7 +112,19 @@ fn activity_from_path(
     })
 }
 
+fn clean_activity_text(raw: Option<&str>, max_chars: usize) -> Option<String> {
+    let joined = raw?.split_whitespace().collect::<Vec<_>>().join(" ");
+    if joined.is_empty() || joined.chars().any(char::is_control) {
+        return None;
+    }
+    Some(joined.chars().take(max_chars).collect())
+}
+
 fn read_antigravity_active(db: &Path, now: u64) -> Option<Vec<SessionActivity>> {
+    let meta = fs::symlink_metadata(db).ok()?;
+    if meta.file_type().is_symlink() || !meta.is_file() {
+        return None;
+    }
     let conn = Connection::open_with_flags(
         db,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -120,32 +132,94 @@ fn read_antigravity_active(db: &Path, now: u64) -> Option<Vec<SessionActivity>> 
     .ok()?;
     conn.busy_timeout(std::time::Duration::from_millis(100))
         .ok()?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT conversation_id,title FROM conversation_summaries \
-         WHERE not_fully_idle=1 AND killed=0 AND COALESCE(status,'')<>'CASCADE_RUN_STATUS_IDLE' \
-         ORDER BY last_modified_time DESC LIMIT 32",
-        )
-        .ok()?;
+    let mut cols = std::collections::HashSet::new();
+    if let Ok(mut info) = conn.prepare("PRAGMA table_info(conversation_summaries)") {
+        if let Ok(mut rows) = info.query([]) {
+            while let Ok(Some(row)) = rows.next() {
+                if let Ok(name) = row.get::<_, String>(1) {
+                    cols.insert(name);
+                }
+            }
+        }
+    }
+    let has_preview = cols.contains("preview");
+    let has_parent = cols.contains("parent_conversation_id");
+    let has_agent = cols.contains("agent_name");
+    let sql = format!(
+        "SELECT c.conversation_id, c.title, {}, {}, {}, {} \
+         FROM conversation_summaries c{} \
+         WHERE c.not_fully_idle=1 AND c.killed=0 AND COALESCE(c.status,'')<>'CASCADE_RUN_STATUS_IDLE' \
+         ORDER BY c.last_modified_time DESC LIMIT 32",
+        if has_preview { "c.preview" } else { "NULL" },
+        if has_agent { "c.agent_name" } else { "NULL" },
+        if has_parent {
+            "c.parent_conversation_id"
+        } else {
+            "NULL"
+        },
+        if has_parent {
+            if has_preview {
+                "COALESCE(NULLIF(TRIM(p.title),''), p.preview)"
+            } else {
+                "p.title"
+            }
+        } else {
+            "NULL"
+        },
+        if has_parent {
+            " LEFT JOIN conversation_summaries p ON p.conversation_id = c.parent_conversation_id"
+        } else {
+            ""
+        }
+    );
+    let mut stmt = conn.prepare(&sql).ok()?;
     let rows = stmt
         .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+            ))
         })
         .ok()?;
     Some(
         rows.flatten()
-            .filter_map(|(id, title)| {
+            .filter_map(|(id, title, preview, agent_name, parent_id, parent_title)| {
                 if id.is_empty() || id.len() > 200 || id.chars().any(char::is_control) {
                     return None;
                 }
                 let session_id =
                     stable_record_id("antigravity", b"conversation", id.as_bytes()).ok()?;
+                let display_name = clean_activity_text(title.as_deref(), 80)
+                    .or_else(|| clean_activity_text(preview.as_deref(), 80))
+                    .or_else(|| {
+                        let agent = clean_activity_text(agent_name.as_deref(), 32);
+                        let parent = clean_activity_text(parent_title.as_deref(), 80);
+                        match (agent, parent) {
+                            (Some(agent), Some(parent)) => {
+                                clean_activity_text(Some(&format!("[{agent}] {parent}")), 80)
+                            }
+                            (None, Some(parent)) => {
+                                clean_activity_text(Some(&format!("[子代理] {parent}")), 80)
+                            }
+                            (Some(agent), None) => {
+                                clean_activity_text(Some(&format!("子代理 ({agent})")), 80)
+                            }
+                            (None, None) if parent_id.as_deref().is_some_and(|p| !p.trim().is_empty()) => {
+                                Some("[子代理]".to_owned())
+                            }
+                            (None, None) => None,
+                        }
+                    });
                 Some(SessionActivity {
                     tool_id: "antigravity",
                     session_id,
                     state: "generating",
                     observed_at_ms: now,
-                    display_name: title.map(|name| name.chars().take(200).collect()),
+                    display_name,
                     model_id: None,
                     output_speed: None,
                 })

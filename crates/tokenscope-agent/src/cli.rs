@@ -437,8 +437,11 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             let raw_url =
                 sync::resolve_sync_hub_url(sync_hub_url.as_deref(), sync_config_path.as_deref())?
                     .ok_or("no Hub URL configured; pair this device or provide --hub-url")?;
-            let report = sync::sync_device_once(&mut store, &raw_url, &device)?;
-            let pulled = sync::pull_device_once(&mut store, &raw_url, &device)?;
+            let mut cached_hub_client = None;
+            let (client, token) =
+                sync::prepare_hub_session(&raw_url, &device, &mut cached_hub_client)?;
+            let report = sync::push_hub_session(&mut store, &client, &token)?;
+            let pulled = sync::pull_hub_session(&mut store, &client, &token)?;
             println!("sync uploaded={} unchanged={} superseded={} acknowledged={} blocked={} remaining_due={} remote_changes_applied={}",
                 report.uploaded, report.unchanged, report.superseded, report.acknowledged, report.blocked, report.remaining_due, pulled);
         }

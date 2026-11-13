@@ -39,12 +39,14 @@ fn sleep_interruptible(
     db_path: &Path,
     quotas: &QuotaWorkers,
 ) -> bool {
-    for _ in 0..seconds.saturating_mul(4) {
+    for step in 0..seconds.saturating_mul(4) {
         if options.shutdown_requested() {
             return true;
         }
-        if let Err(error) = session_control::process_pending_requests(store, db_path) {
-            eprintln!("TokenScope session control warning: {error}");
+        if step % 2 == 0 {
+            if let Err(error) = session_control::process_pending_requests(store, db_path) {
+                eprintln!("TokenScope session control warning: {error}");
+            }
         }
         quotas.persist_pending(store);
         thread::sleep(Duration::from_millis(250));
@@ -69,6 +71,7 @@ pub(super) fn run(
         options.refresh_codex_quota,
         options.refresh_antigravity_quota,
     );
+    let mut cached_hub_client = None;
     let mut consecutive_failures = 0_u32;
     while !options.shutdown_requested() {
         if let Err(error) = session_control::process_pending_requests(store, db) {
@@ -106,24 +109,33 @@ pub(super) fn run(
         if options.sync_enabled {
             // 1. Hub Sync
             match sync::resolve_sync_hub_url(options.sync_hub_url, options.sync_config_path) {
-                Ok(Some(raw_url)) => match sync::sync_device_once(store, &raw_url, device) {
-                    Ok(_) if options.shutdown_requested() => break,
-                    Ok(report) => match sync::pull_device_once(store, &raw_url, device) {
-                        Ok(pulled) => {
-                            if report.acknowledged > 0
-                                || report.uploaded > 0
-                                || report.unchanged > 0
-                                || pulled > 0
-                            {
-                                println!("sync uploaded={} unchanged={} acknowledged={} blocked={} remaining_due={} remote_changes_applied={}",
-                                        report.uploaded, report.unchanged, report.acknowledged, report.blocked, report.remaining_due, pulled);
+                Ok(Some(raw_url)) => {
+                    match sync::prepare_hub_session(&raw_url, device, &mut cached_hub_client) {
+                        Ok((client, token)) => {
+                            match sync::push_hub_session(store, &client, &token) {
+                                Ok(_) if options.shutdown_requested() => break,
+                                Ok(report) => {
+                                    match sync::pull_hub_session(store, &client, &token) {
+                                        Ok(pulled) => {
+                                            if report.acknowledged > 0
+                                                || report.uploaded > 0
+                                                || report.unchanged > 0
+                                                || pulled > 0
+                                            {
+                                                println!("sync uploaded={} unchanged={} acknowledged={} blocked={} remaining_due={} remote_changes_applied={}",
+                                                    report.uploaded, report.unchanged, report.acknowledged, report.blocked, report.remaining_due, pulled);
+                                            }
+                                        }
+                                        Err(err) => eprintln!("TokenScope pull deferred: {err}"),
+                                    }
+                                }
+                                Err(err) => eprintln!("TokenScope sync deferred: {err}"),
                             }
                         }
-                        Err(err) => eprintln!("TokenScope pull deferred: {err}"),
-                    },
-                    Err(err) => eprintln!("TokenScope sync deferred: {err}"),
-                },
-                Ok(None) => {} // No Hub has been paired on this device yet.
+                        Err(err) => eprintln!("TokenScope sync deferred: {err}"),
+                    }
+                }
+                Ok(None) => cached_hub_client = None, // No Hub has been paired on this device yet.
                 Err(err) => eprintln!("TokenScope sync configuration invalid: {err}"),
             }
             if options.shutdown_requested() {

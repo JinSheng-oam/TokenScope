@@ -1,12 +1,14 @@
 use std::path::Path;
 use tokenscope_local_store::LocalStore;
 use tokenscope_sync_client::{
+    pairing::DeviceToken,
     webdav::{
         sync_webdav_cycle, KeyringWebDavStore, WebDavClient, WebDavCredentialKey,
         WebDavCredentials, WebDavDeviceInfo, WebDavSecretStore, WebDavSyncReport, WebDavUrl,
     },
     worker::{
-        pull_project_names_once, pull_usage_changes_once, push_project_names_once, sync_outbox_once,
+        pull_project_names_once, pull_usage_changes_once, push_project_names_once,
+        sync_outbox_once, SyncReport,
     },
     CredentialKey, HubClient, HubUrl, KeyringCredentialStore, SecretStore,
 };
@@ -114,40 +116,49 @@ pub(super) fn sync_webdav_device_once(
     Ok(result)
 }
 
-pub(super) fn sync_device_once(
-    store: &mut LocalStore,
+pub(super) fn prepare_hub_session(
     raw_url: &str,
     device: &str,
-) -> Result<tokenscope_sync_client::worker::SyncReport, Box<dyn std::error::Error>> {
+    cached_client: &mut Option<(String, HubClient)>,
+) -> Result<(HubClient, DeviceToken), Box<dyn std::error::Error>> {
     let hub_url = HubUrl::parse(raw_url)?;
+    let origin = hub_url.origin().to_string();
     let key = CredentialKey::for_device(&hub_url, device)?;
     let credentials = KeyringCredentialStore;
     let token = credentials
         .load(&key)?
         .ok_or("no credential for this Hub/device; pair this device first")?;
-    let client = HubClient::new(hub_url)?;
+    let client = match cached_client {
+        Some((cached_origin, client)) if cached_origin == &origin => client.clone(),
+        _ => {
+            let client = HubClient::new(hub_url)?;
+            *cached_client = Some((origin, client.clone()));
+            client
+        }
+    };
+    Ok((client, token))
+}
+
+pub(super) fn push_hub_session(
+    store: &mut LocalStore,
+    client: &HubClient,
+    token: &DeviceToken,
+) -> Result<SyncReport, Box<dyn std::error::Error>> {
     let report =
-        sync_outbox_once(&client, store, &token).map_err(|e| format!("sync failed: {e:?}"))?;
-    push_project_names_once(&client, store, &token)
+        sync_outbox_once(client, store, token).map_err(|e| format!("sync failed: {e:?}"))?;
+    push_project_names_once(client, store, token)
         .map_err(|e| format!("project name push failed: {e:?}"))?;
     Ok(report)
 }
 
-pub(super) fn pull_device_once(
+pub(super) fn pull_hub_session(
     store: &mut LocalStore,
-    raw_url: &str,
-    device: &str,
+    client: &HubClient,
+    token: &DeviceToken,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    let hub_url = HubUrl::parse(raw_url)?;
-    let key = CredentialKey::for_device(&hub_url, device)?;
-    let credentials = KeyringCredentialStore;
-    let token = credentials
-        .load(&key)?
-        .ok_or("no credential for this Hub/device; pair this device first")?;
-    let client = HubClient::new(hub_url)?;
-    let applied = pull_usage_changes_once(&client, &mut *store, &token, 200)
+    let applied = pull_usage_changes_once(client, &mut *store, token, 200)
         .map_err(|e| format!("pull failed: {e:?}"))?;
-    pull_project_names_once(&client, store, &token)
+    pull_project_names_once(client, store, token)
         .map_err(|e| format!("project name pull failed: {e:?}"))?;
     Ok(applied)
 }

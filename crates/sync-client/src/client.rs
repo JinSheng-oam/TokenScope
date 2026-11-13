@@ -84,7 +84,8 @@ impl HubClient {
             .redirect(Policy::none())
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(15))
-            .pool_max_idle_per_host(0)
+            .pool_max_idle_per_host(2)
+            .pool_idle_timeout(Duration::from_secs(60))
             .user_agent(concat!(
                 env!("CARGO_PKG_NAME"),
                 "/",

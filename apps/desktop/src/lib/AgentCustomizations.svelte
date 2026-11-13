@@ -1,6 +1,5 @@
 <script lang="ts">
   import "./agentCustomizationBadges.css";
-  import CustomSelect from './CustomSelect.svelte';
   import SharedInstruction from './SharedInstruction.svelte';
   let showShared = false;
   let sharedDirty = false;
@@ -11,7 +10,6 @@
   import {
     instructionInfo,
     instructionRootLabel,
-    isReferenceLine,
     isReferenced,
     addReference,
     removeReference,
@@ -20,7 +18,7 @@
     type Provider,
     type Id,
   } from './agentCustomizationEntries';
-  import type { UpdateInfo } from './agentSkillSourceTypes';
+  import type { SkillSummary, UpdateInfo } from './agentSkillSourceTypes';
   import AgentSkillImport from './AgentSkillImport.svelte';
   import AgentSkillUpdates from './AgentSkillUpdates.svelte';
   import AgentMcpConfig from './AgentMcpConfig.svelte';
@@ -29,17 +27,12 @@
   import AgentAiConfig from './AgentAiConfig.svelte';
   import AgentFileEditor from './AgentFileEditor.svelte';
   import AgentFileCatalog from './AgentFileCatalog.svelte';
+  import AgentCreatePanel from './AgentCreatePanel.svelte';
+  import AgentAuxReferenceBar from './AgentAuxReferenceBar.svelte';
+  import AgentSkillSummaryCard from './AgentSkillSummaryCard.svelte';
 
   export let runtimeAvailable: boolean;
   export let dirty = false;
-  type SkillSummary = {
-    skill_name: string;
-    overview: string;
-    usage_guide: string;
-    raw_response: string;
-    model: string;
-    updated_at_ms: number;
-  };
 
   const providers: { id: Provider; label: string; roots: { id: string; label: string }[] }[] = [
     { id: 'codex', label: 'Codex', roots: [{ id: 'shared-skills', label: '共享 skills' }, { id: 'codex-skills', label: 'Codex skills' }] },
@@ -201,14 +194,6 @@
     } catch {
       // fallback
     }
-  }
-
-  function instructionDraftHelp(): string {
-    if (provider === 'codex') {
-      return 'Codex 全局入口为 AGENTS.override.md（优先）或 AGENTS.md；其他文件名只是辅助文件，不会仅因位于此目录就自动加载。';
-    }
-    if (provider === 'pi') return 'Pi 全局上下文优先读取 AGENTS.override.md，其次 AGENTS.md 或 CLAUDE.md；SYSTEM.md 和 APPEND_SYSTEM.md 单独管理系统提示词。';
-    return 'TokenScope 会标出工具预设的入口文件；自定义 Markdown 是否自动加载取决于对应工具，必要时请从入口文件引用。';
   }
 
   function canLeave(): boolean {
@@ -575,69 +560,24 @@
           <AgentSkillImport {provider} {providerRootOptions} bind:skillRoot bind:busy bind:error
             onInstall={(items) => { entries = items; importing = false; notice = "安装成功；选择左侧 skill 可查看或检查更新。"; }}
             onCancel={() => importing = false} />
-        {:else if creatingInstruction}
-          <div class="editor-head">
-            <div>
-              <h2>新建指令文件草稿</h2>
-              <p>辅助 Markdown 需要由入口文件引用。</p>
-            </div>
-          </div>
-          <div class="create-form">
-            {#if instructionRootOptions.length > 1}
-              <span>保存目录</span>
-              <CustomSelect
-                bind:value={instructionRoot}
-                options={instructionRootOptions}
-                ariaLabel="选择指令文件保存目录"
-                onChange={() => { instructionName = ''; instructionPreset = ''; }}
-              />
-            {:else if instructionRootOptions.length === 1}
-              <div class="create-form-location">
-                <span>保存目录</span>
-                <strong>{instructionRootOptions[0].label}</strong>
-              </div>
-            {/if}
-            {#if instructionPresets.length > 0}
-              <span>入口预设</span>
-              <CustomSelect
-                bind:value={instructionPreset}
-                options={instructionPresetOptions}
-                placeholder="选择预设入口"
-                ariaLabel="选择指令入口预设"
-                onChange={(value) => instructionName = value}
-              />
-            {/if}
-            <label for="instr-name">文件名</label>
-            <input
-              id="instr-name"
-              bind:value={instructionName}
-              oninput={() => instructionPreset = ''}
-              placeholder="选择入口预设或输入自定义 .md 文件名"
-              maxlength="64"
-            />
-            <p class="source-hint">{instructionDraftHelp()}</p>
-            <div class="form-btn-row">
-              <button class="btn-primary" disabled={busy || !instructionName.trim()} onclick={() => void createInstruction()}>开始编辑草稿</button>
-              <button class="btn-secondary" onclick={() => creatingInstruction = false}>取消</button>
-            </div>
-          </div>
-
-        {:else if creating}
-          <div class="editor-head">
-            <div>
-              <h2>新建 skill</h2>
-            </div>
-          </div>
-          <div class="create-form">
-            <span>保存位置</span>
-            <CustomSelect bind:value={skillRoot} options={providerRootOptions} ariaLabel="选择 Skill 保存位置" />
-            <label for="skill-name">名称</label>
-            <input id="skill-name" bind:value={skillName} placeholder="例如 code-review" maxlength="64" />
-            <div class="form-btn-row">
-              <button class="btn-primary" disabled={busy} onclick={() => void createSkill()}>开始编辑</button>
-              <button class="btn-secondary" onclick={() => creating = false}>取消</button>
-            </div>
-          </div>
+        {:else if creatingInstruction || creating}
+          <AgentCreatePanel
+            mode={creatingInstruction ? 'instruction' : 'skill'}
+            {provider}
+            {busy}
+            {instructionRootOptions}
+            {instructionPresets}
+            {instructionPresetOptions}
+            {providerRootOptions}
+            bind:instructionRoot
+            bind:instructionPreset
+            bind:instructionName
+            bind:skillRoot
+            bind:skillName
+            onCreateInstruction={() => void createInstruction()}
+            onCreateSkill={() => void createSkill()}
+            onCancel={() => { creatingInstruction = false; creating = false; }}
+          />
 
         {:else if selected}
           <div class="editor-head">
@@ -754,54 +694,17 @@
           </div>
 
           {#if selected.kind === 'instruction' && !selected.instructionEntry && mainEntryForSelected}
-            <div class="aux-reference-bar" class:is-active={isReferencedInMain}>
-              <div class="aux-ref-main">
-                <span class="aux-ref-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                  </svg>
-                </span>
-                <span class="aux-ref-title">引用进主入口</span>
-                {#if availableMainEntries.length > 1}
-                  <div class="aux-ref-select-wrap">
-                    <select
-                      class="aux-ref-select"
-                      bind:value={targetMainEntryName}
-                      disabled={busy || togglingReference}
-                      aria-label="选择目标主 md 文件"
-                    >
-                      {#each availableMainEntries as item}
-                        <option value={item.id.name}>{item.id.name}</option>
-                      {/each}
-                    </select>
-                  </div>
-                {:else}
-                  <span class="aux-ref-target-pill">{mainEntryForSelected.id.name}</span>
-                {/if}
-                <span class="aux-ref-sep">·</span>
-                <span class="aux-ref-hint" title={`@${selected.path}`}>
-                  {isReferencedInMain ? '已挂载' : '开启后在末尾追加'}
-                  <code>@{selected.path}</code>
-                </span>
-              </div>
-              <div class="aux-ref-switch-wrap">
-                <span class="aux-ref-status-text" class:active={isReferencedInMain}>
-                  {checkingReference ? '检查中…' : isReferencedInMain ? '已引用' : '未引用'}
-                </span>
-                <button
-                  type="button"
-                  class="ref-switch"
-                  role="switch"
-                  aria-label={`在 ${mainEntryForSelected.id.name} 中以 @ 语法引用此辅助文件`}
-                  aria-checked={isReferencedInMain}
-                  disabled={busy || checkingReference || togglingReference}
-                  onclick={() => void toggleMainReference()}
-                >
-                  <span></span>
-                </button>
-              </div>
-            </div>
+            <AgentAuxReferenceBar
+              {selected}
+              {mainEntryForSelected}
+              {availableMainEntries}
+              bind:targetMainEntryName
+              {isReferencedInMain}
+              {checkingReference}
+              {togglingReference}
+              {busy}
+              onToggleReference={() => void toggleMainReference()}
+            />
           {/if}
 
           {#if updateInfo}
@@ -811,41 +714,12 @@
           {/if}
 
           {#if skillSummary && selected.kind === 'skill'}
-            <div class="summary-card">
-              <div class="summary-header">
-                <div class="summary-title">
-                  <span class="summary-sparkle">{@html icons.sparkle}</span>
-                  <span>AI 智能摘要分析</span>
-                  <span class="summary-meta">模型: {skillSummary.model}</span>
-                </div>
-                <div class="summary-actions">
-                  <button class="btn-compact" onclick={() => showSummaryCard = !showSummaryCard}>
-                    {showSummaryCard ? '收起' : '展开'}
-                  </button>
-                  <button
-                    class="btn-compact"
-                    disabled={analyzingSkill}
-                    onclick={() => void generateSkillSummary()}
-                  >
-                    {analyzingSkill ? '生成中…' : '重新分析'}
-                  </button>
-                </div>
-              </div>
-              {#if showSummaryCard}
-                <div class="summary-body">
-                  <div class="summary-section">
-                    <h4>💡 功能定位（这个 Skill 是干什么的）：</h4>
-                    <p>{skillSummary.overview}</p>
-                  </div>
-                  {#if skillSummary.usage_guide}
-                    <div class="summary-section">
-                      <h4>📖 推荐使用方式与调用指南：</h4>
-                      <pre class="summary-pre">{skillSummary.usage_guide}</pre>
-                    </div>
-                  {/if}
-                </div>
-              {/if}
-            </div>
+            <AgentSkillSummaryCard
+              {skillSummary}
+              {analyzingSkill}
+              bind:showSummaryCard
+              onRegenerate={() => void generateSkillSummary()}
+            />
           {/if}
 
           <AgentFileEditor bind:content {busy} {dirty} exists={selected.exists} readOnly={!selected.editable} />
@@ -1091,172 +965,6 @@
     color: var(--color-estimated);
   }
 
-  .aux-reference-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 8px 18px;
-    background: color-mix(in srgb, var(--bg-secondary) 75%, var(--bg-card));
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  .aux-reference-bar.is-active {
-    background: color-mix(in srgb, var(--brand-subtle) 55%, var(--bg-card));
-    border-bottom-color: var(--brand-border);
-  }
-
-  .aux-ref-main {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-  }
-
-  .aux-ref-icon {
-    width: 13px;
-    height: 13px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--brand-primary);
-    flex-shrink: 0;
-  }
-
-  .aux-ref-icon svg {
-    width: 100%;
-    height: 100%;
-  }
-
-  .aux-ref-title {
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--text-primary);
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-
-  .aux-ref-target-pill {
-    padding: 1px 6px;
-    border-radius: 4px;
-    background: var(--bg-card);
-    border: 1px solid var(--brand-border);
-    font-size: 10.5px;
-    font-family: var(--font-mono, monospace);
-    font-weight: 600;
-    color: var(--brand-primary);
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-
-  .aux-ref-select-wrap select {
-    height: 22px;
-    padding: 0 6px;
-    border-radius: 4px;
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
-    font-size: 11px;
-    font-family: var(--font-mono, monospace);
-    color: var(--text-primary);
-    cursor: pointer;
-  }
-
-  .aux-ref-sep {
-    color: var(--text-muted);
-    font-size: 11px;
-    flex-shrink: 0;
-  }
-
-  .aux-ref-hint {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    margin: 0;
-    font-size: 11px;
-    color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    min-width: 0;
-  }
-
-  .aux-ref-hint code {
-    padding: 1px 6px;
-    border-radius: 4px;
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
-    font-family: var(--font-mono, monospace);
-    font-size: 10.5px;
-    color: var(--text-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 320px;
-  }
-
-  .aux-ref-switch-wrap {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
-  }
-
-  .aux-ref-status-text {
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-muted);
-  }
-
-  .aux-ref-status-text.active {
-    color: var(--color-exact);
-    font-weight: 600;
-  }
-
-  .ref-switch {
-    display: flex;
-    align-items: center;
-    width: 38px;
-    height: 22px;
-    padding: 2px;
-    border: 1px solid var(--border-strong);
-    border-radius: 999px;
-    background: var(--bg-secondary);
-    cursor: pointer;
-    box-sizing: border-box;
-    transition: background-color 150ms ease, border-color 150ms ease;
-  }
-
-  .ref-switch span {
-    display: block;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: var(--text-muted);
-    transition: transform 150ms ease, background-color 150ms ease;
-  }
-
-  .ref-switch[aria-checked='true'] {
-    border-color: var(--brand-strong);
-    background: var(--brand-strong);
-  }
-
-  .ref-switch[aria-checked='true'] span {
-    background: #fff;
-    transform: translateX(16px);
-  }
-
-  .ref-switch:focus-visible {
-    outline: 2px solid var(--brand-primary);
-    outline-offset: 2px;
-  }
-
-  .ref-switch:disabled {
-    cursor: not-allowed;
-    opacity: 0.5;
-  }
-
   .editor-path {
     font-family: var(--font-mono, monospace);
     font-size: 11px;
@@ -1343,161 +1051,6 @@
     font-size: 11.5px;
     font-weight: 600;
     white-space: nowrap;
-  }
-
-  /* Forms & Create/Import Panels */
-  .create-form {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    max-width: 520px;
-    padding: 20px;
-    font-size: 12px;
-    color: var(--text-secondary);
-  }
-
-  .create-form :global(.select-dropdown) {
-    max-width: none;
-  }
-
-  .create-form-location {
-    min-height: 34px;
-    padding: 0 10px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    color: var(--text-muted);
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-  }
-
-  .create-form-location strong {
-    color: var(--text-primary);
-    font-weight: 500;
-  }
-
-  .create-form input {
-    height: 32px;
-    padding: 0 10px;
-    font: inherit;
-    font-size: 12px;
-    color: var(--text-primary);
-    background: var(--bg-input);
-    border: 1px solid var(--border-input);
-    border-radius: var(--radius-sm);
-  }
-
-  .create-form input:focus {
-    border-color: var(--brand-primary);
-    outline: none;
-  }
-
-  .form-btn-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 6px;
-  }
-
-  .source-hint {
-    font-size: 11px;
-    color: var(--text-muted);
-    line-height: 1.5;
-    margin: 4px 0;
-  }
-
-  pre {
-    max-height: 220px;
-    overflow: auto;
-    white-space: pre-wrap;
-    font: 11px/1.5 var(--font-mono, monospace);
-    background: var(--bg-secondary);
-    padding: 8px;
-    border-radius: var(--radius-xs);
-    border: 1px solid var(--border-subtle);
-  }
-
-  /* Summary Card */
-  .summary-card {
-    margin: 12px 18px;
-    border: 1px solid var(--brand-border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-card);
-    overflow: hidden;
-    font-size: 12px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
-  }
-
-  .summary-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--brand-border);
-    background: var(--brand-subtle);
-  }
-
-  .summary-title {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-weight: 600;
-    color: var(--brand-strong);
-  }
-
-  .summary-sparkle {
-    display: inline-flex;
-    width: 14px;
-    height: 14px;
-  }
-
-  .summary-sparkle :global(svg) {
-    width: 100%;
-    height: 100%;
-  }
-
-  .summary-meta {
-    font-size: 10.5px;
-    color: var(--text-muted);
-    font-weight: normal;
-  }
-
-  .summary-actions {
-    display: flex;
-    gap: 6px;
-  }
-
-  .summary-body {
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .summary-section h4 {
-    margin: 0 0 4px;
-    font-size: 12px;
-    color: var(--text-primary);
-  }
-
-  .summary-section p {
-    margin: 0;
-    line-height: 1.55;
-    color: var(--text-secondary);
-  }
-
-  .summary-pre {
-    margin: 0;
-    padding: 8px 10px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-xs);
-    font-size: 11px;
-    line-height: 1.5;
-    color: var(--text-primary);
-    white-space: pre-wrap;
   }
 
   .editor-empty {

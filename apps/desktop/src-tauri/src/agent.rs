@@ -45,7 +45,18 @@ pub(crate) fn start_agent_inner(
         }
     }
 
-    if agent_is_running(&db)? {
+    let mut lock_held = agent_is_running(&db)?;
+    if cfg!(debug_assertions) && lock_held {
+        // The previous desktop may have just been killed by the watcher.
+        // Give its Agent time to finish the current operation and release
+        // the lock. A persistent external owner is still left alone.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while lock_held && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+            lock_held = agent_is_running(&db)?;
+        }
+    }
+    if lock_held {
         return Ok(AgentStatus {
             running: true,
             binary_found: agent.is_some(),
@@ -108,7 +119,10 @@ pub(crate) fn start_agent_inner(
         .arg(time_zone)
         .arg("--shutdown-file")
         .arg(&stop_file)
-        .stdin(Stdio::null())
+        // Keep the write end in Child. If Tauri is killed during hot reload,
+        // the OS closes it even though the desktop exit callback never runs.
+        .arg("--shutdown-on-stdin-eof")
+        .stdin(Stdio::piped())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(stderr));
     #[cfg(windows)]

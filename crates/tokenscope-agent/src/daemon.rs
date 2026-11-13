@@ -16,6 +16,7 @@ use tokenscope_local_store::LocalStore;
 
 pub(super) struct DaemonOptions<'a> {
     pub(super) interval: u64,
+    pub(super) stop: Arc<AtomicBool>,
     pub(super) shutdown_file: Option<&'a Path>,
     pub(super) refresh_antigravity_quota: bool,
     pub(super) refresh_codex_quota: bool,
@@ -25,18 +26,21 @@ pub(super) struct DaemonOptions<'a> {
     pub(super) sync_webdav_config_path: Option<&'a Path>,
 }
 
+impl DaemonOptions<'_> {
+    fn shutdown_requested(&self) -> bool {
+        self.stop.load(Ordering::Relaxed) || shutdown::consume(self.shutdown_file)
+    }
+}
+
 fn sleep_interruptible(
-    stop: &AtomicBool,
+    options: &DaemonOptions<'_>,
     seconds: u64,
-    shutdown_file: Option<&Path>,
     store: &mut LocalStore,
     db_path: &Path,
     quotas: &QuotaWorkers,
 ) -> bool {
-    // Poll a file-based shutdown signal so Tauri can stop the daemon without
-    // platform-specific signals. Collection is never interrupted mid-transaction.
     for _ in 0..seconds.saturating_mul(4) {
-        if stop.load(Ordering::Relaxed) || shutdown::consume(shutdown_file) {
+        if options.shutdown_requested() {
             return true;
         }
         if let Err(error) = session_control::process_pending_requests(store, db_path) {
@@ -45,7 +49,7 @@ fn sleep_interruptible(
         quotas.persist_pending(store);
         thread::sleep(Duration::from_millis(250));
     }
-    stop.load(Ordering::Relaxed) || shutdown::consume(shutdown_file)
+    options.shutdown_requested()
 }
 
 pub(super) fn run(
@@ -55,23 +59,25 @@ pub(super) fn run(
     device: &str,
     options: DaemonOptions<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let stop = Arc::new(AtomicBool::new(false));
-    let stop_for_signal = stop.clone();
-    ctrlc::set_handler(move || stop_for_signal.store(true, Ordering::SeqCst))?;
+    let stop_for_signal = options.stop.clone();
+    ctrlc::set_handler(move || stop_for_signal.store(true, Ordering::Relaxed))?;
+    if options.shutdown_requested() {
+        return Ok(());
+    }
     let quotas = QuotaWorkers::start(
         store,
         options.refresh_codex_quota,
         options.refresh_antigravity_quota,
     );
     let mut consecutive_failures = 0_u32;
-    while !stop.load(Ordering::SeqCst) {
-        if shutdown::consume(options.shutdown_file) {
-            break;
-        }
+    while !options.shutdown_requested() {
         if let Err(error) = session_control::process_pending_requests(store, db) {
             eprintln!("TokenScope session control warning: {error}");
         }
         quotas.persist_pending(store);
+        if options.shutdown_requested() {
+            break;
+        }
         if collection.codex
             || collection.claude
             || collection.antigravity
@@ -79,6 +85,9 @@ pub(super) fn run(
             || collection.pi
         {
             pricing::refresh_if_due(store);
+            if options.shutdown_requested() {
+                break;
+            }
             match collect_once(store, collection) {
                 Ok(()) => consecutive_failures = 0,
                 Err(err) => {
@@ -87,11 +96,18 @@ pub(super) fn run(
                 }
             }
         }
+        if options.shutdown_requested() {
+            break;
+        }
         quotas.persist_pending(store);
+        if options.shutdown_requested() {
+            break;
+        }
         if options.sync_enabled {
             // 1. Hub Sync
             match sync::resolve_sync_hub_url(options.sync_hub_url, options.sync_config_path) {
                 Ok(Some(raw_url)) => match sync::sync_device_once(store, &raw_url, device) {
+                    Ok(_) if options.shutdown_requested() => break,
                     Ok(report) => match sync::pull_device_once(store, &raw_url, device) {
                         Ok(pulled) => {
                             if report.acknowledged > 0
@@ -109,6 +125,9 @@ pub(super) fn run(
                 },
                 Ok(None) => {} // No Hub has been paired on this device yet.
                 Err(err) => eprintln!("TokenScope sync configuration invalid: {err}"),
+            }
+            if options.shutdown_requested() {
+                break;
             }
 
             // 2. WebDAV Sync
@@ -158,7 +177,7 @@ pub(super) fn run(
                 .saturating_mul(1_u64 << consecutive_failures.min(4))
                 .min(300)
         };
-        if sleep_interruptible(&stop, backoff, options.shutdown_file, store, db, &quotas) {
+        if sleep_interruptible(&options, backoff, store, db, &quotas) {
             break;
         }
     }

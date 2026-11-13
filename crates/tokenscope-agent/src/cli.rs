@@ -4,7 +4,7 @@ use crate::{
     daemon::{self, DaemonOptions},
     dashboard, diagnostics, identity,
     lock::AgentLock,
-    pricing, quota, sync,
+    pricing, quota, shutdown, sync,
 };
 use std::{env, path::PathBuf};
 use tokenscope_local_ipc::{DashboardResponse, SessionAnalysisResponse};
@@ -45,6 +45,7 @@ fn usage() {
     --diagnose-json
     --session-analysis-json [--range today|7d|30d|all] [--session-search TEXT]
     --shutdown-file PATH (daemon only; desktop lifecycle signal)
+    --shutdown-on-stdin-eof (daemon only; desktop parent lifetime pipe)
     --sync --hub-url HTTPS_OR_LOOPBACK | --sync-config PATH (daemon mode enables periodic sync)
     --sync-config PATH (plain-text non-secret Hub origin; read dynamically by daemon)
     --sync-once --hub-url HTTPS_OR_LOOPBACK (one-shot push + pull)
@@ -145,6 +146,10 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     let daemon = args.iter().any(|s| s == "--daemon");
+    let shutdown_on_stdin_eof = args.iter().any(|s| s == "--shutdown-on-stdin-eof");
+    if shutdown_on_stdin_eof && !daemon {
+        return Err("--shutdown-on-stdin-eof is only valid with --daemon".into());
+    }
     if (sync_once || sync_enabled) && sync_hub_url.is_none() && sync_config_path.is_none() {
         return Err("--sync/--sync-once requires --hub-url or --sync-config".into());
     }
@@ -266,6 +271,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("interval must be 5..3600 seconds".into());
     }
     let db = PathBuf::from(arg(&args, "--db").ok_or("missing --db")?);
+    let stop = shutdown::stop_flag(shutdown_on_stdin_eof)?;
     // Lock before opening SQLite or touching local identity. OS releases this
     // lock if the process crashes or is killed.
     let _exclusive = AgentLock::acquire(&db)?;
@@ -470,6 +476,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         &device,
         DaemonOptions {
             interval,
+            stop,
             shutdown_file: shutdown_file.as_deref(),
             refresh_antigravity_quota,
             refresh_codex_quota,

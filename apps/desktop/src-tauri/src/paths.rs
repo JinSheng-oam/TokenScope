@@ -224,6 +224,12 @@ pub(crate) fn resolve_agent(app: &AppHandle) -> Option<PathBuf> {
         if let Some(path) = env::var_os("TOKENSCOPE_AGENT_PATH") {
             candidates.push(PathBuf::from(path));
         }
+        // Avoid running the copied Tauri resource on Windows: the next
+        // desktop rebuild needs to be able to replace that file.
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        if let Ok(root) = manifest.join("../../..").canonicalize() {
+            candidates.push(root.join("target/debug").join(name));
+        }
     }
     if let Ok(exe) = env::current_exe() {
         if let Some(parent) = exe.parent() {
@@ -237,12 +243,8 @@ pub(crate) fn resolve_agent(app: &AppHandle) -> Option<PathBuf> {
         candidates.push(resources.join(name));
         candidates.push(resources.join("binaries").join(name));
     }
-    // Workspace binaries are used only for development builds.
     if cfg!(debug_assertions) {
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        if let Ok(root) = manifest.join("../../..").canonicalize() {
-            candidates.push(root.join("target/debug").join(name));
-        }
         candidates.push(manifest.join("target/debug").join(name));
     }
     candidates.into_iter().find_map(|candidate| {

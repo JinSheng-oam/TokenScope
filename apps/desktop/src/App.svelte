@@ -29,19 +29,36 @@
   import { createSessionController } from './lib/sessionController';
   import { createSettingsController } from './lib/settingsController';
   import type { AgentStatus, CodexQuota, DashboardObservations, DashboardRange, DashboardSnapshot, RemoteDevice, SessionActivity } from './lib/types';
-  import DevicesPage from './lib/DevicesPage.svelte';
-  import ModelPricingPage from './lib/ModelPricingPage.svelte';
-  import ModelsPage from './lib/ModelsPage.svelte';
   import OverviewPage from './lib/OverviewPage.svelte';
-  import ProjectsPage from './lib/ProjectsPage.svelte';
-  import QuotaPage from './lib/QuotaPage.svelte';
-  import SessionsPage from './lib/SessionsPage.svelte';
   import LoadingStatus from './lib/LoadingStatus.svelte';
-  import SettingsPage from './lib/SettingsPage.svelte';
-  import ToolsPage from './lib/ToolsPage.svelte';
-  import AgentCustomizations from './lib/AgentCustomizations.svelte';
 
   type Tab = 'overview' | 'devices' | 'tools' | 'models' | 'pricing' | 'sessions' | 'projects' | 'quota' | 'settings' | 'customizations';
+  type SecondaryTab = Exclude<Tab, 'overview'>;
+  interface LoadedPages {
+    devices?: typeof import('./lib/DevicesPage.svelte').default;
+    tools?: typeof import('./lib/ToolsPage.svelte').default;
+    models?: typeof import('./lib/ModelsPage.svelte').default;
+    pricing?: typeof import('./lib/ModelPricingPage.svelte').default;
+    sessions?: typeof import('./lib/SessionsPage.svelte').default;
+    projects?: typeof import('./lib/ProjectsPage.svelte').default;
+    quota?: typeof import('./lib/QuotaPage.svelte').default;
+    settings?: typeof import('./lib/SettingsPage.svelte').default;
+    customizations?: typeof import('./lib/AgentCustomizations.svelte').default;
+  }
+  const pageLoaders: { [K in SecondaryTab]: () => Promise<{ default: NonNullable<LoadedPages[K]> }> } = {
+    devices: () => import('./lib/DevicesPage.svelte'),
+    tools: () => import('./lib/ToolsPage.svelte'),
+    models: () => import('./lib/ModelsPage.svelte'),
+    pricing: () => import('./lib/ModelPricingPage.svelte'),
+    sessions: () => import('./lib/SessionsPage.svelte'),
+    projects: () => import('./lib/ProjectsPage.svelte'),
+    quota: () => import('./lib/QuotaPage.svelte'),
+    settings: () => import('./lib/SettingsPage.svelte'),
+    customizations: () => import('./lib/AgentCustomizations.svelte'),
+  };
+  let loadedPages: LoadedPages = {};
+  let pendingTab: Tab | null = null;
+  let navSequence = 0;
   let activeTab: Tab = 'overview';
   let isEditingOverviewLayout = false;
   let customizationDirty = false;
@@ -324,10 +341,7 @@
     void loadDashboard();
   }
 
-  function handleSelectTab(nextTab: Tab) {
-    if (activeTab === nextTab) return;
-    if (activeTab === 'customizations' && customizationDirty && !window.confirm('当前文件有未保存的更改，放弃更改？')) return;
-    activeTab = nextTab;
+  function runTabEnterEffects(nextTab: Tab) {
     if (nextTab === 'overview') void pollSessionActivity();
     if (nextTab === 'quota') pollVisibleCodexQuota();
     if (nextTab === 'sessions') {
@@ -337,13 +351,67 @@
     if (nextTab === 'devices' && $webdavState.enabled) void webdavController.refreshDevices();
   }
 
+  async function handleSelectTab(nextTab: Tab) {
+    if ((pendingTab ?? activeTab) === nextTab) return;
+    if (activeTab === 'customizations' && customizationDirty && !window.confirm('当前文件有未保存的更改，放弃更改？')) return;
+
+    const seq = ++navSequence;
+    if (nextTab === 'overview' || loadedPages[nextTab]) {
+      pendingTab = null;
+      activeTab = nextTab;
+      runTabEnterEffects(nextTab);
+      return;
+    }
+
+    pendingTab = nextTab;
+    try {
+      const mod = await pageLoaders[nextTab]();
+      if (disposed || seq !== navSequence) return;
+      loadedPages = { ...loadedPages, [nextTab]: mod.default };
+      activeTab = nextTab;
+      pendingTab = null;
+      runTabEnterEffects(nextTab);
+    } catch (error) {
+      if (disposed || seq !== navSequence) return;
+      pendingTab = null;
+      errorMessage = `页面加载失败：${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
   onMount(() => {
     const cleanSettingsListener = settingsController.mount();
-    const updatePageVisibility = () => {
-      document.documentElement.toggleAttribute('data-page-hidden', document.visibilityState !== 'visible');
+    const syncVisibilityTimers = () => {
+      const visible = document.visibilityState === 'visible';
+      document.documentElement.toggleAttribute('data-page-hidden', !visible);
+      if (visible) {
+        if (activityTimer === undefined) {
+          activityTimer = window.setInterval(() => void pollSessionActivity(), 10_000);
+        }
+        if (quotaTimer === undefined) {
+          quotaTimer = window.setInterval(pollVisibleCodexQuota, 30_000);
+        }
+      } else {
+        if (activityTimer !== undefined) {
+          window.clearInterval(activityTimer);
+          activityTimer = undefined;
+        }
+        if (quotaTimer !== undefined) {
+          window.clearInterval(quotaTimer);
+          quotaTimer = undefined;
+        }
+      }
+      return visible;
     };
-    updatePageVisibility();
-    document.addEventListener('visibilitychange', updatePageVisibility);
+    let wasVisible = syncVisibilityTimers();
+    const handleVisibilityChange = () => {
+      const isVisible = syncVisibilityTimers();
+      if (!wasVisible && isVisible) {
+        if (activeTab === 'overview' || activeTab === 'sessions') void pollSessionActivity();
+        if (activeTab === 'quota') pollVisibleCodexQuota();
+      }
+      wasVisible = isVisible;
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     const unsubscribeRefreshInterval = settingsState.subscribe((current) => {
       applyRefreshInterval(current.refreshIntervalMs);
     });
@@ -378,8 +446,6 @@
     }
 
     void pollSessionActivity();
-    activityTimer = window.setInterval(() => void pollSessionActivity(), 10_000);
-    quotaTimer = window.setInterval(pollVisibleCodexQuota, 30_000);
 
     void loadDashboard().then(() => {
       if ($hubState.hubUrl) void hubController.refreshDevices();
@@ -388,7 +454,7 @@
 
     return () => {
       disposed = true;
-      document.removeEventListener('visibilitychange', updatePageVisibility);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       document.documentElement.removeAttribute('data-page-hidden');
       disposeDashboard();
       heatmapRequest += 1;
@@ -430,8 +496,8 @@
       {#each navItems as item}
         <button
           class="nav-button"
-          class:active={activeTab === item.id}
-          aria-current={activeTab === item.id ? 'page' : undefined}
+          class:active={(pendingTab ?? activeTab) === item.id}
+          aria-current={(pendingTab ?? activeTab) === item.id ? 'page' : undefined}
           aria-label={item.label}
           title={item.label}
           onclick={() => handleSelectTab(item.id)}
@@ -514,10 +580,12 @@
         </div>
       {/if}
 
-      {#if activeTab === 'pricing'}
-        <ModelPricingPage {runtimeAvailable} />
-      {:else if activeTab === 'customizations'}
-        <AgentCustomizations {runtimeAvailable} bind:dirty={customizationDirty} />
+      {#if activeTab === 'pricing' && loadedPages.pricing}
+        {@const ModelPricingView = loadedPages.pricing}
+        <ModelPricingView {runtimeAvailable} />
+      {:else if activeTab === 'customizations' && loadedPages.customizations}
+        {@const AgentCustomizationsView = loadedPages.customizations}
+        <AgentCustomizationsView {runtimeAvailable} bind:dirty={customizationDirty} />
       {:else if loading}
         <div class="loading-state" role="status" aria-live="polite">
           <LoadingStatus message="正在加载用量…" stage="WAL 并发只读通道" />
@@ -673,8 +741,9 @@
             onToggleEditLayout={() => (isEditingOverviewLayout = !isEditingOverviewLayout)}
           />
         <!-- TAB 2: MULTI-DEVICE (多设备网络) -->
-        {:else if activeTab === 'devices'}
-          <DevicesPage
+        {:else if activeTab === 'devices' && loadedPages.devices}
+          {@const DevicesView = loadedPages.devices}
+          <DevicesView
             {snapshot}
             local={dashboardView.local}
             remoteDevices={allRemoteDevices}
@@ -711,19 +780,22 @@
             onDisconnectWebDav={webdavController.disconnect}
           />
         <!-- TAB 3: TOOLS ANALYSIS (工具分析) -->
-        {:else if activeTab === 'tools'}
-          <ToolsPage snapshot={snapshot} local={dashboardView.local} tools={dashboardView.scopedTools} />
+        {:else if activeTab === 'tools' && loadedPages.tools}
+          {@const ToolsView = loadedPages.tools}
+          <ToolsView snapshot={snapshot} local={dashboardView.local} tools={dashboardView.scopedTools} />
         <!-- TAB 4: MODELS ANALYSIS (模型分析) -->
-        {:else if activeTab === 'models'}
-          <ModelsPage
+        {:else if activeTab === 'models' && loadedPages.models}
+          {@const ModelsView = loadedPages.models}
+          <ModelsView
             {snapshot}
             {deviceScope}
             sortedModels={dashboardView.sortedModels}
             topModelTotal={dashboardView.topModelTotal}
             bind:modelSortBy
           />
-        {:else if activeTab === 'sessions'}
-          <SessionsPage
+        {:else if activeTab === 'sessions' && loadedPages.sessions}
+          {@const SessionsView = loadedPages.sessions}
+          <SessionsView
             timeZone={snapshot?.time_zone ?? 'UTC'}
             {sessionActivity}
             {sessionRates}
@@ -760,11 +832,13 @@
             onLoadSessionAnalysis={sessionController.load}
           />
         <!-- TAB 5: PROJECTS (项目分析) -->
-        {:else if activeTab === 'projects'}
-          <ProjectsPage snapshot={snapshot} local={dashboardView.local} projects={dashboardView.scopedProjects} />
+        {:else if activeTab === 'projects' && loadedPages.projects}
+          {@const ProjectsView = loadedPages.projects}
+          <ProjectsView snapshot={snapshot} local={dashboardView.local} projects={dashboardView.scopedProjects} />
         <!-- PROVIDER QUOTAS AND ACTIVITY -->
-        {:else if activeTab === 'quota'}
-          <QuotaPage
+        {:else if activeTab === 'quota' && loadedPages.quota}
+          {@const QuotaView = loadedPages.quota}
+          <QuotaView
             snapshot={snapshot}
             codexQuotas={activeCodexQuotas}
             {codexQuotaRefreshing}
@@ -772,8 +846,9 @@
             onRefreshCodexQuota={handleRefreshCodexQuota}
           />
         <!-- TAB 7: SETTINGS (系统设置) -->
-        {:else if activeTab === 'settings'}
-          <SettingsPage
+        {:else if activeTab === 'settings' && loadedPages.settings}
+          {@const SettingsView = loadedPages.settings}
+          <SettingsView
             currentTheme={$settingsState.theme}
             rollingNumbersEnabled={$settingsState.rollingNumbersEnabled}
             refreshIntervalMs={$settingsState.refreshIntervalMs}

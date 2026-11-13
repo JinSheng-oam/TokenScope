@@ -5,7 +5,6 @@
   import SessionDetailsDrawer from './SessionDetailsDrawer.svelte';
   import { groupSessionTimeline, sessionCacheRate, sessionEventTime, sessionProjectLabels } from './sessionTimeline';
   import CustomSelect from './CustomSelect.svelte';
-  import SessionHistoryDialog from './SessionHistoryDialog.svelte';
   import { formatNumber, formatToolLabel, percentOf, relativeTime } from '../lib/format';
   import { icons } from '../lib/icons';
   import {
@@ -66,6 +65,9 @@
   export let sessionActivity: SessionActivity[] = [];
   export let sessionRates: SessionRates | null = null;
   let historySession: SessionUsage | null = null;
+  let SessionHistoryDialogComponent: typeof import('./SessionHistoryDialog.svelte').default | null = null;
+  let historyOpening = false;
+  let historyOpenSeq = 0;
   const historyTools = new Set(['codex', 'claude', 'deepseek-harness', 'antigravity', 'pi']);
   const readOnlyHistoryTools = new Set(['antigravity', 'pi']);
 
@@ -101,7 +103,27 @@
     selectedKey = sessionActionKey(session);
   }
 
+  async function openHistory(session: SessionUsage) {
+    if (historyOpening && !SessionHistoryDialogComponent) return;
+    const seq = ++historyOpenSeq;
+    if (SessionHistoryDialogComponent) {
+      historySession = session;
+      return;
+    }
+    historyOpening = true;
+    try {
+      const mod = await import('./SessionHistoryDialog.svelte');
+      if (seq !== historyOpenSeq) return;
+      SessionHistoryDialogComponent = mod.default;
+      historySession = session;
+    } finally {
+      if (seq === historyOpenSeq) historyOpening = false;
+    }
+  }
+
   async function closeDetails() {
+    historyOpenSeq += 1;
+    historyOpening = false;
     if (pendingSessionDeleteKey && !deletingSessionKey) onCancelSessionDelete();
     selectedKey = null;
     await tick();
@@ -347,15 +369,16 @@
     deleting={deletingSessionKey === selectedKey}
     deleteDisabled={refreshing || deletingSessionKey !== ''}
     onClose={() => void closeDetails()}
-    onHistory={() => { historySession = detailSession; }}
+    onHistory={() => void openHistory(detailSession)}
     onRequestDelete={() => onRequestSessionDelete(detailSession)}
     onCancelDelete={onCancelSessionDelete}
     onConfirmDelete={() => void onConfirmSessionDelete(detailSession)}
   />
 {/if}
 
-{#if historySession}
-  <SessionHistoryDialog
+{#if historySession && SessionHistoryDialogComponent}
+  {@const HistoryDialog = SessionHistoryDialogComponent}
+  <HistoryDialog
     session={historySession}
     isGenerating={resolveSessionActivityState(historySession, sessionActivity, $liveNow) === 'generating'}
     onClose={() => { historySession = null; }}

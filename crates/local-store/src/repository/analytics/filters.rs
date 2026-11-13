@@ -45,6 +45,7 @@ impl LocalStore {
                 row.get::<_, i64>(2)?,
             ))
         })?;
+        let mut project_names = None;
         let mut options = SessionFilterOptions::default();
         for row in rows {
             let (dimension, key, session_count) = row?;
@@ -68,7 +69,13 @@ impl LocalStore {
                     label: if key == "no-project" {
                         "未关联项目".into()
                     } else {
-                        self.project_display_name(&key)?
+                        let names = match &project_names {
+                            Some(map) => map,
+                            None => project_names.insert(self.project_display_names_map()?),
+                        };
+                        names
+                            .get(&key)
+                            .cloned()
                             .unwrap_or_else(|| "项目名称未提供".into())
                     },
                     key,

@@ -144,13 +144,13 @@ impl LocalStore {
                     MAX(u.event_at_ms) AS last_event_at_ms,NULL AS activity_observed_at_ms
                 FROM (
                     SELECT u.*,
-                        EXISTS (
+                        CASE WHEN u.tool_id='codex' THEN EXISTS (
                             SELECT 1 FROM record_sources rs
                             JOIN source_checkpoints cp
                                 ON cp.tool_id=rs.tool_id AND cp.source_key=rs.source_key
                             WHERE rs.record_id=u.record_id AND rs.tool_id='codex'
                                 AND cp.source_fingerprint LIKE '%"mode":"modern"%'
-                        ) AS is_modern_codex
+                        ) ELSE 0 END AS is_modern_codex
                     FROM usage_records u
                     WHERE u.owner_device_id=?1 AND u.scope='device_local' AND u.is_deleted=0
                         AND u.session_id IS NOT NULL AND u.tool_id<>'antigravity'
@@ -432,34 +432,36 @@ impl LocalStore {
             }
             // Antigravity rows carry their conversation identity in
             // record_sources instead of usage_records.session_id.
-            let mut ag_models = self.conn.prepare(
-                "SELECT rs.source_key,u.model_id,
-                        SUM(u.input_uncached_tokens+u.cache_read_tokens+u.cache_write_tokens+u.output_tokens+u.unclassified_tokens),
-                        COUNT(*)
-                 FROM record_sources rs JOIN usage_records u ON u.record_id=rs.record_id
-                 WHERE rs.tool_id='antigravity' AND u.owner_device_id=?1
-                   AND u.scope='device_local' AND u.is_deleted=0
-                   AND (?2 IS NULL OR u.event_at_ms >= ?2) AND (?3 IS NULL OR u.event_at_ms < ?3)
-                   AND rs.source_key IN (SELECT json_extract(value,'$[1]') FROM json_each(?4)
-                     WHERE json_extract(value,'$[0]')='antigravity')
-                 GROUP BY rs.source_key,u.model_id
-                 ORDER BY 3 DESC",
-            )?;
-            let mut ag_rows =
-                ag_models.query(params![owner_device_id, from_ms, to_ms, page_keys])?;
-            while let Some(row) = ag_rows.next()? {
-                let session_id: String = row.get(0)?;
-                let model_id: Option<String> = row.get(1)?;
-                let tokens: i64 = row.get(2)?;
-                let count: i64 = row.get(3)?;
-                by_session
-                    .entry(("antigravity".into(), session_id))
-                    .or_default()
-                    .push(SessionModelUsage {
-                        model_id,
-                        total_tokens: pos_u64(tokens)?,
-                        record_count: pos_u64(count)?,
-                    });
+            if sessions.iter().any(|s| s.tool_id == "antigravity") {
+                let mut ag_models = self.conn.prepare(
+                    "SELECT rs.source_key,u.model_id,
+                            SUM(u.input_uncached_tokens+u.cache_read_tokens+u.cache_write_tokens+u.output_tokens+u.unclassified_tokens),
+                            COUNT(*)
+                     FROM record_sources rs JOIN usage_records u ON u.record_id=rs.record_id
+                     WHERE rs.tool_id='antigravity' AND u.owner_device_id=?1
+                       AND u.scope='device_local' AND u.is_deleted=0
+                       AND (?2 IS NULL OR u.event_at_ms >= ?2) AND (?3 IS NULL OR u.event_at_ms < ?3)
+                       AND rs.source_key IN (SELECT json_extract(value,'$[1]') FROM json_each(?4)
+                         WHERE json_extract(value,'$[0]')='antigravity')
+                     GROUP BY rs.source_key,u.model_id
+                     ORDER BY 3 DESC",
+                )?;
+                let mut ag_rows =
+                    ag_models.query(params![owner_device_id, from_ms, to_ms, page_keys])?;
+                while let Some(row) = ag_rows.next()? {
+                    let session_id: String = row.get(0)?;
+                    let model_id: Option<String> = row.get(1)?;
+                    let tokens: i64 = row.get(2)?;
+                    let count: i64 = row.get(3)?;
+                    by_session
+                        .entry(("antigravity".into(), session_id))
+                        .or_default()
+                        .push(SessionModelUsage {
+                            model_id,
+                            total_tokens: pos_u64(tokens)?,
+                            record_count: pos_u64(count)?,
+                        });
+                }
             }
             for session in &mut sessions {
                 if let Some(list) =

@@ -4,7 +4,8 @@ use super::super::models::{
 };
 use super::super::{LocalStore, PROJECT_LABEL_TOOL_ID};
 use crate::error::{pos_u64, Result, StoreError};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
+use std::collections::HashMap;
 impl LocalStore {
     pub fn earliest_dashboard_event_ms(&self, owner_device_id: &str) -> Result<Option<i64>> {
         let (local, remote): (Option<i64>, Option<i64>) = self.conn.query_row(
@@ -19,15 +20,16 @@ impl LocalStore {
         Ok(local.into_iter().chain(remote).min())
     }
 
-    pub(super) fn usage_totals(
+    /// Aggregates local `device_local`, `unknown`, and `account_global` totals
+    /// in a single table scan instead of three separate range queries.
+    pub(super) fn usage_totals_by_scope(
         &self,
         owner_device_id: &str,
-        scope: &str,
         from_ms: Option<i64>,
         to_ms: Option<i64>,
-    ) -> Result<UsageTotals> {
-        let row = self.conn.query_row(
-            "SELECT \
+    ) -> Result<(UsageTotals, UsageTotals, UsageTotals)> {
+        let mut stmt = self.conn.prepare(
+            "SELECT scope, \
              COALESCE(SUM(input_uncached_tokens + cache_read_tokens + cache_write_tokens + output_tokens + unclassified_tokens),0), \
              COALESCE(SUM(input_uncached_tokens),0), COALESCE(SUM(cache_read_tokens),0), \
              COALESCE(SUM(cache_write_tokens),0), COALESCE(SUM(output_tokens),0), \
@@ -40,52 +42,45 @@ impl LocalStore {
              COALESCE(SUM(CASE WHEN precision='aggregate' THEN 1 ELSE 0 END),0), \
              COALESCE(SUM(CASE WHEN precision='estimated' THEN 1 ELSE 0 END),0), \
              COALESCE(SUM(CASE WHEN precision='unknown' THEN 1 ELSE 0 END),0) \
-             FROM usage_records WHERE owner_device_id=?1 AND scope=?2 AND is_deleted=0 \
-             AND (?3 IS NULL OR event_at_ms >= ?3) AND (?4 IS NULL OR event_at_ms < ?4)",
-            params![owner_device_id, scope, from_ms, to_ms],
-            |r| Ok((
-                r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,
-                r.get::<_,i64>(4)?,r.get::<_,i64>(5)?,r.get::<_,i64>(6)?,r.get::<_,i64>(7)?,
-                r.get::<_,i64>(8)?,r.get::<_,i64>(9)?,r.get::<_,i64>(10)?,r.get::<_,i64>(11)?,
-                r.get::<_,i64>(12)?,r.get::<_,i64>(13)?,r.get::<_,i64>(14)?,r.get::<_,i64>(15)?,
-            )),
+             FROM usage_records WHERE owner_device_id=?1 \
+             AND scope IN ('device_local','unknown','account_global') AND is_deleted=0 \
+             AND (?2 IS NULL OR event_at_ms >= ?2) AND (?3 IS NULL OR event_at_ms < ?3) \
+             GROUP BY scope",
         )?;
-        let (
-            total,
-            input,
-            cache_read,
-            cache_write,
-            output,
-            unclassified,
-            reasoning,
-            reasoning_known,
-            count,
-            cost,
-            priced,
-            unpriced,
-            exact,
-            aggregate,
-            estimated,
-            unknown,
-        ) = row;
-        Ok(UsageTotals {
-            total_tokens: pos_u64(total)?,
-            input_tokens: pos_u64(input)?,
-            cache_read_tokens: pos_u64(cache_read)?,
-            cache_write_tokens: pos_u64(cache_write)?,
-            output_tokens: pos_u64(output)?,
-            unclassified_tokens: pos_u64(unclassified)?,
-            reasoning_tokens: pos_u64(reasoning)?,
-            reasoning_known_records: pos_u64(reasoning_known)?,
-            record_count: pos_u64(count)?,
-            estimated_cost_microusd: if priced > 0 { Some(cost) } else { None },
-            priced_records: pos_u64(priced)?,
-            unpriced_records: pos_u64(unpriced)?,
-            exact_records: pos_u64(exact)?,
-            aggregate_records: pos_u64(aggregate)?,
-            estimated_records: pos_u64(estimated)?,
-            unknown_precision_records: pos_u64(unknown)?,
-        })
+        let mut local = UsageTotals::default();
+        let mut unassigned = UsageTotals::default();
+        let mut account_global = UsageTotals::default();
+        let mut rows = stmt.query(params![owner_device_id, from_ms, to_ms])?;
+        while let Some(r) = rows.next()? {
+            let scope: String = r.get(0)?;
+            let priced = r.get::<_, i64>(11)?;
+            let cost = r.get::<_, i64>(10)?;
+            let totals = UsageTotals {
+                total_tokens: pos_u64(r.get(1)?)?,
+                input_tokens: pos_u64(r.get(2)?)?,
+                cache_read_tokens: pos_u64(r.get(3)?)?,
+                cache_write_tokens: pos_u64(r.get(4)?)?,
+                output_tokens: pos_u64(r.get(5)?)?,
+                unclassified_tokens: pos_u64(r.get(6)?)?,
+                reasoning_tokens: pos_u64(r.get(7)?)?,
+                reasoning_known_records: pos_u64(r.get(8)?)?,
+                record_count: pos_u64(r.get(9)?)?,
+                estimated_cost_microusd: if priced > 0 { Some(cost) } else { None },
+                priced_records: pos_u64(priced)?,
+                unpriced_records: pos_u64(r.get(12)?)?,
+                exact_records: pos_u64(r.get(13)?)?,
+                aggregate_records: pos_u64(r.get(14)?)?,
+                estimated_records: pos_u64(r.get(15)?)?,
+                unknown_precision_records: pos_u64(r.get(16)?)?,
+            };
+            match scope.as_str() {
+                "device_local" => local = totals,
+                "unknown" => unassigned = totals,
+                "account_global" => account_global = totals,
+                _ => {}
+            }
+        }
+        Ok((local, unassigned, account_global))
     }
 
     /// Bounded aggregate used by the diagnostics panel; never builds the full
@@ -170,6 +165,11 @@ impl LocalStore {
                 r.get::<_, i64>(9)?,
             ))
         })?;
+        let project_names = if column == "project_id" {
+            Some(self.project_display_names_map()?)
+        } else {
+            None
+        };
         let mut result = Vec::new();
         for row in rows {
             let (
@@ -188,8 +188,9 @@ impl LocalStore {
                 ("tool_id", Some(value)) => (value.clone(), tool_display_name(&value)),
                 ("model_id", Some(value)) => (value.clone(), value),
                 ("project_id", Some(value)) => {
-                    let label = self
-                        .project_display_name(&value)?
+                    let label = project_names
+                        .as_ref()
+                        .and_then(|names| names.get(&value).cloned())
                         .unwrap_or_else(|| "项目名称未提供".into());
                     (value, label)
                 }
@@ -288,18 +289,16 @@ impl LocalStore {
         });
         Ok(activity)
     }
-    pub(in crate::repository) fn project_display_name(
+    pub(in crate::repository) fn project_display_names_map(
         &self,
-        project_id: &str,
-    ) -> Result<Option<String>> {
-        let cache_key = format!("project:{project_id}");
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT name FROM session_names WHERE session_id=?1 AND tool_id=?2",
-                params![cache_key, PROJECT_LABEL_TOOL_ID],
-                |row| row.get(0),
-            )
-            .optional()?)
+    ) -> Result<HashMap<String, String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT substr(session_id, 9), name FROM session_names \
+             WHERE session_id >= 'project:' AND session_id < 'project;' AND tool_id=?1",
+        )?;
+        let rows = stmt.query_map([PROJECT_LABEL_TOOL_ID], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<HashMap<_, _>>>()?)
     }
 }

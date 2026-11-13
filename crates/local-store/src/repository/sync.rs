@@ -254,6 +254,11 @@ impl LocalStore {
                 "remote breakdown cardinality exceeds 1000",
             ));
         }
+        let project_names = if dimension == "project_id" && !rows.is_empty() {
+            Some(self.project_display_names_map()?)
+        } else {
+            None
+        };
         let mut out = Vec::with_capacity(rows.len());
         for (owner, raw_key, count, total, cost, exact, aggregate, estimated, unknown, untimed) in
             rows
@@ -264,8 +269,9 @@ impl LocalStore {
                 _ => "no-project".into(),
             });
             let label = match dimension {
-                "project_id" => self
-                    .project_display_name(&key)?
+                "project_id" => project_names
+                    .as_ref()
+                    .and_then(|names| names.get(&key).cloned())
                     .unwrap_or_else(|| "项目名称未提供".into()),
                 "tool_id" => tool_display_name(&key),
                 "model_id" if key == "unknown-model" => "来源未提供模型".into(),

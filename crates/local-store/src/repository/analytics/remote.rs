@@ -148,6 +148,11 @@ impl LocalStore {
                 "remote breakdown cardinality exceeds 1000",
             ));
         }
+        let project_names = if dimension == "project_id" && !groups.is_empty() {
+            Some(self.project_display_names_map()?)
+        } else {
+            None
+        };
         let mut groups: Vec<_> = groups.into_iter().collect();
         groups.sort_by_key(|b| std::cmp::Reverse(b.1.usage.total_tokens));
         groups
@@ -159,8 +164,9 @@ impl LocalStore {
                     _ => "no-project".into(),
                 });
                 let label = match dimension {
-                    "project_id" => self
-                        .project_display_name(&key)?
+                    "project_id" => project_names
+                        .as_ref()
+                        .and_then(|names| names.get(&key).cloned())
                         .unwrap_or_else(|| "项目名称未提供".into()),
                     "tool_id" => tool_display_name(&key),
                     "model_id" if key == "unknown-model" => "来源未提供模型".into(),

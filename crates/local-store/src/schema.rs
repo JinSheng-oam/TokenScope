@@ -1,6 +1,6 @@
 //! Schema v1 is append-only at the migration layer. No destructive schema reset.
 
-pub const VERSION: i64 = 11;
+pub const VERSION: i64 = 12;
 pub const MIGRATION_001: &str = r#"
 CREATE TABLE schema_migrations (
   version INTEGER PRIMARY KEY,
@@ -331,4 +331,11 @@ CREATE TABLE antigravity_dated_unmeasured_activity (
   FOREIGN KEY(source_key, model_id) REFERENCES antigravity_model_activity(source_key, model_id) ON DELETE CASCADE
 );
 CREATE INDEX ix_antigravity_dated_unmeasured_time ON antigravity_dated_unmeasured_activity(event_at_ms);
+"#;
+
+pub const MIGRATION_012: &str = r#"
+CREATE INDEX IF NOT EXISTS ix_usage_device_scope_deleted_time
+  ON usage_records(owner_device_id, scope, is_deleted, event_at_ms);
+CREATE INDEX IF NOT EXISTS ix_usage_device_scope_deleted_session
+  ON usage_records(owner_device_id, scope, is_deleted, session_id, tool_id, model_id, event_at_ms);
 "#;

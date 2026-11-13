@@ -27,15 +27,15 @@ impl LocalStore {
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
         conn.execute_batch(
-            "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA query_only=ON;",
+            "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA query_only=ON; PRAGMA temp_store=MEMORY;",
         )?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version != schema::VERSION {
             return Err(StoreError::UnsupportedSchema(version));
         }
         let migration_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version BETWEEN 1 AND 11",
-            [],
+            "SELECT COUNT(*) FROM schema_migrations WHERE version BETWEEN 1 AND ?1",
+            [schema::VERSION],
             |r| r.get(0),
         )?;
         let highest: i64 = conn.query_row(
@@ -52,7 +52,9 @@ impl LocalStore {
     }
 
     fn configure(conn: &Connection, persistent: bool) -> Result<()> {
-        conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;
+        conn.execute_batch(
+            "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA temp_store=MEMORY;",
+        )?;
         if persistent {
             // Each commit is durable when acknowledged, including a power loss.
             conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")?;
@@ -286,9 +288,26 @@ impl LocalStore {
             tx.execute_batch("PRAGMA user_version=11;")?;
             tx.commit()?;
         }
+        if version <= 11 {
+            let (count, highest): (i64, i64) = conn.query_row(
+                "SELECT COUNT(*),MAX(version) FROM schema_migrations",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            if count != 11 || highest != 11 {
+                return Err(StoreError::DatabaseInconsistent(
+                    "legacy migration metadata invalid before v12",
+                ));
+            }
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(schema::MIGRATION_012)?;
+            tx.execute("INSERT INTO schema_migrations(version,applied_at_ms) VALUES(12,CAST(strftime('%s','now') AS INTEGER)*1000)",[])?;
+            tx.execute_batch("PRAGMA user_version=12;")?;
+            tx.commit()?;
+        }
         let count: i64 = conn.query_row(
-            "SELECT count(*) FROM schema_migrations WHERE version BETWEEN 1 AND 11",
-            [],
+            "SELECT count(*) FROM schema_migrations WHERE version BETWEEN 1 AND ?1",
+            [schema::VERSION],
             |r| r.get(0),
         )?;
         let future: i64 = conn.query_row(

@@ -27,29 +27,30 @@ impl LocalStore {
             return Err(StoreError::InvalidInput("source read limit"));
         }
         let mut stmt = self.conn.prepare(
-            "SELECT record_id FROM record_sources WHERE tool_id=?1 AND source_key=?2 ORDER BY record_id LIMIT ?3"
+            "SELECT u.record_id,u.owner_device_id,u.tool_id,u.scope,u.account_id,u.model_id,u.project_id,u.session_id,u.event_at_ms, \
+                u.input_uncached_tokens,u.cache_read_tokens,u.cache_write_tokens,u.output_tokens,u.unclassified_tokens, \
+                u.reasoning_tokens,u.estimated_cost_microusd,u.price_version,u.precision,u.record_revision,u.payload_hash,u.is_deleted \
+             FROM record_sources rs \
+             LEFT JOIN usage_records u ON u.record_id=rs.record_id \
+             WHERE rs.tool_id=?1 AND rs.source_key=?2 \
+             ORDER BY rs.record_id LIMIT ?3",
         )?;
-        let ids = stmt
-            .query_map(
-                params![
-                    tool,
-                    source_key,
-                    i64::try_from(limit + 1).map_err(|_| StoreError::IntegerOutOfRange)?
-                ],
-                |r| r.get::<_, String>(0),
-            )?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        if ids.len() > limit {
-            return Err(StoreError::InvalidInput(
-                "source exceeds reconciliation limit",
-            ));
-        }
-        let mut result = Vec::with_capacity(ids.len());
-        for id in ids {
-            result.push(
-                self.get_record(&id)?
-                    .ok_or(StoreError::DatabaseInconsistent("source record missing"))?,
-            );
+        let mut rows = stmt.query(params![
+            tool,
+            source_key,
+            i64::try_from(limit + 1).map_err(|_| StoreError::IntegerOutOfRange)?
+        ])?;
+        let mut result = Vec::new();
+        while let Some(row) = rows.next()? {
+            if row.get::<_, Option<String>>(0)?.is_none() {
+                return Err(StoreError::DatabaseInconsistent("source record missing"));
+            }
+            if result.len() == limit {
+                return Err(StoreError::InvalidInput(
+                    "source exceeds reconciliation limit",
+                ));
+            }
+            result.push(RawRecord::read(row)?.into_envelope()?);
         }
         Ok(result)
     }

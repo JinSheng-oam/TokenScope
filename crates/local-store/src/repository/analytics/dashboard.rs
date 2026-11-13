@@ -55,6 +55,10 @@ impl LocalStore {
             }};
         }
         let remote = timed!("remote_grouped", self.remote_dashboard(from_ms, to_ms)?);
+        let (local, unassigned, account_global) = timed!(
+            "usage_totals_by_scope",
+            self.usage_totals_by_scope(owner_device_id, from_ms, to_ms)?
+        );
         let mut snapshot = DashboardSnapshot {
             data_revision,
             schema_version: schema::VERSION,
@@ -65,23 +69,14 @@ impl LocalStore {
             time_zone,
             time_zone_valid,
             identity: identity.clone(),
-            local: timed!(
-                "local",
-                self.usage_totals(owner_device_id, "device_local", from_ms, to_ms)?
-            ),
+            local,
             remote: remote.total,
             remote_by_device: remote.devices,
             remote_by_tool: remote.tools,
             remote_by_model: remote.models,
             remote_by_project: remote.projects,
-            unassigned: timed!(
-                "unassigned",
-                self.usage_totals(owner_device_id, "unknown", from_ms, to_ms)?
-            ),
-            account_global: timed!(
-                "account_global",
-                self.usage_totals(owner_device_id, "account_global", from_ms, to_ms)?
-            ),
+            unassigned,
+            account_global,
             by_tool: timed!(
                 "by_tool",
                 self.usage_breakdown("tool_id", owner_device_id, "device_local", from_ms, to_ms)?

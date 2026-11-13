@@ -569,56 +569,8 @@
   white-space: normal;
 }
 
-.session-name {
-  max-width: 30ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-}
-
-.session-models {
-  min-width: 20ch;
-}
-
-.session-model-row {
-  display: flex;
-  gap: 10px;
-  justify-content: space-between;
-  max-width: 30ch;
-  font-size: 11px;
-  line-height: 1.55;
-}
-
-.session-model-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-secondary);
-}
-
 .text-muted {
   color: var(--text-secondary);
-}
-
-.session-pagination {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 12px;
-  color: var(--text-secondary);
-  font-size: 11.5px;
-}
-
-.session-pagination > div {
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.session-pagination .btn-secondary {
-  min-width: 72px;
 }
 
 /* Unified Data Pagination Bar */

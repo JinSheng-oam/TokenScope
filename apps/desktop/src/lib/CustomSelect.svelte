@@ -5,10 +5,12 @@
     count?: number;
     subtext?: string;
   };
+
+  let nextSelectId = 0;
 </script>
 
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import { selectMenuPosition } from './selectMenuPosition';
 
   export let options: SelectOption[] = [];
@@ -20,13 +22,42 @@
   export let onChange: ((val: string) => void) | undefined = undefined;
 
   let isOpen = false;
+  let activeIndex = -1;
+  let listenersAttached = false;
   let containerRef: HTMLDivElement | null = null;
   let triggerRef: HTMLButtonElement;
   let dropdownRef: HTMLDivElement;
   let optionsRef: HTMLDivElement;
-  const listboxId = `select-listbox-cpk4ooe`;
+  const listboxId = `select-listbox-${++nextSelectId}`;
 
   $: selectedOption = options.find((opt) => opt.key === value);
+  $: if (isOpen && activeIndex >= options.length) {
+    activeIndex = options.length > 0 ? options.length - 1 : -1;
+  }
+
+  function attachGlobalListeners() {
+    if (listenersAttached) return;
+    document.addEventListener('pointerdown', handleClickOutside);
+    window.addEventListener('scroll', handleScroll, true);
+    window.addEventListener('resize', positionDropdown);
+    listenersAttached = true;
+  }
+
+  function detachGlobalListeners() {
+    if (!listenersAttached) return;
+    document.removeEventListener('pointerdown', handleClickOutside);
+    window.removeEventListener('scroll', handleScroll, true);
+    window.removeEventListener('resize', positionDropdown);
+    listenersAttached = false;
+  }
+
+  function scrollActiveIntoView(index: number) {
+    if (!optionsRef || index < 0) return;
+    const optionEl = optionsRef.children[index];
+    if (optionEl instanceof HTMLElement) {
+      optionEl.scrollIntoView({ block: 'nearest' });
+    }
+  }
 
   function positionDropdown() {
     if (!isOpen || !dropdownRef || !optionsRef) return;
@@ -47,24 +78,42 @@
     dropdownRef.style.transform = position.up ? 'translateY(-100%)' : '';
   }
 
+  async function openMenu(initialIndex?: number) {
+    if (disabled || isOpen) return;
+    const selectedIndex = options.findIndex((opt) => opt.key === value);
+    activeIndex =
+      initialIndex !== undefined
+        ? initialIndex
+        : selectedIndex >= 0
+          ? selectedIndex
+          : options.length > 0
+            ? 0
+            : -1;
+    isOpen = true;
+    attachGlobalListeners();
+    await tick();
+    if (!isOpen || !dropdownRef) return;
+    dropdownRef.showPopover?.();
+    positionDropdown();
+    scrollActiveIntoView(activeIndex);
+  }
+
   async function toggleOpen() {
     if (disabled) return;
     if (isOpen) {
       close();
       return;
     }
-    isOpen = true;
-    await tick();
-    if (!isOpen || !dropdownRef) return;
-    dropdownRef.showPopover?.();
-    positionDropdown();
+    await openMenu();
   }
 
   function close(restoreFocus = false) {
     if (!isOpen) return;
+    detachGlobalListeners();
     if (dropdownRef?.hidePopover && dropdownRef.matches(':popover-open')) dropdownRef.hidePopover();
     isOpen = false;
-    if (restoreFocus) triggerRef.focus();
+    activeIndex = -1;
+    if (restoreFocus) triggerRef?.focus();
   }
 
   function handleSelect(optionKey: string) {
@@ -74,10 +123,63 @@
     onChange?.(optionKey);
   }
 
+  function moveActive(delta: number) {
+    if (options.length === 0) return;
+    if (activeIndex < 0) {
+      activeIndex = delta >= 0 ? 0 : options.length - 1;
+    } else {
+      activeIndex = (activeIndex + delta + options.length) % options.length;
+    }
+    scrollActiveIntoView(activeIndex);
+  }
+
   function handleKeydown(event: KeyboardEvent) {
-    if (isOpen && event.key === 'Escape' && containerRef?.contains(document.activeElement)) {
-      event.preventDefault();
-      close(true);
+    if (disabled) return;
+    if (!isOpen) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        void openMenu(event.key === 'ArrowUp' && options.length > 0 ? options.length - 1 : undefined);
+      }
+      return;
+    }
+
+    switch (event.key) {
+      case 'Escape':
+        event.preventDefault();
+        close(true);
+        break;
+      case 'ArrowDown':
+        event.preventDefault();
+        moveActive(1);
+        break;
+      case 'ArrowUp':
+        event.preventDefault();
+        moveActive(-1);
+        break;
+      case 'Home':
+        if (options.length > 0) {
+          event.preventDefault();
+          activeIndex = 0;
+          scrollActiveIntoView(activeIndex);
+        }
+        break;
+      case 'End':
+        if (options.length > 0) {
+          event.preventDefault();
+          activeIndex = options.length - 1;
+          scrollActiveIntoView(activeIndex);
+        }
+        break;
+      case 'Enter':
+      case ' ':
+        if (activeIndex >= 0 && activeIndex < options.length) {
+          event.preventDefault();
+          handleSelect(options[activeIndex].key);
+        }
+        break;
+      case 'Tab':
+        close();
+        break;
     }
   }
 
@@ -90,19 +192,10 @@
     if (isOpen && (!(target instanceof Node) || !dropdownRef?.contains(target))) close();
   }
 
-  onMount(() => {
-    document.addEventListener('pointerdown', handleClickOutside);
-    window.addEventListener('scroll', handleScroll, true);
-    window.addEventListener('resize', positionDropdown);
-    return () => {
-      document.removeEventListener('pointerdown', handleClickOutside);
-      window.removeEventListener('scroll', handleScroll, true);
-      window.removeEventListener('resize', positionDropdown);
-    };
+  onDestroy(() => {
+    detachGlobalListeners();
   });
 </script>
-
-<svelte:window onkeydown={handleKeydown} />
 
 <div
   class="custom-select-container"
@@ -114,14 +207,17 @@
 >
   <button
     type="button"
+    role="combobox"
     class="select-trigger"
     onclick={toggleOpen}
+    onkeydown={handleKeydown}
     bind:this={triggerRef}
     {disabled}
     aria-label={ariaLabel}
     aria-haspopup="listbox"
     aria-expanded={isOpen}
     aria-controls={isOpen ? listboxId : undefined}
+    aria-activedescendant={isOpen && activeIndex >= 0 && options[activeIndex] ? `${listboxId}-opt-${activeIndex}` : undefined}
   >
     <span class="trigger-label" class:is-placeholder={!selectedOption}>
       {selectedOption ? selectedOption.label : placeholder}
@@ -139,16 +235,21 @@
   </button>
 
   {#if isOpen}
-    <div id={listboxId} class="select-dropdown" bind:this={dropdownRef} popover="manual" role="listbox" aria-label={ariaLabel}>
+    <div id={listboxId} class="select-dropdown" bind:this={dropdownRef} popover="manual" role="listbox" tabindex="-1" aria-label={ariaLabel} onkeydown={handleKeydown}>
       <div class="options-scroll" bind:this={optionsRef}>
-        {#each options as opt}
+        {#each options as opt, index}
           {@const isSelected = opt.key === value}
+          {@const isActive = index === activeIndex}
           <button
+            id={`${listboxId}-opt-${index}`}
             type="button"
             class="select-option"
             class:selected={isSelected}
+            class:is-active={isActive}
             role="option"
+            tabindex="-1"
             aria-selected={isSelected}
+            onmouseenter={() => { activeIndex = index; }}
             onclick={() => handleSelect(opt.key)}
           >
             <span class="option-label">{opt.label}</span>
@@ -319,7 +420,8 @@
     transition: background-color var(--transition-fast), color var(--transition-fast);
   }
 
-  .select-option:hover {
+  .select-option:hover,
+  .select-option.is-active {
     background-color: var(--bg-secondary);
     color: var(--text-primary);
   }

@@ -6,8 +6,263 @@
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/png" href="./src-tauri/icons/tokenscope-v1/32x32.png" />
     <title>TokenScope — M0-01</title>
+    <script src="/boot.js"></script>
+    <style>
+      :root,
+      [data-theme="dark"] {
+        --splash-bg: #0B0D11;
+        --splash-card: #151921;
+        --splash-border: rgba(255, 255, 255, 0.11);
+        --splash-text: #F3F5F8;
+        --splash-muted: #8B96A5;
+        --splash-brand: #8E99F3;
+        --splash-brand-strong: #5E6AD2;
+        --splash-brand-soft: rgba(94, 106, 210, 0.16);
+        --splash-glow: rgba(94, 106, 210, 0.22);
+        --splash-track: rgba(255, 255, 255, 0.08);
+      }
+
+      [data-theme="light"] {
+        --splash-bg: #F6F7F9;
+        --splash-card: #FFFFFF;
+        --splash-border: rgba(15, 23, 42, 0.09);
+        --splash-text: #0F172A;
+        --splash-muted: #526071;
+        --splash-brand: #4F5BD5;
+        --splash-brand-strong: #4F5BD5;
+        --splash-brand-soft: rgba(79, 91, 213, 0.10);
+        --splash-glow: rgba(79, 91, 213, 0.14);
+        --splash-track: rgba(15, 23, 42, 0.08);
+      }
+
+      html,
+      body {
+        margin: 0;
+        background-color: var(--splash-bg);
+      }
+
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: var(--splash-bg);
+        color: var(--splash-text);
+        font-family: 'Inter', 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei UI', system-ui, sans-serif;
+        user-select: none;
+        overflow: hidden;
+        opacity: 1;
+        transform: scale(1);
+        transition: opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+      }
+
+      #boot-splash.is-hidden {
+        opacity: 0;
+        transform: scale(1.015);
+        pointer-events: none;
+      }
+
+      .boot-glow {
+        position: absolute;
+        width: 340px;
+        height: 340px;
+        border-radius: 50%;
+        background: radial-gradient(circle, var(--splash-glow) 0%, transparent 68%);
+        filter: blur(36px);
+        animation: boot-breathe 3.2s ease-in-out infinite;
+        pointer-events: none;
+      }
+
+      .boot-center {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+        animation: boot-enter 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+
+      .boot-emblem {
+        position: relative;
+        width: 76px;
+        height: 76px;
+        display: grid;
+        place-items: center;
+      }
+
+      .boot-ring-outer,
+      .boot-ring-inner {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      .boot-ring-outer {
+        animation: boot-spin 1.45s cubic-bezier(0.55, 0.18, 0.45, 0.82) infinite;
+      }
+
+      .boot-ring-inner {
+        animation: boot-spin-rev 8s linear infinite;
+        opacity: 0.55;
+      }
+
+      .boot-badge {
+        position: relative;
+        width: 44px;
+        height: 44px;
+        border-radius: 13px;
+        background: var(--splash-card);
+        border: 1px solid var(--splash-border);
+        box-shadow: 0 8px 24px -6px var(--splash-glow);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+      }
+
+      .boot-bar {
+        width: 3.5px;
+        border-radius: 999px;
+        background: linear-gradient(180deg, var(--splash-brand) 0%, var(--splash-brand-strong) 100%);
+        transform-origin: center;
+        animation: boot-equalizer 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      }
+
+      .boot-bar--1 { height: 12px; animation-delay: 0ms; }
+      .boot-bar--2 { height: 20px; animation-delay: 160ms; }
+      .boot-bar--3 { height: 14px; animation-delay: 320ms; }
+
+      .boot-copy {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .boot-title {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: -0.025em;
+        color: var(--splash-text);
+      }
+
+      .boot-subtitle {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--splash-muted);
+        letter-spacing: 0.01em;
+      }
+
+      .boot-progress-track {
+        width: 136px;
+        height: 3px;
+        border-radius: 999px;
+        background: var(--splash-track);
+        overflow: hidden;
+        position: relative;
+      }
+
+      .boot-progress-beam {
+        position: absolute;
+        inset-block: 0;
+        left: 0;
+        width: 48%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, transparent 0%, var(--splash-brand) 50%, var(--splash-brand-strong) 100%);
+        animation: boot-beam 1.25s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+      }
+
+      @keyframes boot-enter {
+        from { opacity: 0; transform: translateY(6px) scale(0.98); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+
+      @keyframes boot-breathe {
+        0%, 100% { transform: scale(0.94); opacity: 0.72; }
+        50% { transform: scale(1.06); opacity: 1; }
+      }
+
+      @keyframes boot-spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+
+      @keyframes boot-spin-rev {
+        from { transform: rotate(360deg); }
+        to { transform: rotate(0deg); }
+      }
+
+      @keyframes boot-equalizer {
+        0%, 100% { transform: scaleY(0.58); opacity: 0.65; }
+        50% { transform: scaleY(1.12); opacity: 1; }
+      }
+
+      @keyframes boot-beam {
+        0% { transform: translateX(-110%); }
+        100% { transform: translateX(240%); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .boot-glow,
+        .boot-center,
+        .boot-ring-outer,
+        .boot-ring-inner,
+        .boot-bar,
+        .boot-progress-beam {
+          animation: none;
+        }
+        .boot-progress-beam {
+          width: 100%;
+          opacity: 0.5;
+        }
+        #boot-splash {
+          transition: opacity 120ms linear;
+        }
+        #boot-splash.is-hidden {
+          transform: none;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="boot-splash" aria-hidden="true">
+      <div class="boot-glow"></div>
+      <div class="boot-center">
+        <div class="boot-emblem">
+          <svg class="boot-ring-inner" viewBox="0 0 76 76" fill="none">
+            <circle cx="38" cy="38" r="30" stroke="var(--splash-border)" stroke-width="1" stroke-dasharray="3 5" />
+          </svg>
+          <svg class="boot-ring-outer" viewBox="0 0 76 76" fill="none">
+            <defs>
+              <linearGradient id="bootArcGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="var(--splash-brand)" stop-opacity="1" />
+                <stop offset="65%" stop-color="var(--splash-brand-strong)" stop-opacity="0.45" />
+                <stop offset="100%" stop-color="var(--splash-brand)" stop-opacity="0" />
+              </linearGradient>
+            </defs>
+            <circle cx="38" cy="38" r="35" stroke="var(--splash-track)" stroke-width="1.75" />
+            <path d="M 38 3 A 35 35 0 0 1 73 38" stroke="url(#bootArcGrad)" stroke-width="2.25" stroke-linecap="round" />
+          </svg>
+          <div class="boot-badge">
+            <span class="boot-bar boot-bar--1"></span>
+            <span class="boot-bar boot-bar--2"></span>
+            <span class="boot-bar boot-bar--3"></span>
+          </div>
+        </div>
+        <div class="boot-copy">
+          <p class="boot-title">TokenScope</p>
+          <p class="boot-subtitle">正在初始化界面…</p>
+        </div>
+        <div class="boot-progress-track">
+          <div class="boot-progress-beam"></div>
+        </div>
+      </div>
+    </div>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

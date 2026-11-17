@@ -31,6 +31,8 @@ pub(crate) struct AgentProcess {
 pub(crate) struct AppLifecycle {
     pub(crate) quit_requested: AtomicBool,
     pub(crate) keep_alive_after_window_close: AtomicBool,
+    pub(crate) main_window_generation: AtomicU64,
+    pub(crate) main_window_revealed: AtomicBool,
 }
 
 /// Remembers which range the UI is showing so background refreshes never

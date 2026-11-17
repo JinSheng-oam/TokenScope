@@ -1,27 +1,18 @@
-use crate::{dashboard::spawn_dashboard_warmup, state::AppLifecycle};
-use std::sync::atomic::Ordering;
+use crate::{dashboard::spawn_dashboard_warmup, native_splash, state::AppLifecycle};
+use std::{sync::atomic::Ordering, thread, time::Duration};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    webview::WebviewWindowBuilder,
+    webview::{PageLoadEvent, WebviewWindowBuilder},
     AppHandle, Manager,
 };
 
-pub(crate) fn show_or_create_main_window(app: &AppHandle) -> Result<(), String> {
-    let is_new_window = app.get_webview_window("main").is_none();
-    let window = if let Some(window) = app.get_webview_window("main") {
-        window
-    } else {
-        let config = app
-            .config()
-            .app
-            .windows
-            .iter()
-            .find(|window| window.label == "main")
-            .ok_or_else(|| "Tauri 配置中缺少 main 窗口".to_string())?;
-        WebviewWindowBuilder::from_config(app, config)
-            .and_then(|builder| builder.build())
-            .map_err(|e| format!("创建 TokenScope 窗口失败：{e}"))?
+pub(crate) fn reveal_window_now(app: &AppHandle) -> Result<(), String> {
+    let lifecycle = app.state::<AppLifecycle>();
+    lifecycle.main_window_revealed.store(true, Ordering::SeqCst);
+    native_splash::close();
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
     };
     let _ = window.center();
     window
@@ -33,9 +24,87 @@ pub(crate) fn show_or_create_main_window(app: &AppHandle) -> Result<(), String> 
     let _ = window.set_always_on_top(true);
     let _ = window.set_focus();
     let _ = window.set_always_on_top(false);
-    if is_new_window {
-        spawn_dashboard_warmup(app.clone());
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn reveal_main_window(app: AppHandle) -> Result<(), String> {
+    reveal_window_now(&app)
+}
+
+pub(crate) fn show_or_create_main_window(app: &AppHandle) -> Result<(), String> {
+    if app.get_webview_window("main").is_some() {
+        return reveal_window_now(app);
     }
+
+    let lifecycle = app.state::<AppLifecycle>();
+    let generation = lifecycle
+        .main_window_generation
+        .fetch_add(1, Ordering::SeqCst)
+        + 1;
+    lifecycle
+        .main_window_revealed
+        .store(false, Ordering::SeqCst);
+    native_splash::show();
+
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == "main")
+        .ok_or_else(|| "Tauri 配置中缺少 main 窗口".to_string())?;
+
+    let handle_for_load = app.clone();
+    let built = WebviewWindowBuilder::from_config(app, config)
+        .and_then(|builder| {
+            let builder = if cfg!(windows) {
+                builder.visible(false)
+            } else {
+                builder
+            };
+            builder
+                .on_page_load(move |window, payload| {
+                    if !matches!(payload.event(), PageLoadEvent::Finished) {
+                        return;
+                    }
+                    let app_handle = window.app_handle().clone();
+                    thread::spawn(move || {
+                        thread::sleep(Duration::from_millis(1500));
+                        let lifecycle = app_handle.state::<AppLifecycle>();
+                        if lifecycle.main_window_generation.load(Ordering::SeqCst) == generation
+                            && !lifecycle.main_window_revealed.load(Ordering::SeqCst)
+                        {
+                            let _ = reveal_window_now(&app_handle);
+                        }
+                    });
+                })
+                .build()
+        })
+        .map_err(|e| {
+            native_splash::close();
+            format!("创建 TokenScope 窗口失败：{e}")
+        })?;
+
+    if !cfg!(windows) {
+        let _ = built.center();
+        let _ = built.show();
+        let _ = built.unminimize();
+        let _ = built.set_focus();
+    } else {
+        // Safety deadline in case WebView2 navigation stalls before PageLoadEvent::Finished.
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(12));
+            let lifecycle = handle_for_load.state::<AppLifecycle>();
+            if lifecycle.main_window_generation.load(Ordering::SeqCst) == generation
+                && !lifecycle.main_window_revealed.load(Ordering::SeqCst)
+            {
+                let _ = reveal_window_now(&handle_for_load);
+            }
+        });
+    }
+
+    spawn_dashboard_warmup(app.clone());
     Ok(())
 }
 
@@ -69,6 +138,7 @@ pub(crate) fn build_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error:
                 let _ = show_or_create_main_window(&handle);
             }
             "quit" => {
+                native_splash::close();
                 app.state::<AppLifecycle>()
                     .quit_requested
                     .store(true, Ordering::SeqCst);

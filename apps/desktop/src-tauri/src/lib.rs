@@ -9,6 +9,7 @@ mod hub;
 mod instruction_sync;
 mod lifecycle;
 mod model_pricing;
+mod native_splash;
 mod paths;
 mod project_updates;
 mod session_activity;
@@ -57,6 +58,7 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                native_splash::close();
                 // Destroy the WebView instead of merely hiding it. The tray
                 // process and Agent remain alive; opening the app recreates it.
                 window
@@ -79,6 +81,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            lifecycle::reveal_main_window,
             model_pricing::get_model_price_catalog,
             model_pricing::save_model_pricing_preferences,
             agent::start_agent,

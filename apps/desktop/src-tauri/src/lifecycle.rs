@@ -1,4 +1,4 @@
-use crate::{dashboard::spawn_dashboard_warmup, native_splash, state::AppLifecycle};
+use crate::{dashboard::spawn_dashboard_warmup, native_splash, settings, state::AppLifecycle};
 use std::{sync::atomic::Ordering, thread, time::Duration};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -45,7 +45,8 @@ pub(crate) fn show_or_create_main_window(app: &AppHandle) -> Result<(), String> 
     lifecycle
         .main_window_revealed
         .store(false, Ordering::SeqCst);
-    native_splash::show();
+    let is_dark = settings::resolve_is_dark(app);
+    native_splash::show(is_dark);
 
     let config = app
         .config()
@@ -58,6 +59,7 @@ pub(crate) fn show_or_create_main_window(app: &AppHandle) -> Result<(), String> 
     let handle_for_load = app.clone();
     let built = WebviewWindowBuilder::from_config(app, config)
         .and_then(|builder| {
+            let builder = builder.background_color(settings::canvas_color(is_dark));
             let builder = if cfg!(windows) {
                 builder.visible(false)
             } else {

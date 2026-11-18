@@ -120,6 +120,7 @@ pub fn run() {
             project_updates::open_project_page,
             settings::get_autostart_enabled,
             settings::set_autostart_enabled,
+            settings::set_theme_preference,
             hub::pair_hub_device,
             hub::list_hub_devices,
             hub::rename_hub_device,

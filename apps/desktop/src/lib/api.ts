@@ -78,6 +78,10 @@ export async function setAutostartEnabled(enabled: boolean): Promise<boolean> {
   return invoke<boolean>('set_autostart_enabled', { enabled });
 }
 
+export async function setThemePreference(mode: 'dark' | 'light' | 'system'): Promise<void> {
+  return invoke<void>('set_theme_preference', { mode });
+}
+
 
 export async function pairHubDevice(hubUrl: string, pairingCode: string, displayName: string): Promise<PairHubResult> {
   return invoke<PairHubResult>('pair_hub_device', { hubUrl, pairingCode, displayName });

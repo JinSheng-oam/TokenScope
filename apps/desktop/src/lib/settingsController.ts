@@ -1,5 +1,5 @@
 import { get, writable } from 'svelte/store';
-import { getAutostartEnabled, setAutostartEnabled } from './api';
+import { getAutostartEnabled, setAutostartEnabled, setThemePreference } from './api';
 import { applyTheme, getInitialTheme, initThemeListener, type ThemeMode } from './theme';
 
 const ROLLING_STORAGE_KEY = 'tokenscope.rollingNumbers';
@@ -54,6 +54,7 @@ function writeRollingNumbersEnabled(enabled: boolean): void {
 export type SettingsApi = {
   getAutostartEnabled: typeof getAutostartEnabled;
   setAutostartEnabled: typeof setAutostartEnabled;
+  setThemePreference?: typeof setThemePreference;
 };
 
 export type SettingsRuntime = {
@@ -75,7 +76,7 @@ export type SettingsControllerState = {
 export function createSettingsController(
   isRuntimeAvailable: () => boolean,
   runtime: SettingsRuntime = {
-    api: { getAutostartEnabled, setAutostartEnabled },
+    api: { getAutostartEnabled, setAutostartEnabled, setThemePreference },
     initialTheme: getInitialTheme,
     initThemeListener,
   },
@@ -97,6 +98,9 @@ export function createSettingsController(
   function setTheme(theme: ThemeMode) {
     applyTheme(theme);
     update({ theme });
+    if (isRuntimeAvailable()) {
+      void runtime.api.setThemePreference?.(theme).catch(() => {});
+    }
   }
 
   function toggleRollingNumbers() {

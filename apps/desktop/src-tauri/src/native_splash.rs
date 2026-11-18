@@ -372,6 +372,84 @@ mod platform {
         ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
     }
 
+    struct SplashPalette {
+        shadow_rgb: (u8, u8, u8),
+        shadow_base_alpha: u8,
+        shadow_step_alpha: u8,
+        card_bg: u32,
+        card_border: u32,
+        halo_outer_rgb: (u8, u8, u8),
+        halo_outer_alpha: f32,
+        halo_inner_rgb: (u8, u8, u8),
+        halo_inner_alpha: f32,
+        ring_track: u32,
+        ring_primary: u32,
+        ring_secondary: u32,
+        badge_bg: u32,
+        badge_border: u32,
+        bar_top: u32,
+        bar_bottom: u32,
+        title: u32,
+        subtitle: u32,
+        track_bg: u32,
+        beam_start: u32,
+        beam_end: u32,
+    }
+
+    impl SplashPalette {
+        fn for_theme(is_dark: bool) -> Self {
+            if is_dark {
+                Self {
+                    shadow_rgb: (3, 5, 10),
+                    shadow_base_alpha: 7,
+                    shadow_step_alpha: 4,
+                    card_bg: argb(252, 18, 22, 31),
+                    card_border: argb(30, 255, 255, 255),
+                    halo_outer_rgb: (94, 106, 210),
+                    halo_outer_alpha: 18.0,
+                    halo_inner_rgb: (142, 153, 243),
+                    halo_inner_alpha: 28.0,
+                    ring_track: argb(24, 255, 255, 255),
+                    ring_primary: argb(245, 142, 153, 243),
+                    ring_secondary: argb(145, 94, 106, 210),
+                    badge_bg: argb(255, 21, 25, 34),
+                    badge_border: argb(38, 255, 255, 255),
+                    bar_top: argb(255, 148, 160, 255),
+                    bar_bottom: argb(255, 94, 106, 210),
+                    title: argb(248, 243, 245, 248),
+                    subtitle: argb(220, 146, 158, 174),
+                    track_bg: argb(24, 255, 255, 255),
+                    beam_start: argb(180, 94, 106, 210),
+                    beam_end: argb(255, 165, 174, 255),
+                }
+            } else {
+                Self {
+                    shadow_rgb: (15, 23, 42),
+                    shadow_base_alpha: 5,
+                    shadow_step_alpha: 3,
+                    card_bg: argb(253, 255, 255, 255),
+                    card_border: argb(28, 15, 23, 42),
+                    halo_outer_rgb: (79, 91, 213),
+                    halo_outer_alpha: 13.0,
+                    halo_inner_rgb: (104, 115, 227),
+                    halo_inner_alpha: 18.0,
+                    ring_track: argb(22, 15, 23, 42),
+                    ring_primary: argb(245, 79, 91, 213),
+                    ring_secondary: argb(135, 116, 128, 234),
+                    badge_bg: argb(255, 246, 247, 249),
+                    badge_border: argb(26, 15, 23, 42),
+                    bar_top: argb(255, 104, 115, 227),
+                    bar_bottom: argb(255, 79, 91, 213),
+                    title: argb(248, 15, 23, 42),
+                    subtitle: argb(225, 82, 96, 113),
+                    track_bg: argb(22, 15, 23, 42),
+                    beam_start: argb(165, 116, 128, 234),
+                    beam_end: argb(255, 79, 91, 213),
+                }
+            }
+        }
+    }
+
     struct Canvas {
         screen_dc: HDC,
         mem_dc: HDC,
@@ -384,6 +462,7 @@ mod platform {
         height: i32,
         pos: POINT,
         scale: f32,
+        is_dark: bool,
         started: Instant,
         font_family: *mut c_void,
         title_font: *mut c_void,
@@ -392,7 +471,14 @@ mod platform {
     }
 
     impl Canvas {
-        unsafe fn new(hwnd: HWND, pos: POINT, width: i32, height: i32, scale: f32) -> Option<Self> {
+        unsafe fn new(
+            hwnd: HWND,
+            pos: POINT,
+            width: i32,
+            height: i32,
+            scale: f32,
+            is_dark: bool,
+        ) -> Option<Self> {
             let screen_dc = GetDC(0);
             let mem_dc = CreateCompatibleDC(screen_dc);
             if mem_dc == 0 {
@@ -504,6 +590,7 @@ mod platform {
                 height,
                 pos,
                 scale,
+                is_dark,
                 started: Instant::now(),
                 font_family,
                 title_font,
@@ -516,6 +603,7 @@ mod platform {
             let elapsed = self.started.elapsed().as_secs_f32();
             let fade = (elapsed / 0.14).clamp(0.0, 1.0);
             let s = self.scale;
+            let palette = SplashPalette::for_theme(self.is_dark);
             let _ = self.bits;
 
             GdipGraphicsClear(self.graphics, 0);
@@ -528,7 +616,8 @@ mod platform {
             // Layered soft elevation shadow
             for layer in 0..4 {
                 let expand = (4 - layer) as f32 * 3.2 * s;
-                let alpha = (7 + layer * 4) as u8;
+                let alpha = palette.shadow_base_alpha + layer as u8 * palette.shadow_step_alpha;
+                let (sr, sg, sb) = palette.shadow_rgb;
                 fill_round_rect(
                     self.graphics,
                     pad - expand * 0.5,
@@ -536,11 +625,11 @@ mod platform {
                     card_w + expand,
                     card_h + expand,
                     radius + expand * 0.35,
-                    argb(alpha, 3, 5, 10),
+                    argb(alpha, sr, sg, sb),
                 );
             }
 
-            // Card surface & subtle border matching Obsidian Studio (#12161F)
+            // Card surface & subtle border matching active theme
             fill_round_rect(
                 self.graphics,
                 pad,
@@ -548,7 +637,7 @@ mod platform {
                 card_w,
                 card_h,
                 radius,
-                argb(252, 18, 22, 31),
+                palette.card_bg,
             );
             stroke_round_rect(
                 self.graphics,
@@ -560,7 +649,7 @@ mod platform {
                 },
                 radius,
                 1.0 * s,
-                argb(30, 255, 255, 255),
+                palette.card_border,
             );
 
             let cx = pad + card_w * 0.5;
@@ -569,22 +658,24 @@ mod platform {
             // Breathing ambient indigo halo
             let glow_pulse = 0.72 + 0.28 * (elapsed * 2.1).sin();
             let halo_r = 68.0 * s;
+            let (hor, hog, hob) = palette.halo_outer_rgb;
             fill_ellipse(
                 self.graphics,
                 cx - halo_r,
                 cy - halo_r,
                 halo_r * 2.0,
                 halo_r * 2.0,
-                argb((18.0 * glow_pulse) as u8, 94, 106, 210),
+                argb((palette.halo_outer_alpha * glow_pulse) as u8, hor, hog, hob),
             );
             let halo_inner = 42.0 * s;
+            let (hir, hig, hib) = palette.halo_inner_rgb;
             fill_ellipse(
                 self.graphics,
                 cx - halo_inner,
                 cy - halo_inner,
                 halo_inner * 2.0,
                 halo_inner * 2.0,
-                argb((28.0 * glow_pulse) as u8, 142, 153, 243),
+                argb((palette.halo_inner_alpha * glow_pulse) as u8, hir, hig, hib),
             );
 
             // Outer orbital track
@@ -601,7 +692,7 @@ mod platform {
                 0.0,
                 360.0,
                 1.75 * s,
-                argb(24, 255, 255, 255),
+                palette.ring_track,
             );
 
             // Spinning precision arc (main + trailing accent)
@@ -612,7 +703,7 @@ mod platform {
                 angle,
                 96.0,
                 2.5 * s,
-                argb(245, 142, 153, 243),
+                palette.ring_primary,
             );
             draw_arc(
                 self.graphics,
@@ -620,7 +711,7 @@ mod platform {
                 angle + 180.0,
                 42.0,
                 2.0 * s,
-                argb(145, 94, 106, 210),
+                palette.ring_secondary,
             );
 
             // Center glass badge
@@ -634,7 +725,7 @@ mod platform {
                 badge_size,
                 badge_size,
                 12.0 * s,
-                argb(255, 21, 25, 34),
+                palette.badge_bg,
             );
             stroke_round_rect(
                 self.graphics,
@@ -646,7 +737,7 @@ mod platform {
                 },
                 12.0 * s,
                 1.0 * s,
-                argb(38, 255, 255, 255),
+                palette.badge_border,
             );
 
             // 3 animated telemetry equalizer bars inside the badge
@@ -668,8 +759,8 @@ mod platform {
                         height: bh,
                     },
                     bar_w * 0.5,
-                    argb(255, 148, 160, 255),
-                    argb(255, 94, 106, 210),
+                    palette.bar_top,
+                    palette.bar_bottom,
                 );
             }
 
@@ -688,7 +779,7 @@ mod platform {
                     self.title_font,
                     &rect,
                     self.str_format,
-                    argb(248, 243, 245, 248),
+                    palette.title,
                 );
             }
             if !self.subtitle_font.is_null() && !self.str_format.is_null() {
@@ -705,7 +796,7 @@ mod platform {
                     self.subtitle_font,
                     &rect,
                     self.str_format,
-                    argb(220, 146, 158, 174),
+                    palette.subtitle,
                 );
             }
 
@@ -721,7 +812,7 @@ mod platform {
                 track_w,
                 track_h,
                 track_h * 0.5,
-                argb(24, 255, 255, 255),
+                palette.track_bg,
             );
             let cycle = (elapsed / 1.2).fract();
             let eased = if cycle < 0.5 {
@@ -743,8 +834,8 @@ mod platform {
                         height: track_h,
                     },
                     track_h * 0.5,
-                    argb(180, 94, 106, 210),
-                    argb(255, 165, 174, 255),
+                    palette.beam_start,
+                    palette.beam_end,
                 );
             }
 
@@ -998,7 +1089,7 @@ mod platform {
         }
     }
 
-    fn run_splash_thread(generation: u64) {
+    fn run_splash_thread(generation: u64, is_dark: bool) {
         unsafe {
             let mut token: usize = 0;
             let startup = GdiplusStartupInput {
@@ -1069,7 +1160,7 @@ mod platform {
                 y: work.top + ((work.bottom - work.top) - height) / 2,
             };
 
-            let Some(canvas) = Canvas::new(hwnd, pos, width, height, scale) else {
+            let Some(canvas) = Canvas::new(hwnd, pos, width, height, scale, is_dark) else {
                 DestroyWindow(hwnd);
                 GdiplusShutdown(token);
                 return;
@@ -1112,7 +1203,7 @@ mod platform {
         }
     }
 
-    pub(crate) fn show() {
+    pub(crate) fn show(is_dark: bool) {
         let s = state();
         let _guard = s.lock.lock().ok();
         let previous_hwnd = s.hwnd.swap(0, Ordering::SeqCst);
@@ -1125,7 +1216,7 @@ mod platform {
         s.active.store(true, Ordering::SeqCst);
         let _ = thread::Builder::new()
             .name("tokenscope-splash".into())
-            .spawn(move || run_splash_thread(gen));
+            .spawn(move || run_splash_thread(gen, is_dark));
     }
 
     pub(crate) fn close() {
@@ -1144,12 +1235,12 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    pub(crate) fn show() {}
+    pub(crate) fn show(_is_dark: bool) {}
     pub(crate) fn close() {}
 }
 
-pub(crate) fn show() {
-    platform::show();
+pub(crate) fn show(is_dark: bool) {
+    platform::show(is_dark);
 }
 
 pub(crate) fn close() {

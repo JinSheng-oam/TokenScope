@@ -105,4 +105,23 @@ describe('settings controller', () => {
     settings.setRefreshInterval(12_345);
     expect(state(settings).refreshIntervalMs).toBe(15_000);
   });
+
+  it('syncs theme preference to desktop backend on mount and change', () => {
+    const api = {
+      getAutostartEnabled: vi.fn().mockResolvedValue(false),
+      setAutostartEnabled: vi.fn().mockResolvedValue(false),
+      setThemePreference: vi.fn().mockResolvedValue(undefined),
+    };
+    const settings = createSettingsController(() => true, {
+      api,
+      initialTheme: () => 'light',
+      initThemeListener: () => () => {},
+    });
+
+    settings.mount();
+    expect(api.setThemePreference).toHaveBeenCalledWith('light');
+
+    settings.setTheme('system');
+    expect(api.setThemePreference).toHaveBeenCalledWith('system');
+  });
 });

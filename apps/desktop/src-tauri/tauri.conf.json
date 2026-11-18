@@ -19,7 +19,6 @@
         "minWidth": 760,
         "minHeight": 500,
         "center": true,
-        "backgroundColor": "#0B0D11",
         "create": false,
         "dragDropEnabled": false,
         "visible": false

@@ -491,34 +491,13 @@
 <div class="custom-page" class:fit-workspace={!showShared && !showAiConfig && !showMcp}>
   <div class="page-header custom-heading">
     <h1>Agent 配置与技能管理</h1>
-    <div class="head-right-actions"><button class="ai-toggle-btn" class:active={showShared} aria-expanded={showShared} disabled={!runtimeAvailable} onclick={() => { if (showShared && sharedDirty && !window.confirm("放弃未保存的统一指令？")) return; showShared = !showShared; if (!showShared) sharedDirty = false; }}><span class="ai-status-dot" class:configured={sharedConfigured && !sharedDirty} class:dirty={sharedDirty}></span><span class="ai-btn-icon">{@html icons.edit}</span><span>统一指令</span></button>
-      <button
-        class="ai-toggle-btn"
-        class:active={showAiConfig}
-        onclick={() => showAiConfig = !showAiConfig}
-        title="配置用于 Skill 智能分析的 AI 模型 API"
-      >
-        <span class="ai-status-dot" class:configured={hasAiConfig}></span>
-        <span class="ai-btn-icon">{@html icons.sparkle}</span>
-        <span>AI 助手配置</span>
-      </button>
-      <button type="button" class="ai-toggle-btn" class:active={showMcp} aria-expanded={showMcp}
-        disabled={!runtimeAvailable} onclick={() => {
-          if (showMcp && mcpDirty && !window.confirm('放弃未保存的 MCP 修改？')) return;
-          showMcp = !showMcp;
-          if (!showMcp) mcpDirty = false;
-        }}>MCP 配置</button>
-      <span class="local-badge" title="普通指令与 Skill 仅操作本机文件；统一指令有独立同步设置">
-        {@html icons.shield}
-        <span>仅操作本机文件</span>
-      </span>
-    </div>
+    <span class="local-badge" title="普通指令与 Skill 仅操作本机文件；统一指令有独立同步设置">
+      {@html icons.shield}
+      <span>仅操作本机文件</span>
+    </span>
   </div>
 
-  {#if showShared}<SharedInstruction bind:unsaved={sharedDirty} bind:configured={sharedConfigured} source={selected?.kind === "instruction" ? content : null} onClose={() => { if (sharedDirty && !window.confirm("放弃未保存的统一指令？")) return; showShared = false; sharedDirty = false; }} />{/if}
-  <AgentAiConfig {runtimeAvailable} bind:showAiConfig bind:hasAiConfig bind:error bind:notice />
-
-  <div class="provider-tabs-wrap">
+  <div class="workspace-toolbar">
     <div class="provider-tabs" role="group" aria-label="选择工具">
       {#each providers as item}
         <button
@@ -533,7 +512,39 @@
         </button>
       {/each}
     </div>
+    <div class="configuration-actions">
+      <button class="ai-toggle-btn" class:active={showShared} aria-expanded={showShared}
+        disabled={!runtimeAvailable} onclick={() => {
+          if (showShared && sharedDirty && !window.confirm('放弃未保存的统一指令？')) return;
+          showShared = !showShared;
+          if (!showShared) sharedDirty = false;
+        }}>
+        <span class="ai-status-dot" class:configured={sharedConfigured && !sharedDirty} class:dirty={sharedDirty}></span>
+        <span class="ai-btn-icon">{@html icons.edit}</span>
+        <span>统一指令</span>
+      </button>
+      <button
+        class="ai-toggle-btn"
+        class:active={showAiConfig}
+        aria-expanded={showAiConfig}
+        onclick={() => showAiConfig = !showAiConfig}
+        title="配置用于 Skill 智能分析的 AI 模型 API"
+      >
+        <span class="ai-status-dot" class:configured={hasAiConfig}></span>
+        <span class="ai-btn-icon">{@html icons.sparkle}</span>
+        <span>AI 助手配置</span>
+      </button>
+      <button type="button" class="ai-toggle-btn" class:active={showMcp} aria-expanded={showMcp}
+        disabled={!runtimeAvailable} onclick={() => {
+          if (showMcp && mcpDirty && !window.confirm('放弃未保存的 MCP 修改？')) return;
+          showMcp = !showMcp;
+          if (!showMcp) mcpDirty = false;
+        }}>MCP 配置</button>
+    </div>
   </div>
+
+  {#if showShared}<SharedInstruction bind:unsaved={sharedDirty} bind:configured={sharedConfigured} source={selected?.kind === "instruction" ? content : null} onClose={() => { if (sharedDirty && !window.confirm("放弃未保存的统一指令？")) return; showShared = false; sharedDirty = false; }} />{/if}
+  <AgentAiConfig {runtimeAvailable} bind:showAiConfig bind:hasAiConfig bind:error bind:notice />
 
   {#if showMcp && runtimeAvailable}
     {#key provider}
@@ -554,8 +565,7 @@
     <div class="workspace">
       <AgentFileCatalog {instructions} {skills} {selected} {busy} {refresh} {select} {beginCreateInstruction} {beginImport} {beginCreate} />
 
-      <!-- Editor Area (Right Column) -->
-      <section class="editor" class:has-selection={selected} aria-label="文件编辑器">
+      <section class="editor" aria-label="文件编辑器">
         {#if importing}
           <AgentSkillImport {provider} {providerRootOptions} bind:skillRoot bind:busy bind:error
             onInstall={(items) => { entries = items; importing = false; notice = "安装成功；选择左侧 skill 可查看或检查更新。"; }}
@@ -726,7 +736,7 @@
         {:else}
           <div class="editor-empty">
             <div class="empty-icon-box">{@html icons.tools}</div>
-            <h2>选择文件开始编辑</h2>
+            <h2>从文件列表选择指令或 Skill</h2>
           </div>
         {/if}
       </section>
@@ -740,43 +750,44 @@
     margin: 0 auto;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--page-heading-gap, 14px);
   }
 
   .custom-heading {
-    margin-bottom: calc(var(--page-heading-gap) - 12px);
+    margin-bottom: 0;
   }
 
-  .head-right-actions {
+  .configuration-actions {
     display: flex;
     align-items: center;
-    gap: 10px;
-    flex-shrink: 0;
+    flex-wrap: wrap;
+    gap: 4px;
   }
 
   .ai-toggle-btn {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    height: 32px;
-    padding: 0 12px;
+    min-height: 32px;
+    padding: 0 8px;
+    white-space: nowrap;
     font-size: 12px;
     font-weight: 500;
     color: var(--text-primary);
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
+    background: transparent;
+    border: 1px solid transparent;
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition: all var(--transition-fast);
   }
 
-  .ai-toggle-btn:hover {
+  .ai-toggle-btn:hover:not(:disabled) {
     border-color: var(--border-default);
     background: var(--bg-card-hover);
   }
 
   .ai-toggle-btn.active {
-    color: var(--brand-strong);
+    color: var(--brand-text);
     background: var(--brand-subtle);
     border-color: var(--brand-border);
   }
@@ -791,12 +802,10 @@
 
   .ai-status-dot.configured {
     background: var(--color-exact);
-    box-shadow: 0 0 6px var(--color-exact);
   }
 
   .ai-status-dot.dirty {
     background: var(--color-estimated);
-    box-shadow: none;
   }
 
   .ai-btn-icon {
@@ -814,14 +823,9 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    height: 26px;
-    padding: 0 9px;
     font-size: 11px;
     font-weight: 500;
     color: var(--text-secondary);
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-subtle);
-    border-radius: 999px;
     white-space: nowrap;
   }
 
@@ -831,26 +835,27 @@
     color: var(--color-exact);
   }
 
-  /* Provider Segmented Capsule */
-  .provider-tabs-wrap {
+  .workspace-toolbar {
     display: flex;
     align-items: center;
-    margin-bottom: 2px;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    padding: 6px 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
   }
 
   .provider-tabs {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    padding: 2px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
   }
 
   .provider-tab-btn {
-    min-height: 28px;
-    padding: 3px 12px;
+    min-height: 32px;
+    padding: 3px 10px;
     border: 1px solid transparent;
     background: transparent;
     border-radius: var(--radius-xs);
@@ -873,11 +878,9 @@
   }
 
   .provider-tab-btn.selected {
-    background: var(--bg-card);
-    color: var(--brand-primary);
-    border-color: var(--border-subtle);
-    font-weight: 600;
-    box-shadow: var(--shadow-card);
+    background: var(--brand-subtle);
+    color: var(--brand-text);
+    border-color: var(--brand-border);
   }
 
   .provider-tab-btn:disabled {
@@ -888,29 +891,29 @@
   /* Workspace Layout */
   .workspace {
     display: grid;
-    grid-template-columns: clamp(245px, 30%, 290px) minmax(0, 1fr);
+    grid-template-columns: clamp(220px, 36%, 336px) minmax(0, 1fr);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
     background: var(--bg-card);
-    min-height: 560px;
+    min-height: 360px;
     overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
   }
 
-  /* Editor Area (Right Column) */
   .editor {
     display: flex;
     min-width: 0;
+    min-height: 0;
     flex-direction: column;
+    overflow: auto;
     background: var(--bg-card);
   }
 
   .editor-head {
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 16px;
-    padding: 14px 18px;
+    flex-direction: column;
+    flex-shrink: 0;
+    gap: 12px;
+    padding: 14px 16px;
     border-bottom: 1px solid var(--border-subtle);
     background: var(--bg-card);
   }
@@ -934,15 +937,15 @@
     letter-spacing: -0.01em;
     color: var(--text-primary);
     margin: 0;
-    word-break: break-all;
+    overflow-wrap: anywhere;
     line-height: 1.3;
   }
 
   .editor-badges {
     display: inline-flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 6px;
-    flex-shrink: 0;
   }
 
   .editor-path-row {
@@ -968,11 +971,11 @@
   .editor-path {
     font-family: var(--font-mono, monospace);
     font-size: 11px;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 520px;
+    min-width: 0;
     line-height: 1.4;
   }
 
@@ -1009,7 +1012,10 @@
     gap: 6px;
     flex-shrink: 0;
     flex-wrap: wrap;
-    justify-content: flex-end;
+  }
+
+  .editor-actions:empty {
+    display: none;
   }
 
   .btn-action {
@@ -1024,7 +1030,7 @@
   }
 
   .ai-action-btn {
-    color: var(--brand-strong);
+    color: var(--brand-text);
     background: var(--brand-subtle);
     border-color: var(--brand-border);
   }
@@ -1046,6 +1052,7 @@
   }
 
   .btn-save {
+    margin-inline-start: auto;
     height: 28px;
     padding: 0 14px;
     font-size: 11.5px;
@@ -1071,7 +1078,7 @@
     justify-content: center;
     background: var(--bg-secondary);
     border: 1px solid var(--border-subtle);
-    border-radius: 50%;
+    border-radius: var(--radius-md);
     color: var(--text-muted);
     margin-bottom: 4px;
   }
@@ -1091,7 +1098,8 @@
     font-size: 11.5px;
     padding: 8px 14px;
     border-radius: var(--radius-sm);
-    margin-bottom: 8px;
+    margin: 0;
+    overflow-wrap: anywhere;
     border: 1px solid var(--border-subtle);
   }
 
@@ -1107,23 +1115,28 @@
     border-color: var(--color-exact-border);
   }
 
-  @media (min-width: 901px) and (min-height: 620px) {
-    .fit-workspace {
-      height: calc(100vh - 82px);
-      min-height: 520px;
-    }
-    .fit-workspace .workspace {
-      flex: 1;
-      min-height: 0;
-      grid-template-rows: minmax(0, 1fr);
-    }
-    .fit-workspace .editor { min-height: 0; }
-    .fit-workspace .editor.has-selection { overflow: hidden; }
+  .fit-workspace {
+    height: 100%;
   }
 
-  @media (max-width: 900px) {
+  .fit-workspace .workspace {
+    flex: 1;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  @media (max-height: 600px) {
+    .fit-workspace .workspace {
+      min-height: 300px;
+    }
+  }
+
+  @media (max-width: 640px) {
     .workspace {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .fit-workspace .workspace {
+      grid-template-rows: auto minmax(260px, 1fr);
     }
   }
 </style>

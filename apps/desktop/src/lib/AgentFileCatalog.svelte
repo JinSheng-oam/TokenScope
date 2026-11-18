@@ -12,28 +12,42 @@
   export let beginImport: () => void;
   export let beginCreate: () => void;
 
-  let filterQuery = "";
+  const categories = [
+    { id: 'all', label: '全部' },
+    { id: 'instruction', label: '指令' },
+    { id: 'skill', label: 'Skills' },
+  ] as const;
+
+  let category: (typeof categories)[number]['id'] = 'all';
+  let filterQuery = '';
+  let list: HTMLDivElement;
+  $: query = filterQuery.trim().toLowerCase();
   $: filteredInstructions = instructions.filter(
     (entry) => (entry.exists || !entry.instructionEntry)
-      && (!filterQuery.trim() || entry.id.name.toLowerCase().includes(filterQuery.toLowerCase().trim()))
+      && entry.id.name.toLowerCase().includes(query)
   );
-  $: filteredSkills = skills.filter(
-    (entry) => !filterQuery.trim() || entry.id.name.toLowerCase().includes(filterQuery.toLowerCase().trim())
-  );
+  $: filteredSkills = skills.filter((entry) => entry.id.name.toLowerCase().includes(query));
+  $: resultCount = (category === 'skill' ? 0 : filteredInstructions.length)
+    + (category === 'instruction' ? 0 : filteredSkills.length);
   $: userSkills = filteredSkills.filter((entry) => !entry.builtin);
   $: builtinSkills = filteredSkills.filter((entry) => entry.builtin);
   $: skillGroups = [
     { label: '用户安装的 Skills', entries: userSkills, builtin: false },
     { label: 'Agent 自带的 Skills', entries: builtinSkills, builtin: true },
   ];
+
+  function selectCategory(next: typeof category) {
+    if (category === next) return;
+    category = next;
+    list.scrollTop = 0;
+  }
 </script>
 
-  <!-- Catalog (Left Column) -->
   <section class="catalog" aria-label="文件列表">
     <div class="catalog-head">
       <div class="catalog-head-left">
         <strong>文件列表</strong>
-        <span class="catalog-total-pill">{instructions.length + skills.length} 项</span>
+        <span class="catalog-total-pill">{resultCount} 项</span>
       </div>
       <button
         class="btn-icon-refresh"
@@ -64,17 +78,34 @@
           onclick={() => filterQuery = ''}
           title="清除搜索"
           aria-label="清除搜索"
-        >✕</button>
+        >{@html icons.close}</button>
       {/if}
     </div>
 
-    <div class="catalog-items">
-      <div class="group-title instructions-head">
+    <div class="catalog-filters" role="group" aria-label="筛选文件类型">
+      {#each categories as item (item.id)}
+        <button type="button" class="catalog-filter" aria-pressed={category === item.id}
+          onclick={() => selectCategory(item.id)}>{item.label}</button>
+      {/each}
+    </div>
+
+    <div class="catalog-actions" role="group" aria-label="添加文件">
+      {#if category !== 'skill'}
+        <button class="btn-ghost-sm" disabled={busy} onclick={beginCreateInstruction}>新建指令</button>
+      {/if}
+      {#if category !== 'instruction'}
+        <button class="btn-ghost-sm" disabled={busy} onclick={beginCreate}>新建 Skill</button>
+        <button class="btn-ghost-sm" disabled={busy} onclick={beginImport}>导入 Skill</button>
+      {/if}
+    </div>
+
+    <div class="catalog-items" bind:this={list}>
+      {#if category !== 'skill'}
+      <div class="group-title">
         <div class="group-title-left">
           <span>指令文件</span>
           <span class="count-badge">{filteredInstructions.length}</span>
         </div>
-        <button class="btn-ghost-sm" disabled={busy} onclick={beginCreateInstruction} aria-label="新建指令">新建</button>
       </div>
 
       {#each filteredInstructions as entry}
@@ -83,6 +114,7 @@
           type="button"
           class="file-row"
           class:active={selected?.id.root === entry.id.root && selected?.id.name === entry.id.name}
+          aria-current={selected?.id.root === entry.id.root && selected?.id.name === entry.id.name ? 'true' : undefined}
           disabled={busy || !entry.editable}
           title={info.detail}
           aria-label={`${entry.id.name}，${info.label}。${info.detail}`}
@@ -105,23 +137,17 @@
           <span class="file-sub-root">{instructionRootLabel(entry.id.root)} · {entry.exists ? '已保存' : '未创建'}</span>
         </button>
       {:else}
-        {#if filterQuery}
-          <p class="empty-list">未匹配到指令</p>
-        {/if}
+        <p class="empty-list">{query ? '未匹配到指令' : '暂无指令文件'}</p>
       {/each}
+      {/if}
 
+      {#if category !== 'instruction'}
       {#each skillGroups as group (group.label)}
-      <div class="group-title skills-head">
+      <div class="group-title">
         <div class="group-title-left">
           <span>{group.label}</span>
           <span class="count-badge">{group.entries.length}</span>
         </div>
-        {#if !group.builtin}
-        <div class="catalog-actions">
-          <button class="btn-ghost-sm" disabled={busy} onclick={beginImport} aria-label="添加 Skill">添加</button>
-          <button class="btn-ghost-sm" disabled={busy} onclick={beginCreate} aria-label="新建 Skill">新建</button>
-        </div>
-        {/if}
       </div>
 
       {#each group.entries as entry}
@@ -129,6 +155,7 @@
           type="button"
           class="file-row"
           class:active={selected?.id.root === entry.id.root && selected?.id.name === entry.id.name}
+          aria-current={selected?.id.root === entry.id.root && selected?.id.name === entry.id.name ? 'true' : undefined}
           class:row-disabled={!entry.enabled}
           disabled={busy || (!entry.editable && !entry.builtin)}
           title={(entry.editable || entry.builtin) ? (entry.path || entry.builtin_description) : '符号链接请在原位置管理'}
@@ -157,14 +184,14 @@
           <span class="file-sub-root">{(entry.editable || entry.builtin) ? instructionRootLabel(entry.id.root) : '无法访问目标文件'}</span>
         </button>
       {:else}
-        <p class="empty-list">{filterQuery ? '未匹配到相关 Skill' : group.builtin ? '未发现可识别的自带 Skill。' : '尚未发现用户安装的 Skill。'}</p>
+        <p class="empty-list">{query ? '未匹配到相关 Skill' : group.builtin ? '未发现可识别的自带 Skill。' : '尚未发现用户安装的 Skill。'}</p>
       {/each}
       {/each}
+      {/if}
     </div>
   </section>
 
 <style>
-  /* Catalog (Left Column) */
   .catalog {
     border-right: 1px solid var(--border-subtle);
     min-width: 0;
@@ -173,27 +200,57 @@
     max-height: 70vh;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    background: var(--bg-card);
+    gap: 8px;
+    background: var(--bg-elevated);
   }
 
   .catalog-items {
     min-height: 0;
-    padding: 2px 3px 2px 2px;
+    padding: 4px 3px 2px 2px;
+    border-top: 1px solid var(--border-subtle);
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: var(--border-strong) transparent;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 2px;
   }
 
   .catalog-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .catalog-filters {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+  }
+
+  .catalog-filter {
+    flex: 1;
+    min-height: 28px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .catalog-filter:hover {
+    color: var(--text-primary);
+  }
+
+  .catalog-filter[aria-pressed='true'] {
+    background: var(--bg-card);
+    border-color: var(--border-subtle);
+    color: var(--brand-text);
+    font-weight: 600;
   }
 
   .catalog-head-left {
@@ -280,6 +337,11 @@
     background: var(--bg-card);
   }
 
+  .catalog-search-input::placeholder {
+    color: var(--text-secondary);
+    opacity: 1;
+  }
+
   .search-clear-btn {
     position: absolute;
     right: 4px;
@@ -290,7 +352,6 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 10px;
     border: none;
     background: transparent;
     color: var(--text-muted);
@@ -301,15 +362,20 @@
     color: var(--text-primary);
   }
 
+  .search-clear-btn :global(svg) {
+    width: 14px;
+    height: 14px;
+  }
+
   .group-title {
     flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-top: 8px;
-    margin-bottom: 2px;
-    font-size: 11px;
-    color: var(--text-muted);
+    margin-top: 6px;
+    padding: 4px 8px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
     font-weight: 600;
   }
 
@@ -339,9 +405,9 @@
     font: inherit;
     font-size: 10.5px;
     font-weight: 500;
-    color: var(--brand-strong);
-    background: var(--brand-subtle);
-    border: 1px solid var(--brand-border);
+    color: var(--text-secondary);
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition: all var(--transition-fast);
@@ -349,20 +415,20 @@
   }
 
   .btn-ghost-sm:hover:not(:disabled) {
-    background: var(--brand-primary);
-    color: #fff;
-    border-color: var(--brand-primary);
+    background: var(--brand-subtle);
+    color: var(--brand-text);
+    border-color: var(--brand-border);
   }
 
   .catalog-actions {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 4px;
   }
 
   .file-row {
     flex-shrink: 0;
-    position: relative;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
@@ -373,30 +439,19 @@
     border-radius: var(--radius-xs);
     background: transparent;
     color: var(--text-primary);
-    padding: 7px 8px;
+    padding: 6px 8px;
     cursor: pointer;
     transition: all var(--transition-fast);
   }
 
-  .file-row:hover {
+  .file-row:hover:not(:disabled) {
     background: var(--bg-secondary);
     border-color: var(--border-subtle);
   }
 
   .file-row.active {
-    background: var(--bg-secondary);
+    background: var(--brand-subtle);
     border-color: var(--brand-border);
-  }
-
-  .file-row.active::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 6px;
-    bottom: 6px;
-    width: 3px;
-    background: var(--brand-primary);
-    border-radius: 0 2px 2px 0;
   }
 
   .file-row:disabled {
@@ -459,7 +514,7 @@
 
   .file-sub-root {
     font-size: 10.5px;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     padding-left: 21px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -476,32 +531,20 @@
 
   .empty-list {
     font-size: 11px;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     padding: 10px 4px;
     text-align: center;
     margin: 0;
   }
 
-  .btn-danger {
-    color: #ef4444;
-    border-color: rgba(239, 68, 68, 0.28);
-    background: rgba(239, 68, 68, 0.06);
-  }
+  :global(.fit-workspace) .catalog { max-height: none; }
 
-  .btn-danger:hover:not(:disabled) {
-    border-color: rgba(239, 68, 68, 0.5);
-    background: rgba(239, 68, 68, 0.12);
-  }
-
-  @media (min-width: 901px) and (min-height: 620px) {
-    :global(.fit-workspace) .catalog { max-height: none; }
-  }
-
-  @media (max-width: 900px) {
-    .catalog {
+  @media (max-width: 640px) {
+    .catalog,
+    :global(.fit-workspace) .catalog {
       border-right: none;
       border-bottom: 1px solid var(--border-subtle);
-      max-height: 280px;
+      max-height: 320px;
     }
   }
 </style>

@@ -559,7 +559,7 @@
     <!-- Topbar -->
     <DashboardTopbar {activeTabLabel} {deviceScope} {deviceScopeLabel} {selectableRemoteDevices} {snapshot}
       {range} {todayIso} {customStart} {customEnd}
-      {refreshing} {selectDeviceScope} {handleSelectRange} {applyCustomRange} {loadDashboard} showControls={activeTab !== 'pricing'}
+      {refreshing} {selectDeviceScope} {handleSelectRange} {applyCustomRange} {loadDashboard} showControls={activeTab !== 'pricing' && activeTab !== 'customizations'}
       {isEditingOverviewLayout}
       onToggleOverviewLayout={() => (isEditingOverviewLayout = !isEditingOverviewLayout)}
     />
@@ -567,12 +567,12 @@
     <!-- Page Content Area -->
     <section
       class="page-content"
-      class:fit-viewport={loading && activeTab !== 'pricing'}
+      class:fit-viewport={loading && activeTab !== 'pricing' && activeTab !== 'customizations'}
       class:overview-page={activeTab === 'overview' && !loading}
-      class:compact-page={activeTab === 'models' || activeTab === 'pricing' || activeTab === 'projects'}
+      class:compact-page={activeTab === 'models' || activeTab === 'pricing' || activeTab === 'projects' || activeTab === 'customizations'}
       class:compact-session={activeTab === 'sessions' && ($sessionState.pageSize <= 7 || ($sessionState.loading && !$sessionState.analysis))}
     >
-      {#if errorMessage && activeTab !== 'pricing'}
+      {#if errorMessage && activeTab !== 'pricing' && activeTab !== 'customizations'}
         <div class="notice-box" role="alert">
           {@html icons.alert}
           <p>{errorMessage}</p>

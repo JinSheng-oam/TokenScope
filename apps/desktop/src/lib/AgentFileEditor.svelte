@@ -52,7 +52,7 @@
   /* Textarea Editor Box */
   .editor-textarea-wrap {
     flex: 1;
-    min-height: 380px;
+    min-height: 280px;
     display: flex;
     flex-direction: column;
     background: var(--bg-secondary);
@@ -62,7 +62,7 @@
     flex: 1;
     width: 100%;
     height: 100%;
-    min-height: 380px;
+    min-height: 0;
     resize: none;
     padding: 16px;
     border: none;
@@ -73,9 +73,17 @@
     tab-size: 2;
   }
 
+  textarea:focus-visible {
+    outline: 2px solid var(--brand-primary);
+    outline-offset: -2px;
+  }
+
   /* Editor Footer Status Bar */
   .editor-foot {
     display: flex;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    gap: 4px 12px;
     align-items: center;
     justify-content: space-between;
     padding: 7px 18px;
@@ -137,8 +145,7 @@
     background: currentColor;
   }
 
-  @media (min-width: 901px) and (min-height: 620px) {
-    :global(.fit-workspace .editor.has-selection) .editor-textarea-wrap,
-    :global(.fit-workspace .editor.has-selection) textarea { min-height: 0; }
+  :global(.fit-workspace) .editor-textarea-wrap {
+    min-height: 160px;
   }
 </style>

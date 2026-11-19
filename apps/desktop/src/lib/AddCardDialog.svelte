@@ -30,6 +30,16 @@
         return icons.projects;
       case 'quotas':
         return icons.quota;
+      case 'cost':
+        return icons.pricing;
+      case 'efficiency':
+        return icons.zap;
+      case 'devices':
+        return icons.devices;
+      case 'activity':
+        return icons.arrowUpRight;
+      case 'resets':
+        return icons.quota;
       default:
         return icons.layout;
     }
@@ -62,7 +72,7 @@
           <p>选择要放置在「使用总览」的数据模块</p>
         </div>
       </div>
-      <button class="icon-btn" aria-label="关闭弹窗" onclick={onClose}>
+      <button type="button" class="icon-btn" aria-label="关闭弹窗" onclick={onClose}>
         {@html icons.close}
       </button>
     </div>

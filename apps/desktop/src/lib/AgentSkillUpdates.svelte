@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { confirmDialog } from "./dialogStore";
   import type { Entry } from "./agentCustomizationEntries";
   import type { UpdateInfo } from "./agentSkillSourceTypes";
 
@@ -62,7 +63,7 @@
   async function applyUpdate() {
     if (!updateInfo || dirty) return;
     const msg = updateInfo.kind === 'manager' ? 'Skills Manager 更新可能覆盖该 skill 的本地修改，也会影响引用同一目标的其他工具。继续更新？' : '将从来源更新此 skill；更新前会再次检查本地文件是否被修改。继续？';
-    if (!window.confirm(msg)) return;
+    if (!(await confirmDialog({ title: '确认更新 Skill', message: msg, confirmText: '继续更新' }))) return;
     busy = true; error = ''; notice = '';
     try {
       notice = await invoke<string>('update_skill_source', { id: selected.id });
@@ -87,12 +88,12 @@
     </div>
     <div class="update-actions">
       {#if updateInfo.status === 'unsupported' && selected.kind === 'skill'}
-        <button class="btn-primary btn-compact" disabled={busy} onclick={() => void beginAdoptSkill()}>
+        <button type="button" class="btn-primary btn-compact" disabled={busy} onclick={() => void beginAdoptSkill()}>
           纳入更新管理
         </button>
       {/if}
       {#if updateInfo.kind === 'manager' || updateInfo.status === 'available'}
-        <button class="btn-secondary btn-compact" disabled={busy} onclick={() => void applyUpdate()}>
+        <button type="button" class="btn-secondary btn-compact" disabled={busy} onclick={() => void applyUpdate()}>
           更新 skill
         </button>
       {/if}
@@ -104,7 +105,7 @@
   <div class="adopt-panel">
     <div class="adopt-title">
       <strong>🔗 纳入更新管理 (绑定来源仓库)</strong>
-      <button class="btn-compact" onclick={() => adopting = false}>✕</button>
+      <button type="button" class="btn-compact" onclick={() => adopting = false}>✕</button>
     </div>
     <div class="adopt-form">
       <label for="adopt-source">GitHub 仓库或 skills.sh 地址：</label>
@@ -114,14 +115,14 @@
         placeholder="https://github.com/owner/repo"
       />
       <div class="adopt-buttons">
-        <button
+        <button type="button"
           class="btn-primary"
           disabled={adoptingBusy || !adoptSourceInput.trim()}
           onclick={() => void confirmAdoptSkill()}
         >
           {adoptingBusy ? '正在拉取验证并绑定…' : '确认纳管'}
         </button>
-        <button class="btn-secondary" onclick={() => adopting = false}>取消</button>
+        <button type="button" class="btn-secondary" onclick={() => adopting = false}>取消</button>
       </div>
     </div>
   </div>

@@ -6,6 +6,7 @@ import {
   renameHubDevice,
   rotateHubDeviceToken,
 } from './api';
+import { confirmDialog } from './dialogStore';
 import type { RemoteDevice } from './types';
 
 export type HubApi = {
@@ -19,7 +20,7 @@ export type HubApi = {
 export type HubRuntime = {
   api: HubApi;
   storage: Pick<Storage, 'getItem' | 'setItem'>;
-  confirm: (message: string) => boolean;
+  confirm: (message: string) => Promise<boolean> | boolean;
 };
 
 const HUB_ORIGIN_KEY = 'tokenscope.hubUrl';
@@ -57,7 +58,7 @@ export function createHubController(
       disconnectHubDevice,
     },
     storage: window.localStorage,
-    confirm: (message) => window.confirm(message),
+    confirm: (message) => confirmDialog({ title: 'Hub 安全确认', message, tone: 'danger', confirmText: '确认执行' }),
   },
 ) {
   const state = writable<HubControllerState>({ ...INITIAL_STATE });
@@ -137,7 +138,7 @@ export function createHubController(
 
   async function rotateCredential() {
     const current = get(state);
-    if (current.busy || !isRuntimeAvailable() || !runtime.confirm('轮换后旧设备凭证立即失效。确定继续吗？')) return;
+    if (current.busy || !isRuntimeAvailable() || !(await runtime.confirm('轮换后旧设备凭证立即失效。确定继续吗？'))) return;
     await runAction(async (latest) => {
       const hubUrl = latest.hubUrl.trim();
       await runtime.api.rotateHubDeviceToken(hubUrl);
@@ -149,7 +150,7 @@ export function createHubController(
 
   async function disconnect() {
     const current = get(state);
-    if (current.busy || !isRuntimeAvailable() || !runtime.confirm('这只会删除本机保存的 Hub 凭证。确定断开吗？')) return;
+    if (current.busy || !isRuntimeAvailable() || !(await runtime.confirm('这只会删除本机保存的 Hub 凭证。确定断开吗？'))) return;
     await runAction(async (latest) => {
       await runtime.api.disconnectHubDevice(latest.hubUrl.trim());
       update({

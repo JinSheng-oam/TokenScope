@@ -8,9 +8,9 @@
   export let busy: boolean;
   export let refresh: () => Promise<void>;
   export let select: (entry: Entry) => Promise<void>;
-  export let beginCreateInstruction: () => void;
-  export let beginImport: () => void;
-  export let beginCreate: () => void;
+  export let beginCreateInstruction: () => void | Promise<void>;
+  export let beginImport: () => void | Promise<void>;
+  export let beginCreate: () => void | Promise<void>;
 
   const categories = [
     { id: 'all', label: '全部' },
@@ -49,7 +49,7 @@
         <strong>文件列表</strong>
         <span class="catalog-total-pill">{resultCount} 项</span>
       </div>
-      <button
+      <button type="button"
         class="btn-icon-refresh"
         disabled={busy}
         onclick={() => void refresh()}
@@ -91,11 +91,11 @@
 
     <div class="catalog-actions" role="group" aria-label="添加文件">
       {#if category !== 'skill'}
-        <button class="btn-ghost-sm" disabled={busy} onclick={beginCreateInstruction}>新建指令</button>
+        <button type="button" class="btn-ghost-sm" disabled={busy} onclick={beginCreateInstruction}>新建指令</button>
       {/if}
       {#if category !== 'instruction'}
-        <button class="btn-ghost-sm" disabled={busy} onclick={beginCreate}>新建 Skill</button>
-        <button class="btn-ghost-sm" disabled={busy} onclick={beginImport}>导入 Skill</button>
+        <button type="button" class="btn-ghost-sm" disabled={busy} onclick={beginCreate}>新建 Skill</button>
+        <button type="button" class="btn-ghost-sm" disabled={busy} onclick={beginImport}>导入 Skill</button>
       {/if}
     </div>
 

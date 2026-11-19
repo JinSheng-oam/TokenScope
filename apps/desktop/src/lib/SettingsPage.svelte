@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import ProjectAbout from './ProjectAbout.svelte';
 import { BOOTSTRAP_STAGE } from '../lib/status';
   import { formatNumber } from '../lib/format';
@@ -28,8 +28,13 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
   let diagnosticsBusy = false;
   let diagnosticsError = '';
   let diagnosticsCopied = false;
+  let diagnosticsCopyTimer: ReturnType<typeof setTimeout> | undefined;
 
   onMount(() => { void onRefreshAutostart(); });
+
+  onDestroy(() => {
+    if (diagnosticsCopyTimer !== undefined) clearTimeout(diagnosticsCopyTimer);
+  });
 
   const refreshOptions = REFRESH_INTERVAL_OPTIONS.map((value) => ({
     value,
@@ -60,7 +65,11 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
     try {
       await navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2));
       diagnosticsCopied = true;
-      window.setTimeout(() => (diagnosticsCopied = false), 1800);
+      if (diagnosticsCopyTimer !== undefined) clearTimeout(diagnosticsCopyTimer);
+      diagnosticsCopyTimer = setTimeout(() => {
+        diagnosticsCopied = false;
+        diagnosticsCopyTimer = undefined;
+      }, 1800);
     } catch (error) {
       diagnosticsError = `复制诊断报告失败：${error instanceof Error ? error.message : String(error)}`;
     }
@@ -110,7 +119,7 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
         </div>
       </div>
       <div class="theme-options" role="group" aria-label="应用主题">
-        <button
+        <button type="button"
           class="theme-option"
           class:selected={currentTheme === 'dark'}
           aria-pressed={currentTheme === 'dark'}
@@ -119,7 +128,7 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
           {@html icons.moon}
           <span><strong>深色</strong><small>Obsidian</small></span>
         </button>
-        <button
+        <button type="button"
           class="theme-option"
           class:selected={currentTheme === 'light'}
           aria-pressed={currentTheme === 'light'}
@@ -128,7 +137,7 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
           {@html icons.sun}
           <span><strong>浅色</strong><small>Soft Zinc</small></span>
         </button>
-        <button
+        <button type="button"
           class="theme-option"
           class:selected={currentTheme === 'system'}
           aria-pressed={currentTheme === 'system'}
@@ -143,7 +152,7 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
           <strong>核心指标数字滚动动效</strong>
           <p>数值更新时显示平滑过渡动画。</p>
         </div>
-        <button
+        <button type="button"
           class="btn-secondary"
           class:selected={rollingNumbersEnabled}
           aria-pressed={rollingNumbersEnabled}
@@ -164,7 +173,7 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
       </div>
       <div class="refresh-options" role="group" aria-label="数据更新速率">
         {#each refreshOptions as option}
-          <button
+          <button type="button"
             class="btn-secondary"
             class:selected={refreshIntervalMs === option.value}
             aria-pressed={refreshIntervalMs === option.value}
@@ -203,7 +212,7 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
     {#if autostartError}
       <div class="autostart-error" role="alert">
         <span>{autostartError}</span>
-        <button class="btn-secondary" disabled={autostartBusy} onclick={() => void onRefreshAutostart()}>重新读取</button>
+        <button type="button" class="btn-secondary" disabled={autostartBusy} onclick={() => void onRefreshAutostart()}>重新读取</button>
       </div>
     {/if}
   </section>
@@ -251,7 +260,7 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
         <h2>系统诊断</h2>
         <p>检查数据库、磁盘空间和采集组件，并生成可复制的诊断报告。</p>
       </div>
-      <button
+      <button type="button"
         class="btn-primary"
         disabled={diagnosticsBusy || !runtimeAvailable}
         onclick={() => void runDiagnostics()}
@@ -268,7 +277,7 @@ import { BOOTSTRAP_STAGE } from '../lib/status';
               <div class="diagnostic-summary">
                 <span class="diagnostic-badge {diagnostics.overall}">{severityLabel(diagnostics.overall)}</span>
                 <span>{diagnostics.checks.length} 项检查 · 生成于 {formatTime(diagnostics.generated_at_ms)}</span>
-                <button class="btn-secondary diagnostic-copy" onclick={() => void copyDiagnostics()}>
+                <button type="button" class="btn-secondary diagnostic-copy" onclick={() => void copyDiagnostics()}>
                   {diagnosticsCopied ? '已复制' : '复制报告'}
                 </button>
               </div>

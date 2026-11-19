@@ -2,32 +2,89 @@
   import { displayCurrency } from './displayCurrency';
   import { formatCompactTokens, resolveSessionActivityState } from './dashboardView';
   import { formatCost, formatNumber, formatToolLabel, percentOf, relativeTime } from './format';
-  import { liveNow } from './liveClock';
+  import type { HeatmapCalendar } from './heatmap';
+  import { liveMinute } from './liveClock';
   import { sessionRateLabel, sessionRateTitle, type SessionRates } from './sessionRates';
   import type { CardId } from './dashboardLayout';
-  import type { DashboardSnapshot, SessionActivity, SessionUsage, UsageBreakdown, UsageTotals } from './types';
+  import type { CodexQuota, DashboardSnapshot, RemoteDevice, SessionActivity, SessionUsage, UsageBreakdown, UsageTotals } from './types';
+  import QuotaMonitorCard from './cards/QuotaMonitorCard.svelte';
+  import QuotaResetsCard from './cards/QuotaResetsCard.svelte';
+  import CostBreakdownCard from './cards/CostBreakdownCard.svelte';
+  import EfficiencyCard from './cards/EfficiencyCard.svelte';
+  import DevicesSyncCard from './cards/DevicesSyncCard.svelte';
+  import ActivitySummaryCard from './cards/ActivitySummaryCard.svelte';
 
-  export let cardId: CardId;
-  export let snapshot: DashboardSnapshot;
-  export let local: UsageTotals | undefined;
-  export let activeTools: UsageBreakdown[] = [];
-  export let topToolTotal: number = 1;
-  export let sortedModels: UsageBreakdown[] = [];
-  export let allModelTokens: number = 0;
-  export let topModelTotal: number = 1;
-  export let pendingActivity: SessionActivity[] = [];
-  export let visibleRecentSessions: SessionUsage[] = [];
-  export let sessionActivity: SessionActivity[] = [];
-  export let sessionRates: SessionRates | null = null;
-  export let visibleProjects: UsageBreakdown[] = [];
-  export let allProjectTokens: number = 0;
-  export let topProjectTotal: number = 1;
-  export let activeAntigravityQuotas: DashboardSnapshot['antigravity_quota'] = [];
-  export let onNavigateTools: () => void = () => {};
-  export let onNavigateModels: () => void = () => {};
-  export let onNavigateSessions: () => void = () => {};
-  export let onNavigateProjects: () => void = () => {};
-  export let onNavigateQuota: () => void = () => {};
+  let {
+    cardId,
+    snapshot,
+    local,
+    activeTools = [],
+    topToolTotal = 1,
+    sortedModels = [],
+    allModelTokens = 0,
+    topModelTotal = 1,
+    pendingActivity = [],
+    visibleRecentSessions = [],
+    sessionActivity = [],
+    sessionRates = null,
+    visibleProjects = [],
+    allProjectTokens = 0,
+    topProjectTotal = 1,
+    activeAntigravityQuotas = [],
+    activeCodexQuotas = [],
+    codexQuotaRefreshing = false,
+    onRefreshCodexQuota = null,
+    remoteDevices = [],
+    heatmapCalendar = null,
+    cacheHitRate = '0',
+    inputShareRate = '0',
+    outputShareRate = '0',
+    cacheShareRate = '0',
+    reasoningShareRate = '0',
+    cacheTokens = 0,
+    onNavigateTools = () => {},
+    onNavigateModels = () => {},
+    onNavigateSessions = () => {},
+    onNavigateProjects = () => {},
+    onNavigateQuota = () => {},
+    onNavigateDevices = () => {},
+    onNavigatePricing = () => {},
+  }: {
+    cardId: CardId;
+    snapshot: DashboardSnapshot;
+    local: UsageTotals | undefined;
+    activeTools?: UsageBreakdown[];
+    topToolTotal?: number;
+    sortedModels?: UsageBreakdown[];
+    allModelTokens?: number;
+    topModelTotal?: number;
+    pendingActivity?: SessionActivity[];
+    visibleRecentSessions?: SessionUsage[];
+    sessionActivity?: SessionActivity[];
+    sessionRates?: SessionRates | null;
+    visibleProjects?: UsageBreakdown[];
+    allProjectTokens?: number;
+    topProjectTotal?: number;
+    activeAntigravityQuotas?: DashboardSnapshot['antigravity_quota'];
+    activeCodexQuotas?: CodexQuota[];
+    codexQuotaRefreshing?: boolean;
+    onRefreshCodexQuota?: (() => void) | null;
+    remoteDevices?: RemoteDevice[];
+    heatmapCalendar?: HeatmapCalendar | null;
+    cacheHitRate?: string;
+    inputShareRate?: string;
+    outputShareRate?: string;
+    cacheShareRate?: string;
+    reasoningShareRate?: string;
+    cacheTokens?: number;
+    onNavigateTools?: () => void;
+    onNavigateModels?: () => void;
+    onNavigateSessions?: () => void;
+    onNavigateProjects?: () => void;
+    onNavigateQuota?: () => void;
+    onNavigateDevices?: () => void;
+    onNavigatePricing?: () => void;
+  } = $props();
 
   const modelMillionsFormat = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1, useGrouping: false });
 
@@ -44,13 +101,12 @@
 </script>
 
 {#if cardId === 'tools'}
-  <!-- Tool Rankings -->
   <section class="panel-card">
     <div class="panel-head">
       <div>
         <h2>工具用量分布</h2>
       </div>
-      <button class="panel-tag" onclick={onNavigateTools}>查看明细 →</button>
+      <button type="button" class="panel-tag" onclick={onNavigateTools}>查看明细 →</button>
     </div>
 
     {#if activeTools.length > 0}
@@ -79,13 +135,12 @@
   </section>
 
 {:else if cardId === 'models'}
-  <!-- Model Usage Distribution -->
   <section class="panel-card model-usage-card">
     <div class="panel-head">
       <div>
         <h2>模型用量分布</h2>
       </div>
-      <button class="panel-tag" onclick={onNavigateModels}>查看明细 →</button>
+      <button type="button" class="panel-tag" onclick={onNavigateModels}>查看明细 →</button>
     </div>
 
     {#if sortedModels.length > 0}
@@ -131,24 +186,23 @@
   </section>
 
 {:else if cardId === 'sessions'}
-  <!-- Recent Sessions -->
   <section class="panel-card">
     <div class="panel-head">
       <div>
         <h2>最近会话</h2>
       </div>
-      <button class="panel-tag" onclick={onNavigateSessions}>查看全部 →</button>
+      <button type="button" class="panel-tag" onclick={onNavigateSessions}>查看全部 →</button>
     </div>
 
     {#if pendingActivity.length > 0 || visibleRecentSessions.length > 0}
       <div class="recent-session-list">
         {#each pendingActivity as activity, index (`${activity.tool_id}:${activity.session_id}`)}
-          {@const rate = sessionRateLabel(sessionRates, activity, $liveNow)}
+          {@const rate = sessionRateLabel(sessionRates, activity, $liveMinute)}
           <div class="recent-session-row">
             <span class="recent-session-rank tabular">{String(index + 1).padStart(2, '0')}</span>
             <span class="recent-session-main">
               <strong title={activity.display_name ?? '未命名会话'}>{activity.display_name || '未命名会话'}</strong>
-              <small>{[formatToolLabel(activity.tool_id), activity.model_id, relativeTime(activity.observed_at_ms)].filter(Boolean).join(' · ')}</small>
+              <small>{[formatToolLabel(activity.tool_id), activity.model_id, relativeTime(activity.observed_at_ms, $liveMinute)].filter(Boolean).join(' · ')}</small>
             </span>
             <span class="recent-session-right">
               {#if activity.state === 'generating'}
@@ -168,8 +222,8 @@
           </div>
         {/each}
         {#each visibleRecentSessions as session, index}
-          {@const actState = resolveSessionActivityState(session, sessionActivity, $liveNow)}
-          {@const rate = sessionRateLabel(sessionRates, session, $liveNow)}
+          {@const actState = resolveSessionActivityState(session, sessionActivity, $liveMinute)}
+          {@const rate = sessionRateLabel(sessionRates, session, $liveMinute)}
           <div class="recent-session-row">
             <span class="recent-session-rank tabular">{String(index + pendingActivity.length + 1).padStart(2, '0')}</span>
             <span class="recent-session-main">
@@ -180,7 +234,7 @@
                 {[
                   formatToolLabel(session.tool_id),
                   session.models[0]?.model_id,
-                  relativeTime(session.last_event_at_ms ?? session.activity_observed_at_ms),
+                  relativeTime(session.last_event_at_ms ?? session.activity_observed_at_ms, $liveMinute),
                 ]
                   .filter(Boolean)
                   .join(' · ')}
@@ -210,13 +264,12 @@
   </section>
 
 {:else if cardId === 'sources'}
-  <!-- Source Health -->
   <section class="panel-card">
     <div class="panel-head">
       <div>
         <h2>采集源状态</h2>
       </div>
-      <button class="panel-tag" onclick={onNavigateTools}>运行明细 →</button>
+      <button type="button" class="panel-tag" onclick={onNavigateTools}>运行明细 →</button>
     </div>
 
     {#if snapshot.source_health.length > 0}
@@ -231,7 +284,7 @@
             ></span>
             <span class="source-health-name">{formatToolLabel(source.tool_id)}</span>
             <span class="source-health-meta">
-              {relativeTime(source.last_scan_ms)} · {source.source_count} 个来源
+              {relativeTime(source.last_scan_ms, $liveMinute)} · {source.source_count} 个来源
             </span>
             <span
               class="source-health-status"
@@ -250,13 +303,12 @@
   </section>
 
 {:else if cardId === 'projects'}
-  <!-- Project Usage Distribution -->
   <section class="panel-card">
     <div class="panel-head">
       <div>
         <h2>项目用量分布</h2>
       </div>
-      <button class="panel-tag" onclick={onNavigateProjects}>查看明细 →</button>
+      <button type="button" class="panel-tag" onclick={onNavigateProjects}>查看明细 →</button>
     </div>
 
     {#if visibleProjects.length > 0}
@@ -285,38 +337,34 @@
   </section>
 
 {:else if cardId === 'quotas'}
-  <!-- Quotas Monitor -->
-  <section class="panel-card">
-    <div class="panel-head">
-      <div>
-        <h2>额度与限额监控</h2>
-      </div>
-      <button class="panel-tag" onclick={onNavigateQuota}>查看明细 →</button>
-    </div>
+  <QuotaMonitorCard
+    {activeCodexQuotas}
+    {activeAntigravityQuotas}
+    {codexQuotaRefreshing}
+    {onRefreshCodexQuota}
+    {onNavigateQuota}
+  />
 
-    {#if activeAntigravityQuotas.length > 0}
-      <div class="quota-widget-list">
-        {#each activeAntigravityQuotas as quota}
-          {@const pct = quota.remaining_basis_points != null ? (quota.remaining_basis_points / 100).toFixed(0) : '0'}
-          {@const label = quota.window_id === 'five_hour' ? '5 小时限额' : quota.window_id === 'weekly' ? '每周限额' : '额度池'}
-          <div class="quota-widget-item">
-            <div class="quota-widget-head">
-              <span class="quota-widget-name">{label}</span>
-              <span class="quota-widget-val tabular">{pct}% 剩余</span>
-            </div>
-            <div class="quota-track">
-              <div class="quota-fill" style={`width: ${pct}%`}></div>
-            </div>
-            {#if quota.reset_at_ms != null && quota.reset_at_ms > $liveNow}
-              <div class="quota-widget-foot">
-                <small>{relativeTime(quota.reset_at_ms)} 重置</small>
-              </div>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    {:else}
-      <div class="empty-box">暂无在线额度观察数据</div>
-    {/if}
-  </section>
+{:else if cardId === 'cost'}
+  <CostBreakdownCard {local} {sortedModels} {onNavigatePricing} />
+
+{:else if cardId === 'efficiency'}
+  <EfficiencyCard
+    {local}
+    {cacheHitRate}
+    {inputShareRate}
+    {outputShareRate}
+    {cacheShareRate}
+    {reasoningShareRate}
+    {cacheTokens}
+  />
+
+{:else if cardId === 'devices'}
+  <DevicesSyncCard {snapshot} {remoteDevices} {onNavigateDevices} />
+
+{:else if cardId === 'activity'}
+  <ActivitySummaryCard {snapshot} {heatmapCalendar} totalTokens={local?.total_tokens ?? 0} />
+
+{:else if cardId === 'resets'}
+  <QuotaResetsCard {activeCodexQuotas} {activeAntigravityQuotas} {onNavigateQuota} />
 {/if}

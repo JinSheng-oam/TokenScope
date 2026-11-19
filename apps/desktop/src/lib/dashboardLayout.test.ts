@@ -38,6 +38,11 @@ describe('dashboardLayout', () => {
     expect(layout.find((c) => c.id === 'integrity')?.visible).toBe(false);
     expect(layout.find((c) => c.id === 'projects')?.visible).toBe(false);
     expect(layout.find((c) => c.id === 'quotas')?.visible).toBe(false);
+    expect(layout.find((c) => c.id === 'cost')?.visible).toBe(false);
+    expect(layout.find((c) => c.id === 'efficiency')?.visible).toBe(false);
+    expect(layout.find((c) => c.id === 'devices')?.visible).toBe(false);
+    expect(layout.find((c) => c.id === 'activity')?.visible).toBe(false);
+    expect(layout.find((c) => c.id === 'resets')?.visible).toBe(false);
   });
 
   it('loads saved layout from storage and preserves custom order and size', () => {

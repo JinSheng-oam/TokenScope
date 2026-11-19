@@ -31,6 +31,8 @@
   import type { AgentStatus, CodexQuota, DashboardObservations, DashboardRange, DashboardSnapshot, RemoteDevice, SessionActivity } from './lib/types';
   import OverviewPage from './lib/OverviewPage.svelte';
   import LoadingStatus from './lib/LoadingStatus.svelte';
+  import AppDialogHost from './lib/AppDialogHost.svelte';
+  import { confirmDialog } from './lib/dialogStore';
 
   type Tab = 'overview' | 'devices' | 'tools' | 'models' | 'pricing' | 'sessions' | 'projects' | 'quota' | 'settings' | 'customizations';
   type SecondaryTab = Exclude<Tab, 'overview'>;
@@ -353,7 +355,17 @@
 
   async function handleSelectTab(nextTab: Tab) {
     if ((pendingTab ?? activeTab) === nextTab) return;
-    if (activeTab === 'customizations' && customizationDirty && !window.confirm('当前文件有未保存的更改，放弃更改？')) return;
+    if (
+      activeTab === 'customizations' &&
+      customizationDirty &&
+      !(await confirmDialog({
+        title: '未保存的更改',
+        message: '当前文件有未保存的更改，确定放弃更改并切换页面？',
+        confirmText: '放弃更改',
+      }))
+    ) {
+      return;
+    }
 
     const seq = ++navSequence;
     if (nextTab === 'overview' || loadedPages[nextTab]) {
@@ -494,7 +506,7 @@
 
     <nav aria-label="主导航">
       {#each navItems as item}
-        <button
+        <button type="button"
           class="nav-button"
           class:active={(pendingTab ?? activeTab) === item.id}
           aria-current={(pendingTab ?? activeTab) === item.id ? 'page' : undefined}
@@ -523,7 +535,7 @@
 
       <!-- Theme Switcher -->
       <div class="theme-switch-row" title="切换显示主题">
-        <button
+        <button type="button"
           class="theme-button"
           class:active={$settingsState.theme === 'dark'}
           aria-pressed={$settingsState.theme === 'dark'}
@@ -532,7 +544,7 @@
         >
           {@html icons.moon}
         </button>
-        <button
+        <button type="button"
           class="theme-button"
           class:active={$settingsState.theme === 'light'}
           aria-pressed={$settingsState.theme === 'light'}
@@ -541,7 +553,7 @@
         >
           {@html icons.sun}
         </button>
-        <button
+        <button type="button"
           class="theme-button"
           class:active={$settingsState.theme === 'system'}
           aria-pressed={$settingsState.theme === 'system'}
@@ -576,7 +588,7 @@
         <div class="notice-box" role="alert">
           {@html icons.alert}
           <p>{errorMessage}</p>
-          <button class="notice-btn" onclick={() => void loadDashboard()}>重试</button>
+          <button type="button" class="notice-btn" onclick={() => void loadDashboard()}>重试</button>
         </div>
       {/if}
 
@@ -714,6 +726,10 @@
             topModelTotal={dashboardView.topModelTotal}
             scopedProjects={dashboardView.scopedProjects}
             {activeAntigravityQuotas}
+            {activeCodexQuotas}
+            {codexQuotaRefreshing}
+            onRefreshCodexQuota={handleRefreshCodexQuota}
+            remoteDevices={allRemoteDevices}
             exactRatio={dashboardView.exactRatio}
             cacheHitRate={dashboardView.tokenShares.cacheHitRate}
             inputShareRate={dashboardView.tokenShares.inputShareRate}
@@ -737,6 +753,8 @@
             onNavigateModels={() => handleSelectTab('models')}
             onNavigateProjects={() => handleSelectTab('projects')}
             onNavigateQuota={() => handleSelectTab('quota')}
+            onNavigateDevices={() => handleSelectTab('devices')}
+            onNavigatePricing={() => handleSelectTab('pricing')}
             isEditingLayout={isEditingOverviewLayout}
             onToggleEditLayout={() => (isEditingOverviewLayout = !isEditingOverviewLayout)}
           />
@@ -870,3 +888,5 @@
     </section>
   </main>
 </div>
+
+<AppDialogHost />

@@ -9,8 +9,8 @@
   import { icons } from '../lib/icons';
   import RollingNumber from './RollingNumber.svelte';
   import { type SessionRates } from './sessionRates';
-  import { liveNow } from '../lib/liveClock';
-  import type { DashboardSnapshot, SessionActivity, UsageBreakdown, UsageTotals } from '../lib/types';
+  import { liveMinute } from '../lib/liveClock';
+  import type { CodexQuota, DashboardSnapshot, RemoteDevice, SessionActivity, UsageBreakdown, UsageTotals } from '../lib/types';
   import {
     loadDashboardLayout,
     loadDashboardCardGap,
@@ -40,6 +40,10 @@
   export let topModelTotal: number = 1;
   export let scopedProjects: UsageBreakdown[] = [];
   export let activeAntigravityQuotas: DashboardSnapshot['antigravity_quota'] = [];
+  export let activeCodexQuotas: CodexQuota[] = [];
+  export let codexQuotaRefreshing = false;
+  export let onRefreshCodexQuota: (() => void) | null = null;
+  export let remoteDevices: RemoteDevice[] = [];
   export let exactRatio: string;
   export let cacheHitRate: string;
   export let inputShareRate: string;
@@ -62,6 +66,8 @@
   export let onNavigateModels: () => void = () => {};
   export let onNavigateProjects: () => void = () => {};
   export let onNavigateQuota: () => void = () => {};
+  export let onNavigateDevices: () => void = () => {};
+  export let onNavigatePricing: () => void = () => {};
   export let rollingNumbersEnabled = true;
   export let isEditingLayout = false;
   export let onToggleEditLayout: () => void = () => {};
@@ -78,8 +84,8 @@
   $: pendingActivity = sessionActivity.filter(
     (item) =>
       Boolean(item.display_name?.trim()) &&
-      $liveNow >= item.observed_at_ms &&
-      $liveNow - item.observed_at_ms <= 120_000 &&
+      $liveMinute >= item.observed_at_ms &&
+      $liveMinute - item.observed_at_ms <= 120_000 &&
       !recentSessions.some((session) => findActivityForSession(session, sessionActivity)?.session_id === item.session_id)
   ).slice(0, 4);
   $: visibleRecentSessions = recentSessions.slice(0, Math.max(0, 4 - pendingActivity.length));
@@ -496,7 +502,7 @@
                     : `${snapshot.daily.length} 天样本`}
                 </span>
                 <div class="trend-mode-switch" role="group" aria-label="趋势图显示模式">
-                  <button
+                  <button type="button"
                     class="trend-mode-btn"
                     class:selected={trendViewMode === 'curve'}
                     aria-pressed={trendViewMode === 'curve'}
@@ -504,7 +510,7 @@
                   >
                     曲线图
                   </button>
-                  <button
+                  <button type="button"
                     class="trend-mode-btn"
                     class:selected={trendViewMode === 'heatmap'}
                     aria-pressed={trendViewMode === 'heatmap'}
@@ -541,11 +547,24 @@
             {allProjectTokens}
             {topProjectTotal}
             {activeAntigravityQuotas}
+            {activeCodexQuotas}
+            {codexQuotaRefreshing}
+            {onRefreshCodexQuota}
+            {remoteDevices}
+            {heatmapCalendar}
+            {cacheHitRate}
+            {inputShareRate}
+            {outputShareRate}
+            {cacheShareRate}
+            {reasoningShareRate}
+            {cacheTokens}
             {onNavigateTools}
             {onNavigateModels}
             {onNavigateSessions}
             {onNavigateProjects}
             {onNavigateQuota}
+            {onNavigateDevices}
+            {onNavigatePricing}
           />
         {/if}
       </div>

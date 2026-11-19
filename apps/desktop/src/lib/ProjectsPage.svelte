@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import CustomSelect from './CustomSelect.svelte';
   import { formatCompactTokens } from '../lib/dashboardView';
   import { formatNumber, percentOf } from '../lib/format';
@@ -13,6 +14,11 @@
 
   let groupMode: 'merged' | 'raw' = 'merged';
   let copiedKey = '';
+  let copyTimer: ReturnType<typeof setTimeout> | undefined;
+
+  onDestroy(() => {
+    if (copyTimer !== undefined) clearTimeout(copyTimer);
+  });
   let pageSize = 12;
   let page = 1;
 
@@ -60,8 +66,10 @@
       if (typeof navigator !== 'undefined' && navigator.clipboard) {
         await navigator.clipboard.writeText(key);
         copiedKey = key;
-        setTimeout(() => {
+        if (copyTimer !== undefined) clearTimeout(copyTimer);
+        copyTimer = setTimeout(() => {
           if (copiedKey === key) copiedKey = '';
+          copyTimer = undefined;
         }, 1600);
       }
     } catch {

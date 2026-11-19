@@ -4,8 +4,9 @@
   let showShared = false;
   let sharedDirty = false;
   let sharedConfigured = false;
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { confirmDialog, promptDialog } from './dialogStore';
   import { icons } from './icons';
   import {
     instructionInfo,
@@ -186,18 +187,33 @@
   $: skills = entries.filter((entry) => entry.kind === 'skill');
   $: currentProvider = providers.find((p) => p.id === provider)!;
 
+  let copyPathTimer: ReturnType<typeof setTimeout> | undefined;
+
+  onDestroy(() => {
+    if (copyPathTimer !== undefined) clearTimeout(copyPathTimer);
+  });
+
   async function copyPath(path: string) {
     try {
       await navigator.clipboard.writeText(path);
       copiedPath = true;
-      setTimeout(() => (copiedPath = false), 2000);
+      if (copyPathTimer !== undefined) clearTimeout(copyPathTimer);
+      copyPathTimer = setTimeout(() => {
+        copiedPath = false;
+        copyPathTimer = undefined;
+      }, 2000);
     } catch {
       // fallback
     }
   }
 
-  function canLeave(): boolean {
-    return !dirty || window.confirm('当前文件有未保存的更改，放弃更改？');
+  async function canLeave(): Promise<boolean> {
+    if (!dirty) return true;
+    return confirmDialog({
+      title: '未保存的更改',
+      message: '当前文件有未保存的更改，确定放弃更改？',
+      confirmText: '放弃更改',
+    });
   }
 
   async function loadSkillSummary(entry: Entry) {
@@ -240,7 +256,7 @@
   }
 
   async function switchProvider(next: Provider) {
-    if (provider === next || !canLeave()) return;
+    if (provider === next || !(await canLeave())) return;
     mcpDirty = false;
     provider = next;
     selected = null;
@@ -259,7 +275,7 @@
 
   async function select(entry: Entry) {
     if (selected?.id.root === entry.id.root && selected?.id.name === entry.id.name) return;
-    if (!canLeave() || (!entry.editable && !entry.builtin)) return;
+    if (!(await canLeave()) || (!entry.editable && !entry.builtin)) return;
     const current = ++request;
     busy = true; error = ''; notice = '';
     try {
@@ -303,7 +319,12 @@
     const promptText = isInstruction
       ? '请输入新的指令文件名（必须以 .md 结尾）：'
       : '请输入新的 Skill 名称（仅允许小写字母、数字和连字符）：';
-    const newName = window.prompt(promptText, selected.id.name);
+    const newName = await promptDialog({
+      title: isInstruction ? '重命名指令文件' : '重命名 Skill',
+      message: promptText,
+      defaultValue: selected.id.name,
+      confirmText: '重命名',
+    });
     if (!newName || newName.trim() === '' || newName.trim() === selected.id.name) return;
     busy = true; error = ''; notice = '';
     const oldEntry = selected;
@@ -343,9 +364,12 @@
   async function deleteInstruction() {
     if (!selected || selected.kind !== 'instruction' || !selected.exists || busy || selected.linked) return;
     const unsavedNote = dirty ? '\n\n未保存的编辑也会丢弃。' : '';
-    const confirmed = window.confirm(
-      `确定删除指令文件“${selected.id.name}”？\n\n${selected.path}\n\n此操作无法撤销。${unsavedNote}`
-    );
+    const confirmed = await confirmDialog({
+      title: '删除指令文件',
+      message: `确定删除指令文件“${selected.id.name}”？\n\n${selected.path}\n\n此操作无法撤销。${unsavedNote}`,
+      tone: 'danger',
+      confirmText: '确认删除',
+    });
     if (!confirmed) return;
 
     const deletedEntry = selected;
@@ -400,8 +424,8 @@
     }
   }
 
-  function beginCreateInstruction() {
-    if (!canLeave()) return;
+  async function beginCreateInstruction() {
+    if (!(await canLeave())) return;
     selected = null;
     original = null;
     content = '';
@@ -465,13 +489,13 @@
     finally { busy = false; }
   }
 
-  function beginCreate() {
-    if (!canLeave()) return;
+  async function beginCreate() {
+    if (!(await canLeave())) return;
     selected = null; original = null; content = ''; skillName = ''; creating = true; creatingInstruction = false; importing = false; updateInfo = null; error = ''; notice = '';
   }
 
-  function beginImport() {
-    if (!canLeave()) return;
+  async function beginImport() {
+    if (!(await canLeave())) return;
     selected = null; original = null; content = ''; skillName = ''; importing = true; creating = false; creatingInstruction = false; updateInfo = null; notice = ''; error = '';
   }
 
@@ -513,9 +537,9 @@
       {/each}
     </div>
     <div class="configuration-actions">
-      <button class="ai-toggle-btn" class:active={showShared} aria-expanded={showShared}
-        disabled={!runtimeAvailable} onclick={() => {
-          if (showShared && sharedDirty && !window.confirm('放弃未保存的统一指令？')) return;
+      <button type="button" class="ai-toggle-btn" class:active={showShared} aria-expanded={showShared}
+        disabled={!runtimeAvailable} onclick={async () => {
+          if (showShared && sharedDirty && !(await confirmDialog({ title: '未保存的统一指令', message: '放弃未保存的统一指令修改？', confirmText: '放弃' }))) return;
           showShared = !showShared;
           if (!showShared) sharedDirty = false;
         }}>
@@ -524,6 +548,7 @@
         <span>统一指令</span>
       </button>
       <button
+        type="button"
         class="ai-toggle-btn"
         class:active={showAiConfig}
         aria-expanded={showAiConfig}
@@ -535,21 +560,25 @@
         <span>AI 助手配置</span>
       </button>
       <button type="button" class="ai-toggle-btn" class:active={showMcp} aria-expanded={showMcp}
-        disabled={!runtimeAvailable} onclick={() => {
-          if (showMcp && mcpDirty && !window.confirm('放弃未保存的 MCP 修改？')) return;
+        disabled={!runtimeAvailable} onclick={async () => {
+          if (showMcp && mcpDirty && !(await confirmDialog({ title: '未保存的 MCP 修改', message: '放弃未保存的 MCP 修改？', confirmText: '放弃' }))) return;
           showMcp = !showMcp;
           if (!showMcp) mcpDirty = false;
-        }}>MCP 配置</button>
+        }}>
+        <span class="ai-status-dot" class:dirty={mcpDirty}></span>
+        <span class="ai-btn-icon">{@html icons.tools}</span>
+        <span>MCP 配置</span>
+      </button>
     </div>
   </div>
 
-  {#if showShared}<SharedInstruction bind:unsaved={sharedDirty} bind:configured={sharedConfigured} source={selected?.kind === "instruction" ? content : null} onClose={() => { if (sharedDirty && !window.confirm("放弃未保存的统一指令？")) return; showShared = false; sharedDirty = false; }} />{/if}
+  {#if showShared}<SharedInstruction bind:unsaved={sharedDirty} bind:configured={sharedConfigured} source={selected?.kind === "instruction" ? content : null} onClose={async () => { if (sharedDirty && !(await confirmDialog({ title: '未保存的统一指令', message: '放弃未保存的统一指令修改？', confirmText: '放弃' }))) return; showShared = false; sharedDirty = false; }} />{/if}
   <AgentAiConfig {runtimeAvailable} bind:showAiConfig bind:hasAiConfig bind:error bind:notice />
 
   {#if showMcp && runtimeAvailable}
     {#key provider}
-      <AgentMcpConfig {provider} bind:dirty={mcpDirty} onClose={() => {
-        if (mcpDirty && !window.confirm('放弃未保存的 MCP 修改？')) return;
+      <AgentMcpConfig {provider} bind:dirty={mcpDirty} onClose={async () => {
+        if (mcpDirty && !(await confirmDialog({ title: '未保存的 MCP 修改', message: '放弃未保存的 MCP 修改？', confirmText: '放弃' }))) return;
         showMcp = false;
         mcpDirty = false;
       }} />
@@ -640,7 +669,7 @@
 
             <div class="editor-actions">
               {#if selected.kind === 'skill' && selected.exists && !selected.builtin}
-                <button
+                <button type="button"
                   class="btn-secondary btn-action"
                   disabled={busy}
                   onclick={() => void toggleSkill()}
@@ -648,7 +677,7 @@
                 >
                   {selected.enabled ? '停用 Skill' : '启用 Skill'}
                 </button>
-                <button
+                <button type="button"
                   class="btn-secondary btn-action ai-action-btn"
                   disabled={busy || analyzingSkill}
                   onclick={() => void generateSkillSummary()}
@@ -660,7 +689,7 @@
                     <span class="ai-sparkle-icon">{@html icons.sparkle}</span> AI 智能分析
                   {/if}
                 </button>
-                <button
+                <button type="button"
                   class="btn-secondary btn-action"
                   disabled={busy || dirty}
                   onclick={() => void checkUpdate()}
@@ -670,7 +699,7 @@
               {/if}
 
               {#if selected.exists && selected.editable}
-                <button
+                <button type="button"
                   class="btn-secondary btn-action"
                   disabled={busy}
                   onclick={() => void renameCustomization()}
@@ -681,7 +710,7 @@
               {/if}
 
               {#if selected.kind === 'instruction' && selected.exists}
-                <button
+                <button type="button"
                   class="btn-secondary btn-action btn-danger"
                   disabled={busy || selected.linked}
                   onclick={() => void deleteInstruction()}
@@ -692,7 +721,7 @@
               {/if}
 
               {#if selected.editable}
-              <button
+              <button type="button"
                 class="btn-primary btn-save"
                 disabled={busy || (!dirty && selected.exists)}
                 onclick={() => void save()}

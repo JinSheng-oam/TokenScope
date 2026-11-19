@@ -36,8 +36,8 @@
 }
 
 .custom-page .status-badge, .custom-page .link-badge {
-  white-space: nowrap !important;
-  flex-shrink: 0 !important;
+  white-space: nowrap;
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: 4px;

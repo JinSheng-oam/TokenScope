@@ -16,10 +16,10 @@
       <span class="summary-meta">模型: {skillSummary.model}</span>
     </div>
     <div class="summary-actions">
-      <button class="btn-compact" onclick={() => showSummaryCard = !showSummaryCard}>
+      <button type="button" class="btn-compact" onclick={() => showSummaryCard = !showSummaryCard}>
         {showSummaryCard ? '收起' : '展开'}
       </button>
-      <button
+      <button type="button"
         class="btn-compact"
         disabled={analyzingSkill}
         onclick={onRegenerate}

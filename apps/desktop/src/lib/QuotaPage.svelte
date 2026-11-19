@@ -10,7 +10,7 @@
   import { formatPercent, relativeTime } from '../lib/format';
   import { icons } from '../lib/icons';
   import { groupUpcomingResets } from './quotaPageView';
-  import { liveNow } from '../lib/liveClock';
+  import { liveMinute, liveNow } from '../lib/liveClock';
   import type { CodexQuota, DashboardSnapshot } from '../lib/types';
 
   export let snapshot: DashboardSnapshot;
@@ -47,7 +47,7 @@
   }
   $: antigravityRows = displayedAntigravityQuotas.map(antigravityRow);
   $: resetCandidates = [...codexRows, ...activeAntigravityQuotas.map(antigravityRow)];
-  $: resetGroups = groupUpcomingResets(resetCandidates, $liveNow);
+  $: resetGroups = groupUpcomingResets(resetCandidates, $liveMinute);
 </script>
 
 {#snippet quotaRows(rows: QuotaRow[])}
@@ -56,9 +56,9 @@
       {@const remaining = row.remaining_basis_points}
       {@const exhausted = remaining === 0}
       {@const warning = remaining !== null && remaining > 0 && remaining < 2000}
-      {@const stale = quotaIsStale(row.observed_at_ms, $liveNow)}
+      {@const stale = quotaIsStale(row.observed_at_ms, $liveMinute)}
       <li class="quota-row" class:exhausted class:warning>
-        <div class="quota-row-identity" title={`观测于 ${relativeTime(row.observed_at_ms, $liveNow)}`}>
+        <div class="quota-row-identity" title={`观测于 ${relativeTime(row.observed_at_ms, $liveMinute)}`}>
           <strong>{row.name}</strong>
           <span class="panel-tag">{row.period}</span>
           {#if exhausted || warning || stale}

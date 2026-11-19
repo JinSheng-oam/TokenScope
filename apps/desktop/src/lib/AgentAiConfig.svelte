@@ -144,7 +144,7 @@
             <span class="ai-unsaved-pill">待配置</span>
           {/if}
         </div>
-        <button class="btn-compact btn-close" onclick={() => showAiConfig = false} title="收起配置面板">✕ 收起</button>
+        <button type="button" class="btn-compact btn-close" onclick={() => showAiConfig = false} title="收起配置面板">✕ 收起</button>
       </div>
 
       <div class="ai-presets-bar">
@@ -218,8 +218,8 @@
       <div class="ai-config-footer">
         <span class="ai-security-tip">密钥仅保存在本机桌面端受保护的配置库，不经过第三方中间服务</span>
         <div class="ai-footer-buttons">
-          <button class="btn-secondary btn-sm" onclick={() => showAiConfig = false}>取消</button>
-          <button class="btn-primary btn-sm" disabled={aiSaving} onclick={() => void saveAiConfig()}>
+          <button type="button" class="btn-secondary btn-sm" onclick={() => showAiConfig = false}>取消</button>
+          <button type="button" class="btn-primary btn-sm" disabled={aiSaving} onclick={() => void saveAiConfig()}>
             {aiSaving ? '保存中…' : '保存配置'}
           </button>
         </div>

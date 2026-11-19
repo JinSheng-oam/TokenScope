@@ -47,6 +47,19 @@
   --color-danger-border: rgba(239, 68, 68, 0.25);
 
   --text-warning: #D97706;
+
+  /* Data Visualization & Card Accents */
+  --accent-model-start: #7C3AED;
+  --accent-model-end: #A855F7;
+  --accent-project-start: #0284C7;
+  --accent-project-end: #38BDF8;
+  --accent-cost-start: #D97706;
+  --accent-cost-end: #F59E0B;
+  --accent-device-start: #0D9488;
+  --accent-device-end: #2DD4BF;
+  --accent-output: #8B5CF6;
+  --accent-peak-start: #F59E0B;
+  --accent-peak-end: #D97706;
 }
 
 /* ==========================================================================

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { confirmDialog } from './dialogStore';
   import type { Provider } from './agentCustomizationEntries';
   import { icons } from './icons';
   import {
@@ -42,13 +43,18 @@
   $: formDirty = editing && JSON.stringify(form) !== initialFormSnapshot;
   $: dirty = rawDirty || formDirty;
 
-  function confirmDiscard(): boolean {
-    return !dirty || window.confirm('放弃未保存的 MCP 修改？');
+  async function confirmDiscard(): Promise<boolean> {
+    if (!dirty) return true;
+    return confirmDialog({
+      title: '未保存的 MCP 修改',
+      message: '当前有未保存的 MCP 配置修改，确定放弃？',
+      confirmText: '放弃修改',
+    });
   }
 
   async function run(save = false) {
     if (busy || (save && !view)) return;
-    if (!save && !confirmDiscard()) return;
+    if (!save && !(await confirmDiscard())) return;
     busy = true;
     error = '';
     notice = '';
@@ -76,10 +82,10 @@
     }
   }
 
-  function switchProfile(event: Event) {
+  async function switchProfile(event: Event) {
     const select = event.currentTarget as HTMLSelectElement;
     const next = select.value === 'web' ? 'web' : 'desktop';
-    if (!confirmDiscard()) {
+    if (!(await confirmDiscard())) {
       select.value = profile;
       return;
     }
@@ -92,9 +98,9 @@
     void run();
   }
 
-  function switchMode(next: 'visual' | 'raw') {
+  async function switchMode(next: 'visual' | 'raw') {
     if (mode === next) return;
-    if (!confirmDiscard()) return;
+    if (!(await confirmDiscard())) return;
     error = '';
     notice = '';
     if (next === 'raw') {
@@ -105,8 +111,8 @@
     mode = next;
   }
 
-  function openAddForm() {
-    if (mode === 'raw' && rawDirty && !confirmDiscard()) return;
+  async function openAddForm() {
+    if (mode === 'raw' && rawDirty && !(await confirmDiscard())) return;
     mode = 'visual';
     error = '';
     notice = '';
@@ -118,8 +124,8 @@
     editing = true;
   }
 
-  function openEditForm(entry: McpServerEntry) {
-    if (editing && formDirty && !confirmDiscard()) return;
+  async function openEditForm(entry: McpServerEntry) {
+    if (editing && formDirty && !(await confirmDiscard())) return;
     mode = 'visual';
     error = '';
     notice = '';
@@ -131,8 +137,8 @@
     editing = true;
   }
 
-  function cancelForm() {
-    if (formDirty && !confirmDiscard()) return;
+  async function cancelForm() {
+    if (formDirty && !(await confirmDiscard())) return;
     editing = false;
     editingOriginalName = null;
     showJsonImport = false;
@@ -260,7 +266,16 @@
 
   async function removeServer(entry: McpServerEntry) {
     if (busy || !view) return;
-    if (!window.confirm(`确定删除 MCP 服务器「${entry.name}」？`)) return;
+    if (
+      !(await confirmDialog({
+        title: '删除 MCP 服务器',
+        message: `确定删除 MCP 服务器「${entry.name}」？此操作会从本机配置移除该条目。`,
+        tone: 'danger',
+        confirmText: '删除服务器',
+      }))
+    ) {
+      return;
+    }
     busy = true;
     error = '';
     notice = '';
@@ -900,21 +915,6 @@
     color: var(--color-danger);
     background: var(--color-danger-bg);
     border-color: var(--color-danger-border);
-  }
-  .btn-close-panel {
-    height: 28px;
-    padding: 0 8px;
-    font-size: 11px;
-    color: var(--text-muted);
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
-    transition: all var(--transition-fast);
-  }
-  .btn-close-panel:hover:not(:disabled) {
-    color: var(--text-primary);
-    background: var(--bg-secondary);
-    border-color: var(--border-subtle);
   }
   .btn-link {
     font-size: 11.5px;

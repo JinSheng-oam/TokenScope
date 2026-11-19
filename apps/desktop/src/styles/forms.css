@@ -89,6 +89,25 @@
   font-weight: 600;
 }
 
+.btn-close-panel {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+.btn-close-panel:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border-color: var(--border-subtle);
+}
+
 .btn-primary svg,
 .btn-secondary svg,
 .btn-danger svg,

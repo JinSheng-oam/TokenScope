@@ -9,6 +9,7 @@ import {
   type WebDavPublicConfig,
   type WebDavSyncReport,
 } from './api';
+import { confirmDialog } from './dialogStore';
 import type { RemoteDevice } from './types';
 
 export type WebDavApi = {
@@ -22,7 +23,7 @@ export type WebDavApi = {
 
 export type WebDavRuntime = {
   api: WebDavApi;
-  confirm: (message: string) => boolean;
+  confirm: (message: string) => Promise<boolean> | boolean;
   refreshDashboard?: () => Promise<void>;
 };
 
@@ -67,7 +68,7 @@ export function createWebDavController(
       listWebDavDevices,
       syncWebDavNow,
     },
-    confirm: (message) => window.confirm(message),
+    confirm: (message) => confirmDialog({ title: '断开 WebDAV 同步', message, tone: 'danger', confirmText: '断开同步' }),
   },
 ) {
   const state = writable<WebDavControllerState>({ ...INITIAL_STATE });
@@ -199,9 +200,9 @@ export function createWebDavController(
     const current = get(state);
     if (current.busy || !isRuntimeAvailable()) return;
     if (
-      !runtime.confirm(
+      !(await runtime.confirm(
         '确定要断开 WebDAV 同步吗？\n断开后将清除本机保存的密码与同步配置，但不会删除本地或 WebDAV 云盘已有数据。',
-      )
+      ))
     ) {
       return;
     }

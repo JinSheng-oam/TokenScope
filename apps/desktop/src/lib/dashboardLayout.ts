@@ -7,7 +7,12 @@ export type CardId =
   | 'sessions'
   | 'sources'
   | 'projects'
-  | 'quotas';
+  | 'quotas'
+  | 'cost'
+  | 'efficiency'
+  | 'devices'
+  | 'activity'
+  | 'resets';
 
 export type CardWidth = '1/3' | '1/2' | '2/3' | 'full';
 
@@ -86,7 +91,42 @@ export const CARD_CATALOG: Record<CardId, CardMeta> = {
   quotas: {
     id: 'quotas',
     title: '额度与限额监控',
-    description: 'Antigravity 5小时/周限额剩余进度与重置倒计时监控',
+    description: 'Codex 与 Antigravity 实时剩余额度、耗尽预警与重置倒计时',
+    defaultWidth: '1/3',
+    canResize: true,
+  },
+  cost: {
+    id: 'cost',
+    title: '费用估算分析',
+    description: '总预估费用、计价覆盖率及按模型消耗费用排行榜',
+    defaultWidth: '1/3',
+    canResize: true,
+  },
+  efficiency: {
+    id: 'efficiency',
+    title: 'Token 构成与效率',
+    description: '输入/输出/推理/缓存结构拆解、缓存命中率与单笔均耗',
+    defaultWidth: '1/3',
+    canResize: true,
+  },
+  devices: {
+    id: 'devices',
+    title: '多设备与同步',
+    description: '本机与远端设备用量对比以及跨端同步引擎状态',
+    defaultWidth: '1/3',
+    canResize: true,
+  },
+  activity: {
+    id: 'activity',
+    title: '日均与峰值统计',
+    description: '活跃日均消耗、单日峰值、连续活跃天数与近 14 日走势',
+    defaultWidth: '1/3',
+    canResize: true,
+  },
+  resets: {
+    id: 'resets',
+    title: '额度重置倒计时',
+    description: '按时间顺序列出今天与后续即将重置的额度池倒计时',
     defaultWidth: '1/3',
     canResize: true,
   },
@@ -102,6 +142,11 @@ export const DEFAULT_DASHBOARD_CARDS: DashboardCardConfig[] = [
   { id: 'tools', visible: false, width: '1/3' },
   { id: 'projects', visible: false, width: '1/2' },
   { id: 'quotas', visible: false, width: '1/3' },
+  { id: 'cost', visible: false, width: '1/3' },
+  { id: 'efficiency', visible: false, width: '1/3' },
+  { id: 'devices', visible: false, width: '1/3' },
+  { id: 'activity', visible: false, width: '1/3' },
+  { id: 'resets', visible: false, width: '1/3' },
 ];
 
 export const STORAGE_KEY = 'tokenscope.dashboardLayout.v3';
@@ -141,6 +186,11 @@ const VALID_CARD_IDS = new Set<CardId>([
   'sources',
   'projects',
   'quotas',
+  'cost',
+  'efficiency',
+  'devices',
+  'activity',
+  'resets',
 ]);
 
 const VALID_WIDTHS = new Set<CardWidth>(['1/3', '1/2', '2/3', 'full']);

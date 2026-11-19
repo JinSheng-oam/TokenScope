@@ -55,7 +55,7 @@
 <div class="create-form">
   <label for="source-url">来源地址</label>
   <input id="source-url" bind:value={sourceInput} oninput={() => inspection = null} placeholder="https://skills.sh/owner/repo/skill 或 GitHub URL" />
-  <div><button class="btn-secondary" disabled={busy || !sourceInput.trim()} onclick={() => void inspectSource()}>{busy ? '读取中…' : '预览来源'}</button></div>
+  <div><button type="button" class="btn-secondary" disabled={busy || !sourceInput.trim()} onclick={() => void inspectSource()}>{busy ? '读取中…' : '预览来源'}</button></div>
   {#if inspection}
     <span>选择 skill</span>
     <CustomSelect
@@ -71,11 +71,11 @@
     <input id="import-name" bind:value={skillName} maxlength="64" />
     <p class="source-hint">{inspection.source.url} · {inspection.revision.slice(0, 12)}。请确认来源可信，skill 可能包含脚本。</p>
     <div class="form-btn-row">
-      <button class="btn-primary" disabled={busy} onclick={() => void installSource()}>安装选中 skill</button>
-      <button class="btn-secondary" onclick={onCancel}>取消</button>
+      <button type="button" class="btn-primary" disabled={busy} onclick={() => void installSource()}>安装选中 skill</button>
+      <button type="button" class="btn-secondary" onclick={onCancel}>取消</button>
     </div>
   {:else}
-    <div><button class="btn-secondary" onclick={onCancel}>取消</button></div>
+    <div><button type="button" class="btn-secondary" onclick={onCancel}>取消</button></div>
   {/if}
 </div>
 

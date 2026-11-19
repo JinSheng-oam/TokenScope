@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { confirmDialog } from './dialogStore';
 
   let {
     source = null,
@@ -230,9 +231,16 @@
             <button
               type="button"
               class="btn-select-all"
-              onclick={() => configure(view?.targets.map((t) => t.key) ?? [])}
+              onclick={() => {
+                if (!view) return;
+                configure(
+                  view.selected.length === view.targets.length
+                    ? []
+                    : view.targets.map((t) => t.key)
+                );
+              }}
             >
-              全选目标
+              {view.selected.length === view.targets.length ? '取消全选' : '全选目标'}
             </button>
           </div>
 
@@ -253,19 +261,26 @@
                         {target.initialized ? '已启用应用' : '待首次应用'}
                       </span>
                     </span>
-                    <small class="target-path">{target.path} · {target.initialized ? '已启用应用' : '待首次应用'}</small>
+                    <small class="target-path" title={target.path}>{target.path}</small>
                   </span>
                 </label>
-                <button
-                  type="button"
-                  class="btn-restore"
-                  disabled={!target.initialized}
-                  onclick={() => {
-                    if (window.confirm('恢复此目标上一次应用前的版本？')) void run('restore', { key: target.key });
-                  }}
-                >
-                  恢复备份
-                </button>
+                {#if target.initialized}
+                  <button
+                    type="button"
+                    class="btn-restore"
+                    onclick={async () => {
+                      if (await confirmDialog({
+                        title: '恢复备份版本',
+                        message: `确定将「${target.label}」恢复到上一次应用前的版本？`,
+                        confirmText: '恢复备份',
+                      })) {
+                        void run('restore', { key: target.key });
+                      }
+                    }}
+                  >
+                    恢复备份
+                  </button>
+                {/if}
               </div>
             {/each}
           </div>
@@ -346,7 +361,9 @@
 
     {#if busy || view.message || view.results.length > 0}
       <div class="shared-status-bar" role="status">
-        <span class="status-main">{busy ? '处理中…' : view.message}</span>
+        {#if busy || view.message}
+          <span class="status-main">{busy ? '处理中…' : view.message}</span>
+        {/if}
         {#if view.results.length > 0}
           <div class="status-results">
             {#each view.results as result}
@@ -367,8 +384,8 @@
   .shared {
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    padding: 16px 18px;
+    gap: 12px;
+    padding: 14px 16px;
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
@@ -393,7 +410,7 @@
     justify-content: space-between;
     gap: 12px;
     flex-wrap: wrap;
-    padding-bottom: 12px;
+    padding-bottom: 10px;
     border-bottom: 1px solid var(--border-subtle);
   }
 
@@ -467,24 +484,6 @@
     font-size: 11.5px;
   }
 
-  .btn-close-panel {
-    height: 28px;
-    padding: 0 8px;
-    font-size: 11px;
-    color: var(--text-muted);
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .btn-close-panel:hover {
-    color: var(--text-primary);
-    background: var(--bg-secondary);
-    border-color: var(--border-subtle);
-  }
-
   /* Two-Column Workbench Layout */
   .shared-workbench {
     display: grid;
@@ -498,6 +497,7 @@
     flex-direction: column;
     gap: 8px;
     min-width: 0;
+    height: 100%;
   }
 
   .editor-label-bar {
@@ -523,7 +523,7 @@
   textarea {
     width: 100%;
     flex: 1;
-    min-height: 184px;
+    min-height: 200px;
     resize: vertical;
     box-sizing: border-box;
     padding: 12px 14px;
@@ -592,7 +592,6 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--text-primary);
-    float: left;
   }
 
   .sync-badge {
@@ -615,7 +614,6 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    clear: both;
   }
 
   .check-row {
@@ -693,7 +691,22 @@
     display: flex;
     flex-direction: column;
     gap: 5px;
-    clear: both;
+    max-height: 212px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  .target-list::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  .target-list::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 999px;
+  }
+
+  .target-list::-webkit-scrollbar-track {
+    background: transparent;
   }
 
   .target {
@@ -701,7 +714,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    padding: 7px 10px;
+    padding: 6px 10px;
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
@@ -898,9 +911,9 @@
   .shared-status-bar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 6px 10px;
     padding: 7px 12px;
     border-radius: var(--radius-sm);
     background: var(--bg-secondary);

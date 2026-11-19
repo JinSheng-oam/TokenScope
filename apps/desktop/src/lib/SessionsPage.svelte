@@ -14,7 +14,7 @@
     type SessionSortField,
   } from '../lib/dashboardView';
   import { sessionRateLabel, sessionRateTitle, type SessionRates } from './sessionRates';
-  import { liveNow } from '../lib/liveClock';
+  import { liveMinute } from '../lib/liveClock';
   import { SESSION_PAGE_SIZES } from '../lib/sessionController';
   import type {
     DashboardRange,
@@ -149,8 +149,8 @@
     }
   }
 
-  $: sortClock = sortBy === 'status' ? $liveNow : 0;
-  $: groupClock = Math.floor($liveNow / 60_000) * 60_000;
+  $: sortClock = sortBy === 'status' ? $liveMinute : 0;
+  $: groupClock = Math.floor($liveMinute / 60_000) * 60_000;
   $: sortedSessions = sessionPage
     ? sortSessions(sessionPage.sessions, sortBy, sortDir, sessionActivity, sortClock)
     : [];
@@ -219,7 +219,7 @@
           onChange={(val) => { sessionProjectFilter = val; onScheduleSessionAnalysis(); }}
         />
       </div>
-      <button class="btn-secondary session-clear-btn" disabled={!hasSessionFilters} onclick={onClearSessionFilters}>清除筛选</button>
+      <button type="button" class="btn-secondary session-clear-btn" disabled={!hasSessionFilters} onclick={onClearSessionFilters}>清除筛选</button>
     </div>
   </div>
 
@@ -261,8 +261,8 @@
             <ul>
               {#each group.sessions as session (sessionActionKey(session))}
                 {@const projects = sessionProjectLabels(session, getSessionProjectLabel)}
-                {@const state = resolveSessionActivityState(session, sessionActivity, $liveNow)}
-                {@const rate = sessionRateLabel(sessionRates, session, $liveNow)}
+                {@const state = resolveSessionActivityState(session, sessionActivity, $liveMinute)}
+                {@const rate = sessionRateLabel(sessionRates, session, $liveMinute)}
                 {@const eventTime = sessionEventTime(session)}
                 <li>
                   <button type="button" class="session-entry" class:chosen={selectedKey === sessionActionKey(session)}
@@ -301,7 +301,7 @@
                       <span>{session.tool_id === 'antigravity' ? '响应 · 来源累计' : '响应次数'}</span>
                       <strong>{session.known_response_count === null ? '—' : formatNumber(session.known_response_count)}</strong>
                       {#if sortBy !== 'time'}
-                        <small>{eventTime === null ? '时间未知' : relativeTime(eventTime, $liveNow)}</small>
+                        <small>{eventTime === null ? '时间未知' : relativeTime(eventTime, $liveMinute)}</small>
                       {/if}
                     </span>
                     <span class="session-entry-arrow" aria-hidden="true">{@html icons.chevronRight}</span>
@@ -340,18 +340,18 @@
     <div class="session-empty-state">
       <strong>没有匹配的会话</strong>
       <p>调整或清除筛选条件。</p>
-      <button class="btn-secondary" onclick={onClearSessionFilters}>清除筛选</button>
+      <button type="button" class="btn-secondary" onclick={onClearSessionFilters}>清除筛选</button>
     </div>
   {:else if sessionPage}
     <div class="session-empty-state">
       <strong>这个时间范围内没有会话用量</strong>
       <p>切换到“全部”查看历史会话。</p>
-      <button class="btn-secondary" disabled={range === 'all'} onclick={onShowAllDates}>查看全部日期</button>
+      <button type="button" class="btn-secondary" disabled={range === 'all'} onclick={onShowAllDates}>查看全部日期</button>
     </div>
   {:else if sessionError}
     <div class="session-empty-state">
       <strong>会话数据暂时无法读取</strong>
-      <button class="btn-secondary" disabled={sessionLoading} onclick={() => void onLoadSessionAnalysis()}>重试</button>
+      <button type="button" class="btn-secondary" disabled={sessionLoading} onclick={() => void onLoadSessionAnalysis()}>重试</button>
     </div>
   {:else}
     <div class="session-empty-state" role="status">选择“会话分析”后会读取当前日期范围的会话。</div>
@@ -380,7 +380,7 @@
   {@const HistoryDialog = SessionHistoryDialogComponent}
   <HistoryDialog
     session={historySession}
-    isGenerating={resolveSessionActivityState(historySession, sessionActivity, $liveNow) === 'generating'}
+    isGenerating={resolveSessionActivityState(historySession, sessionActivity, $liveMinute) === 'generating'}
     onClose={() => { historySession = null; }}
   />
 {/if}

@@ -43,7 +43,7 @@
 <div class="page-header">
   <h1>模型排行与用量分析</h1>
   <div class="range-capsule" role="group" aria-label="模型列表排序模式">
-    <button
+    <button type="button"
       class="range-btn"
       class:selected={modelSortBy === 'tokens'}
       aria-pressed={modelSortBy === 'tokens'}
@@ -51,7 +51,7 @@
     >
       按 Token 排序
     </button>
-    <button
+    <button type="button"
       class="range-btn"
       class:selected={modelSortBy === 'cost'}
       aria-pressed={modelSortBy === 'cost'}

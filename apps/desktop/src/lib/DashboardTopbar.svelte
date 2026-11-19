@@ -135,7 +135,7 @@
           { value: '30d', label: '30 天' },
           { value: 'all', label: '全部' },
         ] as opt}
-          <button
+          <button type="button"
             class="range-btn"
             class:selected={range === opt.value}
             aria-pressed={range === opt.value}
@@ -149,7 +149,7 @@
         {/each}
 
         <div class="custom-range-wrap">
-          <button
+          <button type="button"
             class="range-btn"
             class:selected={range === 'custom'}
             aria-pressed={range === 'custom'}
@@ -190,7 +190,7 @@
         </button>
       {/if}
 
-      <button
+      <button type="button"
         class="icon-btn"
         aria-label="刷新数据"
         title="刷新统计"

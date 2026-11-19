@@ -69,8 +69,8 @@
     />
     <p class="source-hint">{instructionDraftHelp(provider)}</p>
     <div class="form-btn-row">
-      <button class="btn-primary" disabled={busy || !instructionName.trim()} onclick={onCreateInstruction}>开始编辑草稿</button>
-      <button class="btn-secondary" onclick={onCancel}>取消</button>
+      <button type="button" class="btn-primary" disabled={busy || !instructionName.trim()} onclick={onCreateInstruction}>开始编辑草稿</button>
+      <button type="button" class="btn-secondary" onclick={onCancel}>取消</button>
     </div>
   </div>
 {:else}
@@ -85,8 +85,8 @@
     <label for="skill-name">名称</label>
     <input id="skill-name" bind:value={skillName} placeholder="例如 code-review" maxlength="64" />
     <div class="form-btn-row">
-      <button class="btn-primary" disabled={busy} onclick={onCreateSkill}>开始编辑</button>
-      <button class="btn-secondary" onclick={onCancel}>取消</button>
+      <button type="button" class="btn-primary" disabled={busy} onclick={onCreateSkill}>开始编辑</button>
+      <button type="button" class="btn-secondary" onclick={onCancel}>取消</button>
     </div>
   </div>
 {/if}

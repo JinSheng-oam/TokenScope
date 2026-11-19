@@ -283,7 +283,7 @@
       <h2>同步设置</h2>
     </div>
     <div class="sync-provider-tabs">
-      <button
+      <button type="button"
         class="sync-tab-btn"
         class:active={syncTab === 'webdav'}
         onclick={() => (syncTab = 'webdav')}
@@ -293,7 +293,7 @@
           <span class="provider-badge active">已启用</span>
         {/if}
       </button>
-      <button
+      <button type="button"
         class="sync-tab-btn"
         class:active={syncTab === 'hub'}
         onclick={() => (syncTab = 'hub')}
@@ -394,14 +394,14 @@
       <div class="sync-actions-bar">
         <div class="sync-actions-left">
           {#if webdavEnabled}
-            <button
+            <button type="button"
               class="btn-primary"
               disabled={webdavBusy || webdavSyncing}
               onclick={() => void onSyncWebDavNow()}
             >
               <span class:spin={webdavSyncing}>{@html icons.refresh}</span> 立即同步
             </button>
-            <button
+            <button type="button"
               class="btn-secondary"
               disabled={webdavBusy || webdavTesting || webdavSyncing || !webdavUrl.trim() || !webdavUsername.trim()}
               onclick={() => void onSaveWebDav()}
@@ -409,7 +409,7 @@
               {@html icons.shield} 保存配置
             </button>
           {:else}
-            <button
+            <button type="button"
               class="btn-primary"
               disabled={webdavBusy || webdavTesting || webdavSyncing || !webdavUrl.trim() || !webdavUsername.trim()}
               onclick={() => void onSaveWebDav()}
@@ -418,7 +418,7 @@
             </button>
           {/if}
 
-          <button
+          <button type="button"
             class="btn-secondary"
             disabled={webdavBusy || webdavTesting || !webdavUrl.trim() || !webdavUsername.trim() || (!webdavPassword.trim() && !webdavEnabled)}
             onclick={() => void onTestWebDav()}
@@ -428,7 +428,7 @@
           </button>
 
           {#if webdavEnabled}
-            <button
+            <button type="button"
               class="btn-secondary"
               disabled={webdavBusy}
               onclick={() => void onRefreshWebDavDevices()}
@@ -450,7 +450,7 @@
             {#if confirmingDisconnectWebDav}
               <div class="disconnect-confirm-group">
                 <span class="confirm-tip">确认断开？将清除安全密码库凭据</span>
-                <button
+                <button type="button"
                   class="btn-danger"
                   disabled={webdavBusy}
                   onclick={() => {
@@ -460,7 +460,7 @@
                 >
                   {@html icons.unlink} 确认断开
                 </button>
-                <button
+                <button type="button"
                   class="btn-secondary"
                   onclick={() => (confirmingDisconnectWebDav = false)}
                 >
@@ -468,7 +468,7 @@
                 </button>
               </div>
             {:else}
-              <button
+              <button type="button"
                 class="btn-danger-ghost"
                 disabled={webdavBusy}
                 onclick={() => (confirmingDisconnectWebDav = true)}
@@ -514,21 +514,21 @@
 
       <div class="sync-actions-bar">
         <div class="sync-actions-left">
-          <button
+          <button type="button"
             class="btn-primary"
             disabled={hubBusy || !hubUrl.trim() || !pairingCode.trim()}
             onclick={() => void onPairWithHub()}
           >
             {@html icons.shield} 配对此设备
           </button>
-          <button class="btn-secondary" disabled={hubBusy || !hubUrl.trim()} onclick={() => void onRefreshHubDevices()}>
+          <button type="button" class="btn-secondary" disabled={hubBusy || !hubUrl.trim()} onclick={() => void onRefreshHubDevices()}>
             {@html icons.refresh} 刷新设备列表
           </button>
           {#if hubPaired}
-            <button class="btn-secondary" disabled={hubBusy} onclick={() => void onRenameHubDevice()}>
+            <button type="button" class="btn-secondary" disabled={hubBusy} onclick={() => void onRenameHubDevice()}>
               {@html icons.edit} 重命名本机
             </button>
-            <button class="btn-secondary" disabled={hubBusy} onclick={() => void onRotateHubCredential()}>
+            <button type="button" class="btn-secondary" disabled={hubBusy} onclick={() => void onRotateHubCredential()}>
               {@html icons.key} 轮换安全凭证
             </button>
           {/if}
@@ -539,7 +539,7 @@
             {#if confirmingDisconnectHub}
               <div class="disconnect-confirm-group">
                 <span class="confirm-tip">确认断开与 Hub 的配对？</span>
-                <button
+                <button type="button"
                   class="btn-danger"
                   disabled={hubBusy}
                   onclick={() => {
@@ -549,7 +549,7 @@
                 >
                   {@html icons.unlink} 确认断开
                 </button>
-                <button
+                <button type="button"
                   class="btn-secondary"
                   onclick={() => (confirmingDisconnectHub = false)}
                 >
@@ -557,7 +557,7 @@
                 </button>
               </div>
             {:else}
-              <button
+              <button type="button"
                 class="btn-danger-ghost"
                 disabled={hubBusy}
                 onclick={() => (confirmingDisconnectHub = true)}

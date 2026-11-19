@@ -91,6 +91,8 @@ pub fn run() {
             agent_customizations::list_customizations,
             agent_customizations::mcp::read_mcp_config,
             agent_customizations::mcp::save_mcp_config,
+            agent_customizations::mcp::upsert_mcp_server,
+            agent_customizations::mcp::delete_mcp_server,
             agent_customizations::read_customization,
             agent_customizations::save_customization,
             agent_customizations::prepare_instruction,

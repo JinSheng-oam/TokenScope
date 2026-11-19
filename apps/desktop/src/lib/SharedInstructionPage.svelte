@@ -33,6 +33,8 @@
     flex-direction: column;
     gap: var(--page-heading-gap, 14px);
     min-width: 0;
+    height: 100%;
+    min-height: 0;
   }
 
   .standalone-heading {

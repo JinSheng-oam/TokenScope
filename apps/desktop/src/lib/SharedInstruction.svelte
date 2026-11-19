@@ -94,7 +94,12 @@
   }
 </script>
 
-<section class="shared" class:standalone aria-label="统一指令">
+<section
+  class="shared"
+  class:standalone
+  class:fit-standalone={standalone && !(view?.changes.length) && !conflict}
+  aria-label="统一指令"
+>
   <div class="shared-head">
     <div class="shared-title-group">
       <div class="shared-title-row">
@@ -957,12 +962,56 @@
     border: 1px solid var(--color-danger-border);
   }
 
-  .shared.standalone textarea {
-    min-height: 360px;
+  .shared.fit-standalone {
+    flex: 1;
+    min-height: 0;
   }
 
-  .shared.standalone .target-list {
-    max-height: 360px;
+  .shared.fit-standalone .shared-workbench {
+    flex: 1;
+    min-height: 0;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .shared.fit-standalone .shared-editor-pane,
+  .shared.fit-standalone .shared-side-pane {
+    min-height: 0;
+    height: 100%;
+  }
+
+  .shared.fit-standalone textarea {
+    min-height: 160px;
+    resize: none;
+  }
+
+  .shared.fit-standalone .targets-fieldset {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .shared.fit-standalone .target-list {
+    flex: 1;
+    min-height: 120px;
+    max-height: none;
+  }
+
+  @media (max-width: 980px) {
+    .shared.fit-standalone {
+      flex: none;
+    }
+
+    .shared.fit-standalone .shared-workbench {
+      grid-template-rows: auto auto;
+    }
+
+    .shared.fit-standalone textarea {
+      min-height: 220px;
+      resize: vertical;
+    }
+
+    .shared.fit-standalone .target-list {
+      max-height: 260px;
+    }
   }
 
   @media (max-width: 980px) {

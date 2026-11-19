@@ -187,43 +187,49 @@ fn read_antigravity_active(db: &Path, now: u64) -> Option<Vec<SessionActivity>> 
         .ok()?;
     Some(
         rows.flatten()
-            .filter_map(|(id, title, preview, agent_name, parent_id, parent_title)| {
-                if id.is_empty() || id.len() > 200 || id.chars().any(char::is_control) {
-                    return None;
-                }
-                let session_id =
-                    stable_record_id("antigravity", b"conversation", id.as_bytes()).ok()?;
-                let display_name = clean_activity_text(title.as_deref(), 80)
-                    .or_else(|| clean_activity_text(preview.as_deref(), 80))
-                    .or_else(|| {
-                        let agent = clean_activity_text(agent_name.as_deref(), 32);
-                        let parent = clean_activity_text(parent_title.as_deref(), 80);
-                        match (agent, parent) {
-                            (Some(agent), Some(parent)) => {
-                                clean_activity_text(Some(&format!("[{agent}] {parent}")), 80)
+            .filter_map(
+                |(id, title, preview, agent_name, parent_id, parent_title)| {
+                    if id.is_empty() || id.len() > 200 || id.chars().any(char::is_control) {
+                        return None;
+                    }
+                    let session_id =
+                        stable_record_id("antigravity", b"conversation", id.as_bytes()).ok()?;
+                    let display_name = clean_activity_text(title.as_deref(), 80)
+                        .or_else(|| clean_activity_text(preview.as_deref(), 80))
+                        .or_else(|| {
+                            let agent = clean_activity_text(agent_name.as_deref(), 32);
+                            let parent = clean_activity_text(parent_title.as_deref(), 80);
+                            match (agent, parent) {
+                                (Some(agent), Some(parent)) => {
+                                    clean_activity_text(Some(&format!("[{agent}] {parent}")), 80)
+                                }
+                                (None, Some(parent)) => {
+                                    clean_activity_text(Some(&format!("[子代理] {parent}")), 80)
+                                }
+                                (Some(agent), None) => {
+                                    clean_activity_text(Some(&format!("子代理 ({agent})")), 80)
+                                }
+                                (None, None)
+                                    if parent_id
+                                        .as_deref()
+                                        .is_some_and(|p| !p.trim().is_empty()) =>
+                                {
+                                    Some("[子代理]".to_owned())
+                                }
+                                (None, None) => None,
                             }
-                            (None, Some(parent)) => {
-                                clean_activity_text(Some(&format!("[子代理] {parent}")), 80)
-                            }
-                            (Some(agent), None) => {
-                                clean_activity_text(Some(&format!("子代理 ({agent})")), 80)
-                            }
-                            (None, None) if parent_id.as_deref().is_some_and(|p| !p.trim().is_empty()) => {
-                                Some("[子代理]".to_owned())
-                            }
-                            (None, None) => None,
-                        }
-                    });
-                Some(SessionActivity {
-                    tool_id: "antigravity",
-                    session_id,
-                    state: "generating",
-                    observed_at_ms: now,
-                    display_name,
-                    model_id: None,
-                    output_speed: None,
-                })
-            })
+                        });
+                    Some(SessionActivity {
+                        tool_id: "antigravity",
+                        session_id,
+                        state: "generating",
+                        observed_at_ms: now,
+                        display_name,
+                        model_id: None,
+                        output_speed: None,
+                    })
+                },
+            )
             .collect(),
     )
 }

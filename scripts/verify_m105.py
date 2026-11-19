@@ -81,13 +81,14 @@ def local_cache_check() -> None:
     db.close()
 
 def source_contract_check() -> None:
+    daemon = (ROOT/'crates/tokenscope-agent/src/daemon.rs').read_text(encoding='utf-8')
     checks = {
-        'Hub route': 'GET /api/v1/usage/changes' in (ROOT/'hub/internal/httpapi/server.go').read_text(),
-        'append-only feed transaction': 'INSERT INTO usage_change_feed' in (ROOT/'hub/internal/sqlstore/sqlite.go').read_text(),
-        'client pull': 'pull_usage_changes' in (ROOT/'crates/sync-client/src/client.rs').read_text(),
-        'atomic local cache': 'apply_remote_changes' in (ROOT/'crates/local-store/src/repository/sync.rs').read_text(),
-        'agent push+pull': 'pull_device_once' in (ROOT/'crates/tokenscope-agent/src/daemon.rs').read_text(),
-        'per-device dashboard': 'remote_by_device' in (ROOT/'apps/desktop/src/App.svelte').read_text(),
+        'Hub route': 'GET /api/v1/usage/changes' in (ROOT/'hub/internal/httpapi/server.go').read_text(encoding='utf-8'),
+        'append-only feed transaction': 'INSERT INTO usage_change_feed' in (ROOT/'hub/internal/sqlstore/sqlite.go').read_text(encoding='utf-8'),
+        'client pull': 'pull_usage_changes' in (ROOT/'crates/sync-client/src/client.rs').read_text(encoding='utf-8'),
+        'atomic local cache': 'apply_remote_changes' in (ROOT/'crates/local-store/src/repository/sync.rs').read_text(encoding='utf-8'),
+        'agent push+pull': 'push_hub_session' in daemon and 'pull_hub_session' in daemon,
+        'per-device dashboard': 'remote_by_device' in (ROOT/'apps/desktop/src/App.svelte').read_text(encoding='utf-8'),
     }
     for label, ok in checks.items():
         print(f'{"PASS" if ok else "FAIL"} {label}')

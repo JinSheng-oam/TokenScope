@@ -3,9 +3,9 @@
 from pathlib import Path
 import re, sqlite3, sys
 ROOT = Path(__file__).resolve().parents[1]
-schema = (ROOT / 'crates/local-store/src/schema.rs').read_text()
+schema = (ROOT / 'crates/local-store/src/schema.rs').read_text(encoding='utf-8')
 repo = '\n'.join((ROOT/'crates/local-store/src/repository'/p).read_text(encoding='utf-8') for p in ('models.rs', 'sync.rs'))
-worker = (ROOT / 'crates/sync-client/src/worker.rs').read_text()
+worker = (ROOT / 'crates/sync-client/src/worker.rs').read_text(encoding='utf-8')
 agent = '\n'.join((ROOT/'crates/tokenscope-agent/src'/p).read_text(encoding='utf-8') for p in ('cli.rs', 'daemon.rs', 'sync.rs'))
 tauri = '\n'.join((ROOT/'apps/desktop/src-tauri/src'/p).read_text(encoding='utf-8') for p in ('hub.rs', 'agent.rs'))
 conn = sqlite3.connect(':memory:')
@@ -44,7 +44,7 @@ for token in ['pending_outbox_due','schedule_outbox_retry','block_outbox_revisio
     assert token in repo, token
 for token in ['retryable','schedule_outbox_retry','block_outbox_revision','MAX_SYNC_BATCH']:
     assert token in worker, token
-for token in ['--sync','--sync-once','--sync-status','sync_device_once']:
+for token in ['--sync','--sync-once','--sync-status','push_hub_session']:
     assert token in agent, token
 print('M1-04 independent checks: PASS')
 print('schema v3 migration: PASS')

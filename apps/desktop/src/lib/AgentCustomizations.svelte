@@ -1,9 +1,5 @@
 <script lang="ts">
   import "./agentCustomizationBadges.css";
-  import SharedInstruction from './SharedInstruction.svelte';
-  let showShared = false;
-  let sharedDirty = false;
-  let sharedConfigured = false;
   import { onDestroy, onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { confirmDialog, promptDialog } from './dialogStore';
@@ -22,9 +18,6 @@
   import type { SkillSummary, UpdateInfo } from './agentSkillSourceTypes';
   import AgentSkillImport from './AgentSkillImport.svelte';
   import AgentSkillUpdates from './AgentSkillUpdates.svelte';
-  import AgentMcpConfig from './AgentMcpConfig.svelte';
-  let showMcp = false;
-  let mcpDirty = false;
   import AgentAiConfig from './AgentAiConfig.svelte';
   import AgentFileEditor from './AgentFileEditor.svelte';
   import AgentFileCatalog from './AgentFileCatalog.svelte';
@@ -182,7 +175,7 @@
     return (val ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   }
 
-  $: dirty = (showMcp && mcpDirty) || (showShared && sharedDirty) || (selected !== null && normalizeLines(content) !== normalizeLines(original));
+  $: dirty = selected !== null && normalizeLines(content) !== normalizeLines(original);
   $: instructions = entries.filter((entry) => entry.kind === 'instruction');
   $: skills = entries.filter((entry) => entry.kind === 'skill');
   $: currentProvider = providers.find((p) => p.id === provider)!;
@@ -257,7 +250,6 @@
 
   async function switchProvider(next: Provider) {
     if (provider === next || !(await canLeave())) return;
-    mcpDirty = false;
     provider = next;
     selected = null;
     content = '';
@@ -512,10 +504,10 @@
   });
 </script>
 
-<div class="custom-page" class:fit-workspace={!showShared && !showAiConfig && !showMcp}>
+<div class="custom-page" class:fit-workspace={!showAiConfig}>
   <div class="page-header custom-heading">
     <h1>Agent 配置与技能管理</h1>
-    <span class="local-badge" title="普通指令与 Skill 仅操作本机文件；统一指令有独立同步设置">
+    <span class="local-badge" title="普通指令与 Skill 仅操作本机文件">
       {@html icons.shield}
       <span>仅操作本机文件</span>
     </span>
@@ -537,16 +529,6 @@
       {/each}
     </div>
     <div class="configuration-actions">
-      <button type="button" class="ai-toggle-btn" class:active={showShared} aria-expanded={showShared}
-        disabled={!runtimeAvailable} onclick={async () => {
-          if (showShared && sharedDirty && !(await confirmDialog({ title: '未保存的统一指令', message: '放弃未保存的统一指令修改？', confirmText: '放弃' }))) return;
-          showShared = !showShared;
-          if (!showShared) sharedDirty = false;
-        }}>
-        <span class="ai-status-dot" class:configured={sharedConfigured && !sharedDirty} class:dirty={sharedDirty}></span>
-        <span class="ai-btn-icon">{@html icons.edit}</span>
-        <span>统一指令</span>
-      </button>
       <button
         type="button"
         class="ai-toggle-btn"
@@ -559,31 +541,10 @@
         <span class="ai-btn-icon">{@html icons.sparkle}</span>
         <span>AI 助手配置</span>
       </button>
-      <button type="button" class="ai-toggle-btn" class:active={showMcp} aria-expanded={showMcp}
-        disabled={!runtimeAvailable} onclick={async () => {
-          if (showMcp && mcpDirty && !(await confirmDialog({ title: '未保存的 MCP 修改', message: '放弃未保存的 MCP 修改？', confirmText: '放弃' }))) return;
-          showMcp = !showMcp;
-          if (!showMcp) mcpDirty = false;
-        }}>
-        <span class="ai-status-dot" class:dirty={mcpDirty}></span>
-        <span class="ai-btn-icon">{@html icons.tools}</span>
-        <span>MCP 配置</span>
-      </button>
     </div>
   </div>
 
-  {#if showShared}<SharedInstruction bind:unsaved={sharedDirty} bind:configured={sharedConfigured} source={selected?.kind === "instruction" ? content : null} onClose={async () => { if (sharedDirty && !(await confirmDialog({ title: '未保存的统一指令', message: '放弃未保存的统一指令修改？', confirmText: '放弃' }))) return; showShared = false; sharedDirty = false; }} />{/if}
   <AgentAiConfig {runtimeAvailable} bind:showAiConfig bind:hasAiConfig bind:error bind:notice />
-
-  {#if showMcp && runtimeAvailable}
-    {#key provider}
-      <AgentMcpConfig {provider} bind:dirty={mcpDirty} onClose={async () => {
-        if (mcpDirty && !(await confirmDialog({ title: '未保存的 MCP 修改', message: '放弃未保存的 MCP 修改？', confirmText: '放弃' }))) return;
-        showMcp = false;
-        mcpDirty = false;
-      }} />
-    {/key}
-  {/if}
 
   {#if !runtimeAvailable}
     <div class="empty-box">请在 TokenScope 桌面应用中管理本地文件。</div>

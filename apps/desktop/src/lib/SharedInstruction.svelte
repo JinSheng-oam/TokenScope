@@ -7,11 +7,13 @@
     source = null,
     unsaved = $bindable(false),
     configured = $bindable(false),
+    standalone = false,
     onClose = undefined,
   }: {
     source?: string | null;
     unsaved?: boolean;
     configured?: boolean;
+    standalone?: boolean;
     onClose?: () => void;
   } = $props();
 
@@ -92,11 +94,11 @@
   }
 </script>
 
-<section class="shared" aria-label="统一指令">
+<section class="shared" class:standalone aria-label="统一指令">
   <div class="shared-head">
     <div class="shared-title-group">
       <div class="shared-title-row">
-        <h2>统一指令</h2>
+        <h2>{standalone ? '主稿与分发' : '统一指令'}</h2>
         {#if dirty}
           <span class="state-pill warn">有未保存修改</span>
         {:else if view?.draft}
@@ -108,22 +110,26 @@
       <p class="shared-subtitle">集中维护跨工具通用指令主稿，一键预览并分发至本机各 Agent 全局入口文件</p>
     </div>
 
-    <div class="shared-head-actions">
-      <button
-        type="button"
-        class="btn-secondary btn-compact-action"
-        disabled={busy || source === null}
-        title={source === null ? '请先在下方文件列表中选中一个指令文件' : '将下方当前打开的指令文件内容导入为主稿'}
-        onclick={() => {
-          if (source !== null) draft = normalizeLines(source);
-        }}
-      >
-        从当前文件导入
-      </button>
-      {#if onClose}
-        <button type="button" class="btn-close-panel" onclick={onClose} title="收起统一指令面板">✕ 收起</button>
-      {/if}
-    </div>
+    {#if source !== null || onClose}
+      <div class="shared-head-actions">
+        {#if source !== null}
+          <button
+            type="button"
+            class="btn-secondary btn-compact-action"
+            disabled={busy}
+            title="将当前打开的指令文件内容导入为主稿"
+            onclick={() => {
+              if (source !== null) draft = normalizeLines(source);
+            }}
+          >
+            从当前文件导入
+          </button>
+        {/if}
+        {#if onClose}
+          <button type="button" class="btn-close-panel" onclick={onClose} title="收起统一指令面板">✕ 收起</button>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   <div class="shared-workbench">
@@ -949,6 +955,14 @@
     border-radius: var(--radius-sm);
     background: var(--color-danger-bg);
     border: 1px solid var(--color-danger-border);
+  }
+
+  .shared.standalone textarea {
+    min-height: 360px;
+  }
+
+  .shared.standalone .target-list {
+    max-height: 360px;
   }
 
   @media (max-width: 980px) {

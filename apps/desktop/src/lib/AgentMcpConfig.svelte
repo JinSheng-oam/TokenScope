@@ -19,7 +19,8 @@
 
   export let provider: Provider;
   export let dirty = false;
-  export let onClose: () => void;
+  export let title = 'MCP 配置';
+  export let onClose: (() => void) | undefined = undefined;
 
   let profile: 'desktop' | 'web' = 'desktop';
   let view: McpView | null = null;
@@ -309,7 +310,7 @@
   <div class="mcp-heading">
     <div class="mcp-title-block">
       <div class="mcp-title-row">
-        <strong>MCP 配置</strong>
+        <strong>{title}</strong>
         {#if view}
           <span class="mcp-count-pill">{servers.length} 个服务</span>
         {/if}
@@ -375,9 +376,11 @@
         {@html icons.refresh}
       </button>
 
-      <button type="button" class="btn-close-panel" disabled={busy} onclick={onClose} title="收起 MCP 配置面板">
-        ✕ 收起
-      </button>
+      {#if onClose}
+        <button type="button" class="btn-close-panel" disabled={busy} onclick={onClose} title="收起 MCP 配置面板">
+          ✕ 收起
+        </button>
+      {/if}
     </div>
   </div>
 

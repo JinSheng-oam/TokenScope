@@ -34,7 +34,7 @@
   import AppDialogHost from './lib/AppDialogHost.svelte';
   import { confirmDialog } from './lib/dialogStore';
 
-  type Tab = 'overview' | 'devices' | 'tools' | 'models' | 'pricing' | 'sessions' | 'projects' | 'quota' | 'settings' | 'customizations';
+  type Tab = 'overview' | 'devices' | 'tools' | 'models' | 'pricing' | 'sessions' | 'projects' | 'quota' | 'settings' | 'customizations' | 'shared-instruction' | 'mcp';
   type SecondaryTab = Exclude<Tab, 'overview'>;
   interface LoadedPages {
     devices?: typeof import('./lib/DevicesPage.svelte').default;
@@ -46,6 +46,8 @@
     quota?: typeof import('./lib/QuotaPage.svelte').default;
     settings?: typeof import('./lib/SettingsPage.svelte').default;
     customizations?: typeof import('./lib/AgentCustomizations.svelte').default;
+    'shared-instruction'?: typeof import('./lib/SharedInstructionPage.svelte').default;
+    mcp?: typeof import('./lib/McpConfigPage.svelte').default;
   }
   const pageLoaders: { [K in SecondaryTab]: () => Promise<{ default: NonNullable<LoadedPages[K]> }> } = {
     devices: () => import('./lib/DevicesPage.svelte'),
@@ -57,6 +59,8 @@
     quota: () => import('./lib/QuotaPage.svelte'),
     settings: () => import('./lib/SettingsPage.svelte'),
     customizations: () => import('./lib/AgentCustomizations.svelte'),
+    'shared-instruction': () => import('./lib/SharedInstructionPage.svelte'),
+    mcp: () => import('./lib/McpConfigPage.svelte'),
   };
   let loadedPages: LoadedPages = {};
   let pendingTab: Tab | null = null;
@@ -64,6 +68,8 @@
   let activeTab: Tab = 'overview';
   let isEditingOverviewLayout = false;
   let customizationDirty = false;
+  let sharedInstructionDirty = false;
+  let mcpConfigDirty = false;
   let range: DashboardRange = 'all';
   let customStart = '';
   let customEnd = '';
@@ -184,8 +190,16 @@
     { id: 'sessions', label: '会话分析', iconKey: 'sessions' },
     { id: 'quota', label: '额度活动', iconKey: 'quota' },
     { id: 'customizations', label: '规则配置', iconKey: 'tools' },
+    { id: 'shared-instruction', label: '统一指令', iconKey: 'edit' },
+    { id: 'mcp', label: 'MCP 配置', iconKey: 'cpu' },
     { id: 'settings', label: '系统设置', iconKey: 'settings' },
   ];
+
+  $: isLocalConfigTab =
+    activeTab === 'pricing' ||
+    activeTab === 'customizations' ||
+    activeTab === 'shared-instruction' ||
+    activeTab === 'mcp';
 
   // All dashboard-specific projection rules live behind this pure view module.
   $: dashboardView = buildDashboardProjection({
@@ -355,17 +369,27 @@
 
   async function handleSelectTab(nextTab: Tab) {
     if ((pendingTab ?? activeTab) === nextTab) return;
+    const activeDirtyPrompt =
+      activeTab === 'customizations' && customizationDirty
+        ? { title: '未保存的更改', message: '当前文件有未保存的更改，确定放弃更改并切换页面？' }
+        : activeTab === 'shared-instruction' && sharedInstructionDirty
+          ? { title: '未保存的统一指令', message: '统一指令主稿有未保存的更改，确定放弃并切换页面？' }
+          : activeTab === 'mcp' && mcpConfigDirty
+            ? { title: '未保存的 MCP 修改', message: '当前 MCP 配置有未保存的修改，确定放弃并切换页面？' }
+            : null;
     if (
-      activeTab === 'customizations' &&
-      customizationDirty &&
+      activeDirtyPrompt &&
       !(await confirmDialog({
-        title: '未保存的更改',
-        message: '当前文件有未保存的更改，确定放弃更改并切换页面？',
+        title: activeDirtyPrompt.title,
+        message: activeDirtyPrompt.message,
         confirmText: '放弃更改',
       }))
     ) {
       return;
     }
+    if (activeTab === 'customizations') customizationDirty = false;
+    if (activeTab === 'shared-instruction') sharedInstructionDirty = false;
+    if (activeTab === 'mcp') mcpConfigDirty = false;
 
     const seq = ++navSequence;
     if (nextTab === 'overview' || loadedPages[nextTab]) {
@@ -571,7 +595,7 @@
     <!-- Topbar -->
     <DashboardTopbar {activeTabLabel} {deviceScope} {deviceScopeLabel} {selectableRemoteDevices} {snapshot}
       {range} {todayIso} {customStart} {customEnd}
-      {refreshing} {selectDeviceScope} {handleSelectRange} {applyCustomRange} {loadDashboard} showControls={activeTab !== 'pricing' && activeTab !== 'customizations'}
+      {refreshing} {selectDeviceScope} {handleSelectRange} {applyCustomRange} {loadDashboard} showControls={!isLocalConfigTab}
       {isEditingOverviewLayout}
       onToggleOverviewLayout={() => (isEditingOverviewLayout = !isEditingOverviewLayout)}
     />
@@ -579,12 +603,12 @@
     <!-- Page Content Area -->
     <section
       class="page-content"
-      class:fit-viewport={loading && activeTab !== 'pricing' && activeTab !== 'customizations'}
+      class:fit-viewport={loading && !isLocalConfigTab}
       class:overview-page={activeTab === 'overview' && !loading}
-      class:compact-page={activeTab === 'models' || activeTab === 'pricing' || activeTab === 'projects' || activeTab === 'customizations'}
+      class:compact-page={activeTab === 'models' || activeTab === 'projects' || isLocalConfigTab}
       class:compact-session={activeTab === 'sessions' && ($sessionState.pageSize <= 7 || ($sessionState.loading && !$sessionState.analysis))}
     >
-      {#if errorMessage && activeTab !== 'pricing' && activeTab !== 'customizations'}
+      {#if errorMessage && !isLocalConfigTab}
         <div class="notice-box" role="alert">
           {@html icons.alert}
           <p>{errorMessage}</p>
@@ -598,6 +622,12 @@
       {:else if activeTab === 'customizations' && loadedPages.customizations}
         {@const AgentCustomizationsView = loadedPages.customizations}
         <AgentCustomizationsView {runtimeAvailable} bind:dirty={customizationDirty} />
+      {:else if activeTab === 'shared-instruction' && loadedPages['shared-instruction']}
+        {@const SharedInstructionPageView = loadedPages['shared-instruction']}
+        <SharedInstructionPageView {runtimeAvailable} bind:dirty={sharedInstructionDirty} />
+      {:else if activeTab === 'mcp' && loadedPages.mcp}
+        {@const McpConfigPageView = loadedPages.mcp}
+        <McpConfigPageView {runtimeAvailable} bind:dirty={mcpConfigDirty} />
       {:else if loading}
         <div class="loading-state" role="status" aria-live="polite">
           <LoadingStatus message="正在加载用量…" stage="WAL 并发只读通道" />

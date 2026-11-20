@@ -24,6 +24,25 @@ pub(super) fn read_bytes(file: &File) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+pub(super) fn read_history_bytes(path: &Path, file: &File) -> Result<Vec<u8>, String> {
+    if !locate::is_compressed(path) {
+        return read_bytes(file);
+    }
+    if file.metadata().map_err(io)?.len() > MAX_FILE as u64 {
+        return Err("会话超过 128 MiB，暂不支持查看".into());
+    }
+    let decoder = zstd::stream::read::Decoder::new(file).map_err(io)?;
+    let mut bytes = Vec::new();
+    decoder
+        .take(MAX_FILE as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(io)?;
+    if bytes.len() > MAX_FILE {
+        return Err("会话解压后超过 128 MiB，暂不支持查看".into());
+    }
+    Ok(bytes)
+}
+
 pub(super) fn revision(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }

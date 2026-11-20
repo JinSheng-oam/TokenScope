@@ -150,3 +150,43 @@ fn replacement_preserves_a_backup_while_the_source_is_open() {
     fs::remove_file(backup).unwrap();
     fs::remove_dir(dir).unwrap();
 }
+
+#[test]
+fn deepseek_locator_reads_latest_zstd_generation_readonly() {
+    let home = std::env::temp_dir().join(format!(
+        "tokenscope-dsh-zstd-{}-{}",
+        std::process::id(),
+        stamp().unwrap()
+    ));
+    let session_dir = home.join("sessions").join("--project--").join("session-1");
+    fs::create_dir_all(&session_dir).unwrap();
+
+    let v3 = session_dir.join("session.v3.jsonl.zstd");
+    let v4 = session_dir.join("session.v4.jsonl.zstd");
+    let header = br#"{"type":"session","id":"dsh-session-1","version":4}"#;
+    let body = br#"{"type":"user/message","data":{"message":{"content":"hello from zstd"}}}"#;
+
+    let mut frame_v3 = zstd::encode_all(&header[..], 1).unwrap();
+    frame_v3.extend(zstd::encode_all(b"\n".as_slice(), 1).unwrap());
+    fs::write(&v3, frame_v3).unwrap();
+
+    // Multi-frame zstd matching Harness durable flush format
+    let mut frame_v4 = zstd::encode_all([header.as_slice(), b"\n"].concat().as_slice(), 1).unwrap();
+    frame_v4.extend(zstd::encode_all([body.as_slice(), b"\n"].concat().as_slice(), 1).unwrap());
+    fs::write(&v4, frame_v4).unwrap();
+
+    let key = session_key("deepseek-harness", b"dsh-session-1").unwrap();
+    let (paths, preferred) = locate_in("deepseek-harness", &key, &home, &["sessions"]).unwrap();
+    assert_eq!(paths, vec![v4.clone()]);
+    assert_eq!(preferred, None);
+    assert!(super::locate::part_path(&paths, 0).is_err());
+
+    let file = OpenOptions::new().read(true).open(&paths[0]).unwrap();
+    let bytes = super::storage::read_history_bytes(&paths[0], &file).unwrap();
+    let history = inspect("deepseek-harness", &bytes, 0, false).unwrap();
+    assert!(!history.writable);
+    assert_eq!(history.total, 1);
+    assert_eq!(history.messages[0].text, "hello from zstd");
+
+    let _ = fs::remove_dir_all(home);
+}

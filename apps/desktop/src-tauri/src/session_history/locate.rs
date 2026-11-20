@@ -55,11 +55,19 @@ pub(super) fn locate_in(
                 let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
                     continue;
                 };
-                let Some(stem) = name.strip_suffix(".jsonl").or_else(|| {
-                    (tool == "codex")
-                        .then(|| name.strip_suffix(".jsonl.zst"))
-                        .flatten()
-                }) else {
+                let Some(stem) = name
+                    .strip_suffix(".jsonl")
+                    .or_else(|| {
+                        (tool == "codex")
+                            .then(|| name.strip_suffix(".jsonl.zst"))
+                            .flatten()
+                    })
+                    .or_else(|| {
+                        (tool == "deepseek-harness")
+                            .then(|| name.strip_suffix(".jsonl.zstd"))
+                            .flatten()
+                    })
+                else {
                     continue;
                 };
                 let native = if tool == "claude" {
@@ -110,6 +118,11 @@ pub(super) fn locate_in(
         .collect();
     if matches.is_empty() {
         return Err("未找到对应的本地会话文件；文件可能已移走或不在当前 Agent 目录中。".into());
+    }
+    if tool == "deepseek-harness" && matches.len() > 1 {
+        if let Some(latest) = select_latest_deepseek_generation(&matches) {
+            matches = vec![latest];
+        }
     }
     if tool != "codex" && matches.len() > 1 {
         return Err("此会话对应多个源文件，暂不支持改写".into());
@@ -197,12 +210,47 @@ pub(super) fn antigravity_transcripts(home: &Path, id: &str) -> Result<Vec<PathB
     Ok(paths)
 }
 
+pub(super) fn is_compressed(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| matches!(ext, "zst" | "zstd"))
+}
+
 pub(super) fn part_path(paths: &[PathBuf], part: usize) -> Result<&Path, String> {
     let path = paths.get(part).ok_or("会话分段已变化，请重新打开")?;
-    if path.extension().is_some_and(|ext| ext == "zst") {
+    if is_compressed(path) {
         return Err("此分段已压缩归档，暂不支持编辑".into());
     }
     Ok(path)
+}
+
+fn parse_deepseek_generation(name: &str) -> Option<u32> {
+    let stem = name
+        .strip_suffix(".jsonl.zstd")
+        .or_else(|| name.strip_suffix(".jsonl"))?;
+    if stem == "session" {
+        return Some(0);
+    }
+    let digits = stem.strip_prefix("session.v")?;
+    if digits.is_empty() || digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<u32>().ok().filter(|&gen| gen > 0)
+}
+
+fn select_latest_deepseek_generation(paths: &[PathBuf]) -> Option<PathBuf> {
+    let first_parent = paths.first()?.parent()?;
+    if !paths.iter().all(|p| p.parent() == Some(first_parent)) {
+        return None;
+    }
+    paths
+        .iter()
+        .filter_map(|p| {
+            let gen = parse_deepseek_generation(p.file_name()?.to_str()?)?;
+            Some((gen, p))
+        })
+        .max_by_key(|(gen, _)| *gen)
+        .map(|(_, p)| p.clone())
 }
 
 pub(super) fn file_revision(path: &Path, content_revision: &str) -> String {
@@ -213,9 +261,16 @@ pub(super) fn file_revision(path: &Path, content_revision: &str) -> String {
 }
 
 fn header_id(path: &Path, tool: &str) -> Option<String> {
-    let mut reader = BufReader::new(File::open(path).ok()?.take(MAX_LINE as u64 + 1));
+    let file = File::open(path).ok()?;
     let mut line = Vec::new();
-    reader.read_until(b'\n', &mut line).ok()?;
+    if is_compressed(path) {
+        let decoder = zstd::stream::read::Decoder::new(file).ok()?;
+        let mut reader = BufReader::new(decoder.take(MAX_LINE as u64 + 1));
+        reader.read_until(b'\n', &mut line).ok()?;
+    } else {
+        let mut reader = BufReader::new(file.take(MAX_LINE as u64 + 1));
+        reader.read_until(b'\n', &mut line).ok()?;
+    }
     let value: Value = serde_json::from_slice(&line).ok()?;
     match (tool, value.get("type")?.as_str()?) {
         ("codex", "session_meta") => value.pointer("/payload/id")?.as_str().map(str::to_owned),

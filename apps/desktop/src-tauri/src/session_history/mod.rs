@@ -155,15 +155,12 @@ pub(crate) async fn get_session_history(
                 .position(|p| locate::part_path(std::slice::from_ref(p), 0).is_ok())
                 .unwrap_or_default()
         });
-        let path = locate::part_path(&paths, index)?;
+        let path = paths.get(index).ok_or("会话分段已变化，请重新打开")?;
         let file = File::open(path).map_err(io)?;
-        let bytes = storage::read_bytes(&file)?;
-        let mut history = codec::inspect(
-            &tool_id,
-            &bytes,
-            offset,
-            !matches!(tool_id.as_str(), "antigravity" | "pi"),
-        )?;
+        let bytes = storage::read_history_bytes(path, &file)?;
+        let writable =
+            !matches!(tool_id.as_str(), "antigravity" | "pi") && !locate::is_compressed(path);
+        let mut history = codec::inspect(&tool_id, &bytes, offset, writable)?;
         history.part_count = paths.len();
         history.part_index = index;
         history.revision = locate::file_revision(path, &history.revision);

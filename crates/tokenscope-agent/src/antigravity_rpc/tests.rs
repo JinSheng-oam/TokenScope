@@ -1,4 +1,4 @@
-use super::endpoint::Endpoint;
+use super::endpoint::{daemon_endpoints_from_dir, Endpoint};
 use super::error::RpcError;
 use super::process::{classify_process, ProcessKind};
 use super::quota::{fraction, local_source_id, parse_grouped_quota, parse_legacy_quota};
@@ -24,21 +24,52 @@ fn parses_antigravity_app_process_and_never_requires_token_in_output() {
 }
 
 #[test]
-fn rejects_unrelated_and_tokenless_desktop_processes() {
+fn accepts_current_tokenless_desktop_process_for_daemon_discovery() {
     assert!(classify_process("123 /bin/bash --login").is_none());
-    assert!(classify_process("53602 /Applications/Antigravity.app/Contents/Resources/bin/language_server --app_data_dir antigravity").is_none());
+    let p = classify_process("53602 /Applications/Antigravity.app/Contents/Resources/bin/language_server --app_data_dir antigravity").unwrap();
+    assert_eq!(p.kind, ProcessKind::App);
+    assert!(p.csrf.is_empty());
 }
 
 #[test]
-fn allows_standalone_cli_without_csrf_but_not_hub_mode() {
+fn discovers_matching_daemon_ports_and_csrf_from_current_descriptor() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("hub_5004.json"),
+        r#"{"pid":7777,"httpsPort":5003,"httpPort":5004,"lsVersion":"2.34.0","csrfToken":"test-local-token"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("hub_9999.json"),
+        r#"{"pid":8888,"httpsPort":9998,"httpPort":9999,"csrfToken":"stale-token"}"#,
+    )
+    .unwrap();
+
+    let endpoints = daemon_endpoints_from_dir(dir.path(), 7777);
+    assert_eq!(endpoints.len(), 2);
+    let mut ports = endpoints
+        .iter()
+        .map(|endpoint| endpoint.port)
+        .collect::<Vec<_>>();
+    ports.sort_unstable();
+    assert_eq!(ports, vec![5003, 5004]);
+    assert!(endpoints
+        .iter()
+        .all(|endpoint| endpoint.csrf == "test-local-token"));
+}
+
+#[test]
+fn allows_cli_without_command_line_csrf_for_descriptor_discovery() {
     let cli =
         classify_process("60123 /Users/x/.antigravity/bin/agy language-server --stdio").unwrap();
     assert_eq!(cli.kind, ProcessKind::Cli);
     assert!(cli.csrf.is_empty());
-    assert!(classify_process(
-        "60123 /Users/x/.antigravity/bin/agy --hub --hub-port=55555 --app_data_dir=antigravity"
+    let hub = classify_process(
+        "60123 /Users/x/.antigravity/bin/agy --hub --hub-port=55555 --app_data_dir=antigravity",
     )
-    .is_none());
+    .unwrap();
+    assert_eq!(hub.kind, ProcessKind::Cli);
+    assert!(hub.csrf.is_empty());
 }
 
 #[test]

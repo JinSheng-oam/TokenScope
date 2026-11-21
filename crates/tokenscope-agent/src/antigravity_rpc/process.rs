@@ -119,10 +119,10 @@ pub(super) fn classify_process(line: &str) -> Option<ProcessInfo> {
         return None;
     };
     let csrf = flag_value(command, "--csrf_token").unwrap_or_default();
-    // Desktop/IDE and hub-mode CLI require CSRF. A standalone CLI LS may not.
-    if (kind != ProcessKind::Cli || hub_mode) && csrf.is_empty() {
-        return None;
-    }
+    // Current Antigravity desktop versions omit the token from the process
+    // command line and publish it in a per-process daemon descriptor instead.
+    // Keep the process eligible here; endpoint discovery only uses a descriptor
+    // whose PID matches this live process.
     let hub_port = flag_value(command, "--hub-port")
         .and_then(|v| v.parse::<u16>().ok())
         .filter(|p| *p > 0);

@@ -2,12 +2,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/svelte';
 import QuotaPage from './QuotaPage.svelte';
-import type { CodexQuota, DashboardSnapshot } from './types';
+import type { AntigravityQuota, CodexQuota } from './types';
 
 describe('QuotaPage.svelte', () => {
   it('distinguishes 0% exhausted quota from null unknown quota and triggers refresh', async () => {
     const now = Date.now();
-    const onRefreshCodexQuota = vi.fn();
+    const onRefreshQuota = vi.fn();
 
     const codexQuotas: CodexQuota[] = [
       {
@@ -20,24 +20,22 @@ describe('QuotaPage.svelte', () => {
       },
     ];
 
-    const snapshot = {
-      antigravity_quota: [
-        {
-          source_id: 'ag-1',
-          pool_id: 'claude_gpt',
-          window_id: 'five_hour',
-          remaining_basis_points: null,
-          reset_at_ms: null,
-          observed_at_ms: now - 30_000,
-        },
-      ],
-    } as unknown as DashboardSnapshot;
+    const antigravityQuotas: AntigravityQuota[] = [
+      {
+        source_id: 'ag-1',
+        pool_id: 'claude_gpt',
+        window_id: 'five_hour',
+        remaining_basis_points: null,
+        reset_at_ms: null,
+        observed_at_ms: now - 30_000,
+      },
+    ];
 
     const { getByText, getByRole } = render(QuotaPage, {
       props: {
-        snapshot,
         codexQuotas,
-        onRefreshCodexQuota,
+        antigravityQuotas,
+        onRefreshQuota,
       },
     });
 
@@ -46,6 +44,25 @@ describe('QuotaPage.svelte', () => {
     expect(getByText('未知')).toBeTruthy();
 
     await fireEvent.click(getByRole('button', { name: '刷新额度' }));
-    expect(onRefreshCodexQuota).toHaveBeenCalledTimes(1);
+    expect(onRefreshQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows independent provider progress and errors', () => {
+    const { getByRole, getByText } = render(QuotaPage, {
+      props: {
+        codexQuotas: [],
+        antigravityQuotas: [],
+        refreshing: true,
+        codexRefreshing: true,
+        antigravityRefreshing: true,
+        codexQuotaError: 'Codex 查询失败',
+        antigravityQuotaError: 'Antigravity 查询超时',
+      },
+    });
+
+    expect(getByText('正在刷新')).toBeTruthy();
+    expect(getByText('Codex 查询失败')).toBeTruthy();
+    expect(getByText('Antigravity 查询超时')).toBeTruthy();
+    expect(getByRole('button', { name: '正在刷新' })).toHaveProperty('disabled', true);
   });
 });

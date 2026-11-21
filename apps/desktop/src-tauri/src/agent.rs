@@ -5,6 +5,7 @@ use crate::{
     },
     state::{AgentProcess, AgentStatus},
 };
+use serde::de::DeserializeOwned;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -13,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Manager};
-use tokenscope_local_store::CodexQuota;
+use tokenscope_local_store::{AntigravityQuota, CodexQuota};
 
 pub(crate) fn start_agent_inner(
     app: &AppHandle,
@@ -172,12 +173,24 @@ pub(crate) struct CodexQuotaRefreshResult {
     warning: Option<String>,
 }
 
-fn refresh_codex_quota_inner(app: &AppHandle) -> Result<CodexQuotaRefreshResult, String> {
+#[derive(serde::Serialize)]
+pub(crate) struct AntigravityQuotaRefreshResult {
+    snapshots: Vec<AntigravityQuota>,
+}
+
+const QUOTA_QUERY_TIMEOUT: Duration = Duration::from_secs(20);
+
+fn query_agent_quota<T: DeserializeOwned>(
+    app: &AppHandle,
+    argument: &str,
+    provider: &str,
+    empty_message: &str,
+) -> Result<Vec<T>, String> {
     let agent =
         resolve_agent(app).ok_or_else(|| "未找到 tokenscope-agent 可执行文件".to_string())?;
     let mut command = Command::new(agent);
     command
-        .arg("--query-codex-quota-json")
+        .arg(argument)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -186,20 +199,59 @@ fn refresh_codex_quota_inner(app: &AppHandle) -> Result<CodexQuotaRefreshResult,
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
     }
-    let output = command
-        .output()
-        .map_err(|e| format!("启动 Codex 额度查询失败：{e}"))?;
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("启动 {provider} 额度查询失败：{e}"))?;
+    let deadline = Instant::now() + QUOTA_QUERY_TIMEOUT;
+    loop {
+        if child
+            .try_wait()
+            .map_err(|e| format!("等待 {provider} 额度查询失败：{e}"))?
+            .is_some()
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "{provider} 额度查询超过 {} 秒未完成，请确认对应客户端正在运行后重试",
+                QUOTA_QUERY_TIMEOUT.as_secs()
+            ));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("读取 {provider} 额度查询结果失败：{e}"))?;
     if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        let detail = detail.trim();
+        let detail = detail.strip_prefix("TokenScope: ").unwrap_or(detail);
         return Err(format!(
-            "Codex 额度查询失败：{}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            "{provider} 额度查询失败：{}",
+            if detail.is_empty() {
+                "未返回错误信息"
+            } else {
+                detail
+            }
         ));
     }
-    let snapshots: Vec<CodexQuota> = serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("解析 Codex 额度数据失败：{e}"))?;
+    let snapshots: Vec<T> = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("解析 {provider} 额度数据失败：{e}"))?;
     if snapshots.is_empty() {
-        return Err("Codex 未返回额度窗口".into());
+        return Err(empty_message.into());
     }
+    Ok(snapshots)
+}
+
+fn refresh_codex_quota_inner(app: &AppHandle) -> Result<CodexQuotaRefreshResult, String> {
+    let snapshots = query_agent_quota(
+        app,
+        "--query-codex-quota-json",
+        "Codex",
+        "Codex 未返回额度窗口",
+    )?;
     Ok(CodexQuotaRefreshResult {
         snapshots,
         persisted: false,
@@ -214,6 +266,27 @@ pub(crate) async fn refresh_codex_quota_now(
     tauri::async_runtime::spawn_blocking(move || refresh_codex_quota_inner(&app))
         .await
         .map_err(|error| format!("Codex 额度刷新任务失败：{error}"))?
+}
+
+fn refresh_antigravity_quota_inner(
+    app: &AppHandle,
+) -> Result<AntigravityQuotaRefreshResult, String> {
+    let snapshots = query_agent_quota(
+        app,
+        "--query-antigravity-quota-json",
+        "Antigravity",
+        "Antigravity 未返回额度窗口",
+    )?;
+    Ok(AntigravityQuotaRefreshResult { snapshots })
+}
+
+#[tauri::command]
+pub(crate) async fn refresh_antigravity_quota_now(
+    app: AppHandle,
+) -> Result<AntigravityQuotaRefreshResult, String> {
+    tauri::async_runtime::spawn_blocking(move || refresh_antigravity_quota_inner(&app))
+        .await
+        .map_err(|error| format!("Antigravity 额度刷新任务失败：{error}"))?
 }
 
 pub(crate) fn stop_agent_inner(app: &AppHandle, process: &AgentProcess) -> Result<String, String> {

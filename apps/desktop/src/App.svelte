@@ -18,6 +18,7 @@
     getDashboardSnapshot,
     getRecentSessionActivity,
     isTauriRuntime,
+    refreshAntigravityQuotaNow,
     refreshCodexQuotaNow,
     runDiagnostics,
   } from './lib/api';
@@ -28,7 +29,7 @@
   import { icons } from './lib/icons';
   import { createSessionController } from './lib/sessionController';
   import { createSettingsController } from './lib/settingsController';
-  import type { AgentStatus, CodexQuota, DashboardObservations, DashboardRange, DashboardSnapshot, RemoteDevice, SessionActivity } from './lib/types';
+  import type { AgentStatus, AntigravityQuota, CodexQuota, DashboardObservations, DashboardRange, DashboardSnapshot, RemoteDevice, SessionActivity } from './lib/types';
   import OverviewPage from './lib/OverviewPage.svelte';
   import LoadingStatus from './lib/LoadingStatus.svelte';
   import AppDialogHost from './lib/AppDialogHost.svelte';
@@ -80,8 +81,11 @@
   let loading = true;
   let refreshing = false;
   let codexQuotaRefreshing = false;
+  let antigravityQuotaRefreshing = false;
   let codexQuotaError = '';
+  let antigravityQuotaError = '';
   let codexQuotaOverride: CodexQuota[] | null = null;
+  let antigravityQuotaOverride: AntigravityQuota[] | null = null;
   let sessionActivity: SessionActivity[] = [];
   let sessionRates: SessionRates | null = null;
   let activityPolling = false;
@@ -144,7 +148,9 @@
   let heatmapSnapshot: DashboardSnapshot | null = null;
   let hoveredHeatmapCell: HeatmapCell | null = null;
 
-  $: activeAntigravityQuotas = filterActiveAntigravityQuotas(snapshot?.antigravity_quota ?? []);
+  $: quotaRefreshing = codexQuotaRefreshing || antigravityQuotaRefreshing;
+  $: quotaRows = antigravityQuotaOverride ?? snapshot?.antigravity_quota ?? [];
+  $: activeAntigravityQuotas = filterActiveAntigravityQuotas(quotaRows);
   $: activeCodexQuotas = filterActiveCodexQuotas(codexQuotaOverride ?? snapshot?.codex_quota ?? []);
   $: exhaustedQuotaCount = (
     activeCodexQuotas.filter((q) => q.remaining_basis_points === 0).length +
@@ -283,6 +289,13 @@
     ));
   }
 
+  function antigravityQuotaCovers(stored: AntigravityQuota[], candidate: AntigravityQuota[]) {
+    return candidate.length > 0 && candidate.every((q) => stored.some((s) =>
+      s.source_id === q.source_id && s.pool_id === q.pool_id && s.window_id === q.window_id &&
+      s.observed_at_ms >= q.observed_at_ms
+    ));
+  }
+
   function applySnapshot(next: DashboardSnapshot) {
     if (latestObservations && latestObservations.observed_at_ms > next.generated_at_ms) {
       const { observed_at_ms, ...update } = latestObservations;
@@ -292,6 +305,7 @@
     if (next.range === 'all') heatmapSnapshot = next;
     else if (trendViewMode === 'heatmap') void ensureHeatmapAllDaily();
     if (codexQuotaOverride && quotaCovers(next.codex_quota, codexQuotaOverride)) codexQuotaOverride = null;
+    if (antigravityQuotaOverride && antigravityQuotaCovers(next.antigravity_quota, antigravityQuotaOverride)) antigravityQuotaOverride = null;
   }
 
   async function pollSessionActivity() {
@@ -326,6 +340,33 @@
     } finally {
       codexQuotaRefreshing = false;
     }
+  }
+
+  async function handleRefreshAntigravityQuota() {
+    if (!runtimeAvailable || antigravityQuotaRefreshing) return;
+    antigravityQuotaRefreshing = true;
+    antigravityQuotaError = '';
+    try {
+      const result = await refreshAntigravityQuotaNow();
+      const storedIsNewer = antigravityQuotaCovers(
+        snapshot?.antigravity_quota ?? [],
+        result.snapshots,
+      );
+      antigravityQuotaOverride = storedIsNewer ? null : result.snapshots;
+    } catch (error) {
+      antigravityQuotaError = error instanceof Error ? error.message : String(error);
+    } finally {
+      antigravityQuotaRefreshing = false;
+    }
+  }
+
+  async function handleRefreshQuota() {
+    if (!runtimeAvailable || quotaRefreshing) return;
+    lastQuotaAttemptAt = Date.now();
+    await Promise.all([
+      handleRefreshCodexQuota(),
+      handleRefreshAntigravityQuota(),
+    ]);
   }
 
   function pollVisibleCodexQuota() {
@@ -887,11 +928,14 @@
         {:else if activeTab === 'quota' && loadedPages.quota}
           {@const QuotaView = loadedPages.quota}
           <QuotaView
-            snapshot={snapshot}
             codexQuotas={activeCodexQuotas}
-            {codexQuotaRefreshing}
+            antigravityQuotas={quotaRows}
+            refreshing={quotaRefreshing}
+            codexRefreshing={codexQuotaRefreshing}
+            antigravityRefreshing={antigravityQuotaRefreshing}
             {codexQuotaError}
-            onRefreshCodexQuota={handleRefreshCodexQuota}
+            {antigravityQuotaError}
+            onRefreshQuota={handleRefreshQuota}
           />
         <!-- TAB 7: SETTINGS (系统设置) -->
         {:else if activeTab === 'settings' && loadedPages.settings}

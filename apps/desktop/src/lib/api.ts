@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AgentStatus, CodexQuotaRefreshResult, DashboardRange, DashboardResponse, DashboardSnapshot, DiagnosticReport, PairHubResult, RemoteDeviceList, SessionActivity, SessionAnalysisPage, SessionAnalysisResponse } from './types';
+import type { AgentStatus, AntigravityQuotaRefreshResult, CodexQuotaRefreshResult, DashboardRange, DashboardResponse, DashboardSnapshot, DiagnosticReport, PairHubResult, RemoteDeviceList, SessionActivity, SessionAnalysisPage, SessionAnalysisResponse } from './types';
 
 export function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -15,6 +15,10 @@ export async function getAgentStatus(): Promise<AgentStatus> {
 
 export async function refreshCodexQuotaNow(): Promise<CodexQuotaRefreshResult> {
   return invoke<CodexQuotaRefreshResult>('refresh_codex_quota_now');
+}
+
+export async function refreshAntigravityQuotaNow(): Promise<AntigravityQuotaRefreshResult> {
+  return invoke<AntigravityQuotaRefreshResult>('refresh_antigravity_quota_now');
 }
 
 export async function getRecentSessionActivity(): Promise<SessionActivity[]> {

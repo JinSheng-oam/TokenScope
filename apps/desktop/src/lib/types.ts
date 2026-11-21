@@ -45,6 +45,19 @@ export type CodexQuotaRefreshResult = {
   warning: string | null;
 };
 
+export type AntigravityQuota = {
+  source_id: string;
+  pool_id: string;
+  window_id: 'five_hour' | 'weekly' | 'daily' | 'other';
+  remaining_basis_points: number | null;
+  reset_at_ms: number | null;
+  observed_at_ms: number;
+};
+
+export type AntigravityQuotaRefreshResult = {
+  snapshots: AntigravityQuota[];
+};
+
 export type SessionActivity = {
   tool_id: string;
   session_id: string;
@@ -171,14 +184,7 @@ export type DashboardSnapshot = {
     status: 'complete' | 'partial' | 'degraded' | 'unknown';
     source_count: number;
   }[];
-  antigravity_quota: {
-    source_id: string;
-    pool_id: string;
-    window_id: 'five_hour' | 'weekly' | 'daily' | 'other';
-    remaining_basis_points: number | null;
-    reset_at_ms: number | null;
-    observed_at_ms: number;
-  }[];
+  antigravity_quota: AntigravityQuota[];
   codex_quota: CodexQuota[];
   antigravity_activity: {
     known_turns: number;

@@ -12,13 +12,13 @@ pub enum RpcError {
 impl std::fmt::Display for RpcError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let text = match self {
-            Self::NotRunning => "Antigravity language server is not running",
-            Self::Discovery => "could not discover Antigravity local RPC endpoint",
-            Self::Unauthorized => "Antigravity local RPC rejected the CSRF token",
-            Self::NoQuota => "Antigravity returned no supported quota windows",
-            Self::InvalidResponse => "Antigravity returned an invalid quota response",
-            Self::Network => "Antigravity local RPC request failed",
-            Self::Store(_) => "could not persist Antigravity quota snapshot",
+            Self::NotRunning => "Antigravity 本地服务未运行",
+            Self::Discovery => "无法发现 Antigravity 本地 RPC 端点",
+            Self::Unauthorized => "Antigravity 本地 RPC 拒绝了 CSRF 令牌",
+            Self::NoQuota => "Antigravity 未返回支持的额度窗口",
+            Self::InvalidResponse => "Antigravity 返回了无效的额度响应",
+            Self::Network => "Antigravity 本地 RPC 请求失败",
+            Self::Store(_) => "无法保存 Antigravity 额度快照",
         };
         f.write_str(text)
     }

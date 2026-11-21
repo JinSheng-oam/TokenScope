@@ -43,6 +43,7 @@ fn usage() {
     --db PATH [--device-id ID] [--codex-home PATH] [--claude-home PATH]
     [--antigravity-home PATH] [--deepseek-harness-home PATH] [--pi-sessions PATH] [--antigravity-estimates]
     [--import-antigravity-quota-json PATH] [--refresh-antigravity-quota] [--refresh-codex-quota] [--emit-codex-quota-json] [--show-antigravity]
+    [--query-codex-quota-json] [--query-antigravity-quota-json]
     [--display-name NAME] [--time-zone ZONE] [--daemon --interval-seconds 120]
     --dashboard-json [--range today|7d|30d|all]
     --diagnose-json
@@ -64,6 +65,11 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.len() == 1 && args[0] == "--query-codex-quota-json" {
         let snapshots = codex_rpc::fetch_rate_limits()?;
+        println!("{}", serde_json::to_string(&snapshots)?);
+        return Ok(());
+    }
+    if args.len() == 1 && args[0] == "--query-antigravity-quota-json" {
+        let snapshots = antigravity_rpc::fetch_quota()?;
         println!("{}", serde_json::to_string(&snapshots)?);
         return Ok(());
     }

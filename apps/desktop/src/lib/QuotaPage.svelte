@@ -11,18 +11,21 @@
   import { icons } from '../lib/icons';
   import { groupUpcomingResets } from './quotaPageView';
   import { liveMinute, liveNow } from '../lib/liveClock';
-  import type { CodexQuota, DashboardSnapshot } from '../lib/types';
+  import type { AntigravityQuota, CodexQuota } from '../lib/types';
 
-  export let snapshot: DashboardSnapshot;
   export let codexQuotas: CodexQuota[];
-  export let codexQuotaRefreshing = false;
+  export let antigravityQuotas: AntigravityQuota[];
+  export let refreshing = false;
+  export let codexRefreshing = false;
+  export let antigravityRefreshing = false;
   export let codexQuotaError = '';
-  export let onRefreshCodexQuota: () => void = () => {};
+  export let antigravityQuotaError = '';
+  export let onRefreshQuota: () => void = () => {};
 
   let showStaleAntigravity = false;
 
-  $: activeAntigravityQuotas = filterActiveAntigravityQuotas(snapshot.antigravity_quota, false);
-  $: allDedupedAntigravityQuotas = filterActiveAntigravityQuotas(snapshot.antigravity_quota, true);
+  $: activeAntigravityQuotas = filterActiveAntigravityQuotas(antigravityQuotas, false);
+  $: allDedupedAntigravityQuotas = filterActiveAntigravityQuotas(antigravityQuotas, true);
   $: hiddenStaleCount = Math.max(0, allDedupedAntigravityQuotas.length - activeAntigravityQuotas.length);
   $: displayedAntigravityQuotas = showStaleAntigravity
     ? allDedupedAntigravityQuotas
@@ -37,7 +40,7 @@
     name: 'Codex',
     period: quotaWindowLabel(q.window_duration_minutes).replace(/周期$/, ''),
   }));
-  function antigravityRow(q: DashboardSnapshot['antigravity_quota'][number]): QuotaRow {
+  function antigravityRow(q: AntigravityQuota): QuotaRow {
     return {
       ...q,
       key: JSON.stringify(['antigravity', q.pool_id, q.window_id]),
@@ -89,19 +92,19 @@
   <button
     type="button"
     class="btn-secondary"
-    disabled={codexQuotaRefreshing}
-    onclick={onRefreshCodexQuota}
-    title="刷新本机 Codex 额度"
+    disabled={refreshing}
+    onclick={onRefreshQuota}
+    title="刷新本机 Codex 与 Antigravity 额度"
   >
-    <span class:spin={codexQuotaRefreshing}>{@html icons.refresh}</span>
-    {codexQuotaRefreshing ? '正在刷新' : '刷新额度'}
+    <span class:spin={refreshing}>{@html icons.refresh}</span>
+    {refreshing ? '正在刷新' : '刷新额度'}
   </button>
 </div>
 
 <div class="quota-layout">
   <div class="quota-layout-grid">
     <div class="quota-provider-stack">
-      <section class="panel-card quota-panel" aria-label="Codex 可用额度" aria-busy={codexQuotaRefreshing}>
+      <section class="panel-card quota-panel" aria-label="Codex 可用额度" aria-busy={codexRefreshing}>
         <div class="panel-head quota-panel-head">
           <h2>Codex 可用额度</h2>
           <span class="precision-chip quota">CODEX APP-SERVER</span>
@@ -116,7 +119,7 @@
         {/if}
       </section>
 
-      <section class="panel-card quota-panel" aria-label="Antigravity 可用额度">
+      <section class="panel-card quota-panel" aria-label="Antigravity 可用额度" aria-busy={antigravityRefreshing}>
         <div class="panel-head quota-panel-head">
           <h2>Antigravity 可用额度</h2>
           <div class="quota-header-actions">
@@ -131,6 +134,9 @@
             <span class="precision-chip quota">LOOPBACK RPC</span>
           </div>
         </div>
+        {#if antigravityQuotaError}
+          <div class="notice-box quota-refresh-error" role="alert"><p>{antigravityQuotaError}</p></div>
+        {/if}
         {#if antigravityRows.length}
           {@render quotaRows(antigravityRows)}
         {:else}

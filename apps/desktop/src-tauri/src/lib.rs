@@ -88,6 +88,7 @@ pub fn run() {
             agent::stop_agent,
             agent::get_agent_status,
             agent::refresh_codex_quota_now,
+            agent::refresh_antigravity_quota_now,
             agent_customizations::list_customizations,
             agent_customizations::mcp::read_mcp_config,
             agent_customizations::mcp::save_mcp_config,

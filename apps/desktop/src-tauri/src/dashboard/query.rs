@@ -62,14 +62,18 @@ pub(super) fn query_agent(
             .ok()
             .and_then(|cache| cache.get(&key).cloned());
         if let Some((cached, _at)) = hit {
-            if chrono::DateTime::from_timestamp_millis(cached.snapshot.generated_at_ms)
+            let is_empty =
+                cached.snapshot.local.total_tokens == 0 && cached.snapshot.remote.total_tokens == 0;
+            let is_stale = chrono::DateTime::from_timestamp_millis(cached.snapshot.generated_at_ms)
                 .map(|at| at.with_timezone(&chrono::Local).date_naive())
                 != Some(chrono::Local::now().date_naive())
-                || cached.snapshot.data_revision < watch.revision.load(Ordering::Acquire)
-            {
-                spawn_dashboard_refresh(app, range, start_date, end_date);
+                || cached.snapshot.data_revision < watch.revision.load(Ordering::Acquire);
+            if !is_empty {
+                if is_stale {
+                    spawn_dashboard_refresh(app, range, start_date, end_date);
+                }
+                return Ok(cached);
             }
-            return Ok(cached);
         }
     }
     let response = query_agent_fresh(app, range, session_offset, start_date, end_date)?;

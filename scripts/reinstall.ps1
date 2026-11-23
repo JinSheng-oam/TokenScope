@@ -64,7 +64,11 @@ if ($registrations.Count -ne 1 -or -not $registrations[0].PSObject.Properties['I
     [string]::IsNullOrWhiteSpace($registrations[0].InstallLocation)) {
     throw '无法唯一确定 TokenScope 的已安装目录。'
 }
-$installDir = [IO.Path]::GetFullPath($registrations[0].InstallLocation).TrimEnd('\')
+$rawInstallLocation = $registrations[0].InstallLocation.Trim().Trim('"')
+if ([string]::IsNullOrWhiteSpace($rawInstallLocation)) {
+    throw '无法唯一确定 TokenScope 的已安装目录。'
+}
+$installDir = [IO.Path]::GetFullPath($rawInstallLocation).TrimEnd('\')
 $installItem = Get-Item -LiteralPath $installDir
 if (-not $installItem.PSIsContainer -or ($installItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
     throw '安装目录无效或是重解析点。'

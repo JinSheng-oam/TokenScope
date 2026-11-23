@@ -14,17 +14,23 @@
   import {
     loadDashboardLayout,
     loadDashboardCardGap,
+    loadDashboardCardRows,
     saveDashboardLayout,
     saveDashboardCardGap,
+    saveDashboardCardRows,
     resetDashboardLayout,
     reorderCards,
     updateCardWidth,
+    updateCardRows,
     setCardVisibility,
     CARD_CATALOG,
     CARD_GAP_OPTIONS,
+    CARD_ROWS_OPTIONS,
     DEFAULT_CARD_GAP,
+    DEFAULT_CARD_ROWS,
     type CardGap,
     type CardId,
+    type CardRows,
     type CardWidth,
     type DashboardCardConfig,
   } from './dashboardLayout';
@@ -74,21 +80,23 @@
 
   let cards: DashboardCardConfig[] = loadDashboardLayout();
   let cardGap = loadDashboardCardGap();
+  let cardRows: CardRows = loadDashboardCardRows();
   let showAddCardModal = false;
   let draggedIndex: number | null = null;
   let dragOverIndex: number | null = null;
 
   $: visibleCards = cards.filter((c) => c.visible);
 
-  $: recentSessions = snapshot.session_usage.sessions.slice(0, 4);
+  $: sessionsCardRows = cards.find((c) => c.id === 'sessions')?.rows ?? cardRows;
+  $: recentSessions = snapshot.session_usage.sessions.slice(0, sessionsCardRows);
   $: pendingActivity = sessionActivity.filter(
     (item) =>
       Boolean(item.display_name?.trim()) &&
       $liveMinute >= item.observed_at_ms &&
       $liveMinute - item.observed_at_ms <= 120_000 &&
       !recentSessions.some((session) => findActivityForSession(session, sessionActivity)?.session_id === item.session_id)
-  ).slice(0, 4);
-  $: visibleRecentSessions = recentSessions.slice(0, Math.max(0, 4 - pendingActivity.length));
+  ).slice(0, sessionsCardRows);
+  $: visibleRecentSessions = recentSessions.slice(0, Math.max(0, sessionsCardRows - pendingActivity.length));
   $: activeTools = tools ?? snapshot.by_tool;
   $: untimedRecordCount = activeTools.reduce((sum, tool) => sum + tool.untimed_records, 0);
   $: heatmapRangeLabel = `${heatmapCalendar.rangeStartDate} 至 ${heatmapCalendar.rangeEndDate}`;
@@ -201,11 +209,22 @@
   function handleResetDefaultLayout() {
     cards = resetDashboardLayout();
     cardGap = DEFAULT_CARD_GAP;
+    cardRows = DEFAULT_CARD_ROWS;
   }
 
   function handleSetCardGap(gap: CardGap) {
     cardGap = gap;
     saveDashboardCardGap(gap);
+  }
+
+  function handleSetCardRows(rows: CardRows) {
+    cardRows = rows;
+    saveDashboardCardRows(rows);
+  }
+
+  function handleSetCardItemRows(id: CardId, rows: CardRows) {
+    cards = updateCardRows(cards, id, rows);
+    saveDashboardLayout(cards);
   }
 </script>
 
@@ -245,6 +264,20 @@
                 class:active={cardGap === option.value}
                 aria-pressed={cardGap === option.value}
                 onclick={() => handleSetCardGap(option.value)}
+              >{option.label}</button>
+            {/each}
+          </div>
+        </div>
+        <div class="edit-banner-spacing">
+          <span>显示行数</span>
+          <div class="card-size-group" role="group" aria-label="数据卡片显示行数">
+            {#each CARD_ROWS_OPTIONS as option (option.value)}
+              <button
+                type="button"
+                class="size-pill"
+                class:active={cardRows === option.value}
+                aria-pressed={cardRows === option.value}
+                onclick={() => handleSetCardRows(option.value)}
               >{option.label}</button>
             {/each}
           </div>
@@ -330,6 +363,22 @@
                 >
                   全宽
                 </button>
+              </div>
+            {/if}
+
+            {#if meta.canSetRows}
+              {@const activeRows = card.rows ?? cardRows}
+              <div class="card-size-group" role="group" aria-label="显示行数">
+                {#each CARD_ROWS_OPTIONS as option (option.value)}
+                  <button
+                    type="button"
+                    class="size-pill"
+                    class:active={activeRows === option.value}
+                    aria-pressed={activeRows === option.value}
+                    title={`本卡片显示 ${option.label}`}
+                    onclick={() => handleSetCardItemRows(card.id, option.value)}
+                  >{option.value}行</button>
+                {/each}
               </div>
             {/if}
 
@@ -532,6 +581,7 @@
         {:else}
           <OverviewSupportCard
             cardId={card.id}
+            cardRows={card.rows ?? cardRows}
             {snapshot}
             {local}
             {activeTools}

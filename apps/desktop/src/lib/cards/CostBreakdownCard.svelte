@@ -4,10 +4,12 @@
   import type { UsageBreakdown, UsageTotals } from '../types';
 
   let {
+    cardRows = 5,
     local,
     sortedModels = [],
     onNavigatePricing = () => {},
   }: {
+    cardRows?: number;
     local?: UsageTotals;
     sortedModels?: UsageBreakdown[];
     onNavigatePricing?: () => void;
@@ -62,7 +64,7 @@
 
   {#if costRankedModels.length > 0}
     <div class="rank-list">
-      {#each costRankedModels.slice(0, 5) as model, idx}
+      {#each costRankedModels.slice(0, cardRows) as model, idx}
         {@const modelCost = model.estimated_cost_microusd ?? 0}
         <div class="rank-item">
           <div class="rank-row">

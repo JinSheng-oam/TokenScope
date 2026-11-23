@@ -16,6 +16,7 @@
 
   let {
     cardId,
+    cardRows = 5,
     snapshot,
     local,
     activeTools = [],
@@ -51,6 +52,7 @@
     onNavigatePricing = () => {},
   }: {
     cardId: CardId;
+    cardRows?: number;
     snapshot: DashboardSnapshot;
     local: UsageTotals | undefined;
     activeTools?: UsageBreakdown[];
@@ -111,7 +113,7 @@
 
     {#if activeTools.length > 0}
       <div class="rank-list">
-        {#each activeTools.slice(0, 5) as tool, idx}
+        {#each activeTools.slice(0, cardRows) as tool, idx}
           <div class="rank-item">
             <div class="rank-row">
               <span class="rank-title">
@@ -145,7 +147,7 @@
 
     {#if sortedModels.length > 0}
       <div class="rank-list">
-        {#each sortedModels.slice(0, 5) as model, idx}
+        {#each sortedModels.slice(0, cardRows) as model, idx}
           {@const shortLabel = compactModelLabel(model.label)}
           <div class="rank-item">
             <div class="rank-row">
@@ -274,7 +276,7 @@
 
     {#if snapshot.source_health.length > 0}
       <div class="source-health-list">
-        {#each snapshot.source_health as source}
+        {#each snapshot.source_health.slice(0, cardRows) as source}
           <div class="source-health-row">
             <span
               class="source-status-dot"
@@ -313,7 +315,7 @@
 
     {#if visibleProjects.length > 0}
       <div class="rank-list">
-        {#each visibleProjects.slice(0, 5) as project, idx}
+        {#each visibleProjects.slice(0, cardRows) as project, idx}
           <div class="rank-item">
             <div class="rank-row">
               <span class="rank-title">
@@ -338,6 +340,7 @@
 
 {:else if cardId === 'quotas'}
   <QuotaMonitorCard
+    {cardRows}
     {activeCodexQuotas}
     {activeAntigravityQuotas}
     {codexQuotaRefreshing}
@@ -346,7 +349,7 @@
   />
 
 {:else if cardId === 'cost'}
-  <CostBreakdownCard {local} {sortedModels} {onNavigatePricing} />
+  <CostBreakdownCard {cardRows} {local} {sortedModels} {onNavigatePricing} />
 
 {:else if cardId === 'efficiency'}
   <EfficiencyCard
@@ -360,7 +363,7 @@
   />
 
 {:else if cardId === 'devices'}
-  <DevicesSyncCard {snapshot} {remoteDevices} {onNavigateDevices} />
+  <DevicesSyncCard {cardRows} {snapshot} {remoteDevices} {onNavigateDevices} />
 
 {:else if cardId === 'activity'}
   <ActivitySummaryCard {snapshot} {heatmapCalendar} totalTokens={local?.total_tokens ?? 0} />

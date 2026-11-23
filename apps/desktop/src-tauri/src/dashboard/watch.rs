@@ -86,8 +86,10 @@ pub(crate) fn spawn_dashboard_watch(app: AppHandle) {
                 }
                 match response {
                     Ok(response) => {
-                        last_full = Some(response.snapshot.data_revision);
+                        let rev = response.snapshot.data_revision;
+                        last_full = Some(rev);
                         if let Ok(mut cache) = watch.cache.lock() {
+                            cache.retain(|_, (cached, _)| cached.snapshot.data_revision >= rev);
                             cache.insert(key, (response.clone(), Instant::now()));
                         }
                         if let Err(error) = app.emit("dashboard-updated", response) {

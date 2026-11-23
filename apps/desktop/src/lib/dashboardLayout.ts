@@ -20,6 +20,7 @@ export interface DashboardCardConfig {
   id: CardId;
   visible: boolean;
   width: CardWidth;
+  rows?: CardRows;
 }
 
 export interface CardMeta {
@@ -28,6 +29,7 @@ export interface CardMeta {
   description: string;
   defaultWidth: CardWidth;
   canResize: boolean;
+  canSetRows?: boolean;
   minWidth?: CardWidth;
 }
 
@@ -59,6 +61,7 @@ export const CARD_CATALOG: Record<CardId, CardMeta> = {
     description: 'Codex、Claude、Antigravity 等各开发工具消耗排行与占比',
     defaultWidth: '1/3',
     canResize: true,
+    canSetRows: true,
   },
   models: {
     id: 'models',
@@ -66,6 +69,7 @@ export const CARD_CATALOG: Record<CardId, CardMeta> = {
     description: '各 AI 模型（GPT-4、Claude 3.7、Gemini 等）用量排行、费用与占比',
     defaultWidth: '1/3',
     canResize: true,
+    canSetRows: true,
   },
   sessions: {
     id: 'sessions',
@@ -73,6 +77,7 @@ export const CARD_CATALOG: Record<CardId, CardMeta> = {
     description: '实时会话活动检测、任务生成状态与 Token 消耗速率',
     defaultWidth: '1/2',
     canResize: true,
+    canSetRows: true,
   },
   sources: {
     id: 'sources',
@@ -80,6 +85,7 @@ export const CARD_CATALOG: Record<CardId, CardMeta> = {
     description: '本机各采集工具检查点扫描状态与健康度监控',
     defaultWidth: '1/3',
     canResize: true,
+    canSetRows: true,
   },
   projects: {
     id: 'projects',
@@ -87,6 +93,7 @@ export const CARD_CATALOG: Record<CardId, CardMeta> = {
     description: '关联工作区项目 Token 消耗分布与排行榜',
     defaultWidth: '1/3',
     canResize: true,
+    canSetRows: true,
   },
   quotas: {
     id: 'quotas',
@@ -94,6 +101,7 @@ export const CARD_CATALOG: Record<CardId, CardMeta> = {
     description: 'Codex 与 Antigravity 实时剩余额度、耗尽预警与重置倒计时',
     defaultWidth: '1/3',
     canResize: true,
+    canSetRows: true,
   },
   cost: {
     id: 'cost',
@@ -101,6 +109,7 @@ export const CARD_CATALOG: Record<CardId, CardMeta> = {
     description: '总预估费用、计价覆盖率及按模型消耗费用排行榜',
     defaultWidth: '1/3',
     canResize: true,
+    canSetRows: true,
   },
   efficiency: {
     id: 'efficiency',
@@ -115,6 +124,7 @@ export const CARD_CATALOG: Record<CardId, CardMeta> = {
     description: '本机与远端设备用量对比以及跨端同步引擎状态',
     defaultWidth: '1/3',
     canResize: true,
+    canSetRows: true,
   },
   activity: {
     id: 'activity',
@@ -151,6 +161,7 @@ export const DEFAULT_DASHBOARD_CARDS: DashboardCardConfig[] = [
 
 export const STORAGE_KEY = 'tokenscope.dashboardLayout.v3';
 const GAP_STORAGE_KEY = 'tokenscope.dashboardCardGap';
+const ROWS_STORAGE_KEY = 'tokenscope.dashboardCardRows';
 export const CARD_GAP_OPTIONS = [
   { value: 8, label: '紧凑' },
   { value: 14, label: '默认' },
@@ -158,6 +169,15 @@ export const CARD_GAP_OPTIONS = [
 ] as const;
 export type CardGap = (typeof CARD_GAP_OPTIONS)[number]['value'];
 export const DEFAULT_CARD_GAP: CardGap = 14;
+
+export const CARD_ROWS_OPTIONS = [
+  { value: 3, label: '3 行' },
+  { value: 5, label: '5 行' },
+  { value: 8, label: '8 行' },
+  { value: 10, label: '10 行' },
+] as const;
+export type CardRows = (typeof CARD_ROWS_OPTIONS)[number]['value'];
+export const DEFAULT_CARD_ROWS: CardRows = 5;
 
 export function loadDashboardCardGap(): CardGap {
   try {
@@ -171,6 +191,23 @@ export function loadDashboardCardGap(): CardGap {
 export function saveDashboardCardGap(gap: CardGap): void {
   try {
     localStorage.setItem(GAP_STORAGE_KEY, String(gap));
+  } catch {
+    // Keep the active setting when storage is unavailable.
+  }
+}
+
+export function loadDashboardCardRows(): CardRows {
+  try {
+    const stored = localStorage.getItem(ROWS_STORAGE_KEY);
+    return CARD_ROWS_OPTIONS.find(({ value }) => String(value) === stored)?.value ?? DEFAULT_CARD_ROWS;
+  } catch {
+    return DEFAULT_CARD_ROWS;
+  }
+}
+
+export function saveDashboardCardRows(rows: CardRows): void {
+  try {
+    localStorage.setItem(ROWS_STORAGE_KEY, String(rows));
   } catch {
     // Keep the active setting when storage is unavailable.
   }
@@ -197,6 +234,12 @@ const VALID_WIDTHS = new Set<CardWidth>(['1/3', '1/2', '2/3', 'full']);
 
 export function isValidCardId(id: unknown): id is CardId {
   return typeof id === 'string' && VALID_CARD_IDS.has(id as CardId);
+}
+
+const VALID_ROWS = new Set<number>(CARD_ROWS_OPTIONS.map((o) => o.value));
+
+export function isValidCardRows(rows: unknown): rows is CardRows {
+  return typeof rows === 'number' && VALID_ROWS.has(rows);
 }
 
 export function isValidWidth(width: unknown): width is CardWidth {
@@ -230,10 +273,13 @@ export function loadDashboardLayout(): DashboardCardConfig[] {
           const meta = CARD_CATALOG[id];
           const rawWidth = 'width' in item ? (item as { width: unknown }).width : undefined;
           const width = meta.canResize && isValidWidth(rawWidth) ? rawWidth : meta.defaultWidth;
+          const rawRows = 'rows' in item ? (item as { rows: unknown }).rows : undefined;
+          const rows = meta.canSetRows && isValidCardRows(rawRows) ? rawRows : undefined;
           loadedCards.push({
             id,
             visible: Boolean((item as { visible?: unknown }).visible),
             width,
+            ...(rows !== undefined ? { rows } : {}),
           });
         }
       }
@@ -266,6 +312,7 @@ export function resetDashboardLayout(): DashboardCardConfig[] {
     try {
       localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(GAP_STORAGE_KEY);
+      localStorage.removeItem(ROWS_STORAGE_KEY);
     } catch {
       // Ignore
     }
@@ -305,6 +352,19 @@ export function updateCardWidth(
   }
 
   return cards.map((c) => (c.id === id ? { ...c, width } : c));
+}
+
+export function updateCardRows(
+  cards: DashboardCardConfig[],
+  id: CardId,
+  rows: CardRows
+): DashboardCardConfig[] {
+  const meta = CARD_CATALOG[id];
+  if (!meta || !meta.canSetRows || !isValidCardRows(rows)) {
+    return cards;
+  }
+
+  return cards.map((c) => (c.id === id ? { ...c, rows } : c));
 }
 
 export function setCardVisibility(

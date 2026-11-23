@@ -149,17 +149,96 @@ fn disable_windows_autostart(app: &AppHandle) -> Result<(), String> {
     }
 }
 
+#[cfg(windows)]
+fn parse_windows_run_executable(command: &str) -> Option<PathBuf> {
+    let trimmed = command.trim_start();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(rest) = trimmed.strip_prefix('"') {
+        let end = rest.find('"')?;
+        let exe = &rest[..end];
+        if exe.is_empty() {
+            return None;
+        }
+        return Some(PathBuf::from(exe));
+    }
+    let exe = trimmed.split_whitespace().next()?;
+    if exe.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(exe))
+    }
+}
+
+#[cfg(windows)]
+fn normalize_windows_path(path: &std::path::Path) -> String {
+    let resolved = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let text = resolved.to_string_lossy();
+    let stripped = text.strip_prefix(r"\\?\").unwrap_or(&text);
+    stripped.to_ascii_lowercase()
+}
+
+#[cfg(windows)]
+fn read_windows_run_command(app_name: &str) -> Option<String> {
+    use winreg::{
+        enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ},
+        RegKey,
+    };
+
+    for root in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+        let Ok(key) = RegKey::predef(root).open_subkey_with_flags(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+            KEY_READ,
+        ) else {
+            continue;
+        };
+        if let Ok(value) = key.get_value::<String, _>(app_name) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn windows_autostart_enabled(app: &AppHandle) -> Result<bool, String> {
+    if !app
+        .autolaunch()
+        .is_enabled()
+        .map_err(|error| error.to_string())?
+    {
+        return Ok(false);
+    }
+    let Some(command) = read_windows_run_command(&app.package_info().name) else {
+        return Ok(false);
+    };
+    let Some(registered_exe) = parse_windows_run_executable(&command) else {
+        return Ok(false);
+    };
+    if !registered_exe.is_file() {
+        return Ok(false);
+    }
+    let current_exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    Ok(normalize_windows_path(&registered_exe) == normalize_windows_path(&current_exe))
+}
+
 #[tauri::command]
 pub(crate) fn get_autostart_enabled(app: AppHandle) -> Result<bool, String> {
-    app.autolaunch()
-        .is_enabled()
-        .map_err(|e| format!("读取开机启动状态失败：{e}"))
+    #[cfg(windows)]
+    {
+        windows_autostart_enabled(&app).map_err(|e| format!("读取开机启动状态失败：{e}"))
+    }
+    #[cfg(not(windows))]
+    {
+        app.autolaunch()
+            .is_enabled()
+            .map_err(|e| format!("读取开机启动状态失败：{e}"))
+    }
 }
 
 #[tauri::command]
 pub(crate) async fn set_autostart_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let manager = app.autolaunch();
         #[cfg(windows)]
         let result = if enabled {
             enable_windows_autostart(&app)
@@ -167,14 +246,22 @@ pub(crate) async fn set_autostart_enabled(app: AppHandle, enabled: bool) -> Resu
             disable_windows_autostart(&app)
         };
         #[cfg(not(windows))]
-        let result = if enabled {
-            manager.enable()
-        } else {
-            manager.disable()
-        }
-        .map_err(|error| error.to_string());
+        let result = {
+            let manager = app.autolaunch();
+            if enabled {
+                manager.enable()
+            } else {
+                manager.disable()
+            }
+            .map_err(|error| error.to_string())
+        };
         result.map_err(|e| format!("修改开机启动设置失败：{e}"))?;
-        let actual = manager
+        #[cfg(windows)]
+        let actual =
+            windows_autostart_enabled(&app).map_err(|e| format!("确认开机启动状态失败：{e}"))?;
+        #[cfg(not(windows))]
+        let actual = app
+            .autolaunch()
             .is_enabled()
             .map_err(|e| format!("确认开机启动状态失败：{e}"))?;
         if actual != enabled {
@@ -218,5 +305,22 @@ mod tests {
             r#""C:\Program Files\TokenScope\tokenscope-desktop.exe""#
         );
         assert!(quoted_windows_executable(Path::new("bad\"path")).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn parses_quoted_and_unquoted_windows_run_commands() {
+        use super::parse_windows_run_executable;
+        assert_eq!(
+            parse_windows_run_executable(
+                r#""C:\Program Files\TokenScope\tokenscope-desktop.exe" --background"#
+            ),
+            Some(Path::new(r"C:\Program Files\TokenScope\tokenscope-desktop.exe").to_path_buf())
+        );
+        assert_eq!(
+            parse_windows_run_executable(r"D:\TokenScope\tokenscope-desktop.exe --background"),
+            Some(Path::new(r"D:\TokenScope\tokenscope-desktop.exe").to_path_buf())
+        );
+        assert_eq!(parse_windows_run_executable(""), None);
     }
 }

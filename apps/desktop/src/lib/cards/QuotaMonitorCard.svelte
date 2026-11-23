@@ -7,12 +7,14 @@
   import type { CodexQuota, DashboardSnapshot } from '../types';
 
   let {
+    cardRows = 5,
     activeCodexQuotas = [],
     activeAntigravityQuotas = [],
     codexQuotaRefreshing = false,
     onRefreshCodexQuota = null,
     onNavigateQuota = () => {},
   }: {
+    cardRows?: number;
     activeCodexQuotas?: CodexQuota[];
     activeAntigravityQuotas?: DashboardSnapshot['antigravity_quota'];
     codexQuotaRefreshing?: boolean;
@@ -58,7 +60,7 @@
 
   {#if unifiedQuotas.length > 0}
     <div class="quota-widget-grid">
-      {#each unifiedQuotas as item (item.key)}
+      {#each unifiedQuotas.slice(0, cardRows) as item (item.key)}
         {@const fillWidth = item.remainingBasisPoints !== null ? Math.max(0, Math.min(100, item.remainingBasisPoints / 100)) : 0}
         <div
           class={`quota-widget-card status-${item.status}`}

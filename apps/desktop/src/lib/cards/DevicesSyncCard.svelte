@@ -6,10 +6,12 @@
   import type { DashboardSnapshot, RemoteDevice } from '../types';
 
   let {
+    cardRows = 5,
     snapshot,
     remoteDevices = [],
     onNavigateDevices = () => {},
   }: {
+    cardRows?: number;
     snapshot: DashboardSnapshot;
     remoteDevices?: RemoteDevice[];
     onNavigateDevices?: () => void;
@@ -68,7 +70,7 @@
 
   {#if deviceRows.length > 0}
     <div class="rank-list">
-      {#each deviceRows.slice(0, 5) as dev}
+      {#each deviceRows.slice(0, cardRows) as dev}
         <div class="rank-item">
           <div class="rank-row">
             <span class="rank-title">

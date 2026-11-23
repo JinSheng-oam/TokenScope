@@ -273,6 +273,36 @@ pub(crate) async fn set_autostart_enabled(app: AppHandle, enabled: bool) -> Resu
     .map_err(|e| format!("开机启动设置任务失败：{e}"))?
 }
 
+#[tauri::command]
+pub(crate) async fn rename_local_device(
+    app: AppHandle,
+    display_name: String,
+) -> Result<String, String> {
+    let trimmed = display_name.trim().to_string();
+    if trimmed.is_empty() || trimmed.chars().count() > 128 || trimmed.chars().any(char::is_control) {
+        return Err("设备名称须为 1–128 个有效字符".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let db_file = crate::paths::database_path(&app)?;
+        let mut store = tokenscope_local_store::LocalStore::open(&db_file)
+            .map_err(|e| format!("打开本地数据库失败：{e}"))?;
+        let mut identity = store
+            .identity()
+            .map_err(|e| format!("读取本机身份失败：{e}"))?
+            .ok_or_else(|| "本机设备身份尚未初始化，请先启动采集器".to_string())?;
+        identity.display_name = trimmed.clone();
+        store
+            .init_identity(&identity)
+            .map_err(|e| format!("更新本机名称失败：{e}"))?;
+        if let Ok(mut cache) = app.state::<crate::state::DashboardWatch>().cache.lock() {
+            cache.clear();
+        }
+        Ok(trimmed)
+    })
+    .await
+    .map_err(|e| format!("修改本机名称任务失败：{e}"))?
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(windows)]

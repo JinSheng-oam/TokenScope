@@ -20,6 +20,7 @@
     isTauriRuntime,
     refreshAntigravityQuotaNow,
     refreshCodexQuotaNow,
+    renameLocalDevice,
     runDiagnostics,
   } from './lib/api';
   import { toIsoDate, type HeatmapCell } from './lib/heatmap';
@@ -275,6 +276,21 @@
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('tokenscope.deviceScope', nextScope);
     }
+  }
+
+  async function handleRenameLocalDevice(displayName: string): Promise<string> {
+    const saved = await renameLocalDevice(displayName);
+    if (snapshot?.identity) {
+      snapshot = {
+        ...snapshot,
+        identity: {
+          ...snapshot.identity,
+          display_name: saved,
+        },
+      };
+    }
+    void loadDashboard(false);
+    return saved;
   }
 
   $: selectableRemoteDevices = allRemoteDevices.filter(
@@ -867,6 +883,7 @@
             onSyncWebDavNow={webdavController.syncNow}
             onRefreshWebDavDevices={webdavController.refreshDevices}
             onDisconnectWebDav={webdavController.disconnect}
+            onRenameLocalDevice={handleRenameLocalDevice}
           />
         <!-- TAB 3: TOOLS ANALYSIS (工具分析) -->
         {:else if activeTab === 'tools' && loadedPages.tools}

@@ -114,8 +114,6 @@ pub(crate) fn start_agent_inner(
         .arg(&sync_config)
         .arg("--sync-webdav-config")
         .arg(&webdav_config)
-        .arg("--display-name")
-        .arg("This device")
         .arg("--time-zone")
         .arg(time_zone)
         .arg("--shutdown-file")

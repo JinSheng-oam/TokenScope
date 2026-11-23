@@ -124,6 +124,7 @@ pub fn run() {
             settings::get_autostart_enabled,
             settings::set_autostart_enabled,
             settings::set_theme_preference,
+            settings::rename_local_device,
             hub::pair_hub_device,
             hub::list_hub_devices,
             hub::rename_hub_device,

@@ -95,6 +95,14 @@
 
 .device-name-block {
   min-width: 0;
+  flex: 1;
+}
+
+.device-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .device-name-block strong {
@@ -107,6 +115,84 @@
   white-space: nowrap;
 }
 
+.device-rename-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: var(--radius-xs);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.device-rename-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border-color: var(--border-subtle);
+}
+
+.device-rename-btn :global(svg) {
+  width: 12px;
+  height: 12px;
+}
+
+.device-rename-form {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.device-rename-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--brand-border);
+  border-radius: var(--radius-xs);
+  outline: none;
+}
+
+.device-rename-save,
+.device-rename-cancel {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.device-rename-save {
+  border: 1px solid var(--brand-border);
+  background: var(--brand-primary);
+  color: #fff;
+}
+
+.device-rename-cancel {
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.device-rename-error {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-danger);
+}
+
 .device-name-block small {
   display: block;
   font-size: 11px;
@@ -115,6 +201,42 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.device-drilldown-grid {
+  gap: 20px;
+}
+
+.device-rank-col {
+  min-width: 0;
+}
+
+.device-rank-heading {
+  font-size: 12px;
+  margin-top: 0;
+  margin-bottom: 10px;
+  color: var(--text-secondary);
+}
+
+.device-rank-col :global(.rank-row) {
+  gap: 10px;
+}
+
+.device-rank-col :global(.rank-title) {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.device-rank-col :global(.rank-title strong) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-rank-col :global(.rank-meta) {
+  flex-shrink: 0;
 }
 
 .device-token-total {

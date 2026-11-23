@@ -101,6 +101,10 @@ export async function renameHubDevice(hubUrl: string, displayName: string): Prom
   return invoke<string>('rename_hub_device', { hubUrl, displayName });
 }
 
+export async function renameLocalDevice(displayName: string): Promise<string> {
+  return invoke<string>('rename_local_device', { displayName });
+}
+
 export async function rotateHubDeviceToken(hubUrl: string): Promise<number> {
   return invoke<number>('rotate_hub_device_token', { hubUrl });
 }

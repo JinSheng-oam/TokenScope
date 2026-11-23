@@ -42,6 +42,7 @@
   export let onSyncWebDavNow: () => Promise<void> = async () => {};
   export let onRefreshWebDavDevices: () => Promise<void> = async () => {};
   export let onDisconnectWebDav: () => Promise<void> = async () => {};
+  export let onRenameLocalDevice: (displayName: string) => Promise<string> = async (name) => name;
 
   let syncTab: 'webdav' | 'hub' = 'webdav';
   $: if (hubPaired && !webdavEnabled) {
@@ -52,6 +53,39 @@
   let confirmingDisconnectWebDav = false;
   let confirmingDisconnectHub = false;
   let activePresetTip = '';
+  let editingLocalName = false;
+  let localNameDraft = '';
+  let renamingLocal = false;
+  let renameLocalError = '';
+
+  function startEditLocalName() {
+    localNameDraft = snapshot.identity?.display_name ?? '';
+    renameLocalError = '';
+    editingLocalName = true;
+  }
+
+  function cancelEditLocalName() {
+    editingLocalName = false;
+    renameLocalError = '';
+  }
+
+  async function submitLocalName() {
+    const next = localNameDraft.trim();
+    if (!next) {
+      renameLocalError = '设备名称不能为空';
+      return;
+    }
+    renamingLocal = true;
+    renameLocalError = '';
+    try {
+      await onRenameLocalDevice(next);
+      editingLocalName = false;
+    } catch (error) {
+      renameLocalError = error instanceof Error ? error.message : String(error);
+    } finally {
+      renamingLocal = false;
+    }
+  }
 
   function applyPreset(provider: 'jianguoyun' | 'nextcloud' | 'alist' | 'infinicloud') {
     switch (provider) {
@@ -89,7 +123,7 @@
   <div class="summary-pill-card">
     <span class="summary-label">全设备 Token 总计</span>
     <strong class="tabular">{formatNumber(allDeviceTotal)}</strong>
-    <span class="summary-foot">含本机与 {remoteDevices.length} 台远端节点</span>
+    <span class="summary-foot">含本机与 {otherRemoteDevices.length} 台远端节点</span>
   </div>
   <div class="summary-pill-card">
     <div class="summary-head-row">
@@ -114,7 +148,7 @@
   <div>
     <h2>设备列表</h2>
   </div>
-  <span class="panel-tag">{remoteDevices.length + 1} 台注册设备</span>
+  <span class="panel-tag">{otherRemoteDevices.length + 1} 台设备</span>
 </div>
 
 <div class="device-matrix-grid">
@@ -124,11 +158,57 @@
       <div class="device-avatar-wrap">
         <div class="device-os-icon">{@html icons.windows}</div>
         <div class="device-name-block">
-          <strong>{snapshot.identity?.display_name ?? '本机设备'}</strong>
+          {#if editingLocalName}
+            <form
+              class="device-rename-form"
+              onsubmit={(e) => {
+                e.preventDefault();
+                void submitLocalName();
+              }}
+            >
+              <input
+                class="device-rename-input"
+                type="text"
+                maxlength="128"
+                bind:value={localNameDraft}
+                disabled={renamingLocal}
+                placeholder="输入本机设备名称"
+                onkeydown={(e) => {
+                  if (e.key === 'Escape') cancelEditLocalName();
+                }}
+              />
+              <button type="submit" class="device-rename-save" disabled={renamingLocal}>
+                {renamingLocal ? '保存中' : '保存'}
+              </button>
+              <button type="button" class="device-rename-cancel" disabled={renamingLocal} onclick={cancelEditLocalName}>
+                取消
+              </button>
+            </form>
+          {:else}
+            <div class="device-name-row">
+              <strong title={snapshot.identity?.display_name ?? '本机设备'}>
+                {snapshot.identity?.display_name ?? '本机设备'}
+              </strong>
+              {#if snapshot.identity}
+                <button
+                  type="button"
+                  class="device-rename-btn"
+                  title="修改本机名称"
+                  aria-label="修改本机名称"
+                  onclick={startEditLocalName}
+                >
+                  {@html icons.edit}
+                </button>
+              {/if}
+            </div>
+          {/if}
           <small>本机节点 · {snapshot.identity?.device_id ?? '未分配'}</small>
+          {#if renameLocalError}
+            <span class="device-rename-error" role="alert">{renameLocalError}</span>
+          {/if}
         </div>
       </div>
-      <span class="precision-chip exact">THIS MACHINE</span>
+      <span class="precision-chip exact">本机</span>
     </div>
     <div class="device-token-total">
       <span>本机 Token 消耗</span>
@@ -138,7 +218,7 @@
       </div>
     </div>
     <div class="metric-foot">
-      <span>时区：{snapshot.time_zone} · 架构：物理单机事实</span>
+      <span>时区：{snapshot.time_zone} · 本机采集节点</span>
     </div>
   </article>
 
@@ -158,12 +238,12 @@
             {/if}
           </div>
           <div class="device-name-block">
-            <strong>{dev.display_name}</strong>
+            <strong title={dev.display_name}>{dev.display_name}</strong>
             <small>{dev.device_id}</small>
           </div>
         </div>
         <span class="precision-chip" class:quota={!dev.revoked_at_ms} class:danger={!!dev.revoked_at_ms}>
-          {dev.revoked_at_ms ? '已注销' : 'SYNC CACHED'}
+          {dev.revoked_at_ms ? '已注销' : '已同步'}
         </span>
       </div>
       <div class="device-token-total">
@@ -174,7 +254,7 @@
         </div>
       </div>
       <div class="metric-foot">
-        <span>{dev.os_name} · v{dev.app_version} · 上报：{relativeTime(dev.last_seen_ms)}</span>
+        <span>{dev.os_name} · v{dev.app_version} · 上次同步：{relativeTime(dev.last_seen_ms)}</span>
       </div>
     </article>
   {/each}
@@ -218,9 +298,9 @@
       <h4>暂无远端设备用量</h4>
     </div>
   {:else}
-  <div class="two-col-grid" style="margin-bottom: 0;">
-    <div>
-      <h3 style="font-size: 12px; margin-top: 0; color: var(--text-secondary); margin-bottom: 10px;">远端工具分布</h3>
+  <div class="two-col-grid device-drilldown-grid" style="margin-bottom: 0;">
+    <div class="device-rank-col">
+      <h3 class="device-rank-heading">远端工具分布</h3>
       {#if remoteToolRows.length > 0}
         <div class="rank-list">
           {#each remoteToolRows.slice(0, 6) as row, idx}
@@ -246,8 +326,8 @@
       {/if}
     </div>
 
-    <div>
-      <h3 style="font-size: 12px; margin-top: 0; color: var(--text-secondary); margin-bottom: 10px;">远端模型分布</h3>
+    <div class="device-rank-col">
+      <h3 class="device-rank-heading">远端模型分布</h3>
       {#if remoteModelRows.length > 0}
         <div class="rank-list">
           {#each remoteModelRows.slice(0, 6) as row, idx}

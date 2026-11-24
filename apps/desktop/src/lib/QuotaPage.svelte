@@ -32,11 +32,19 @@
     : activeAntigravityQuotas;
 
   type QuotaSnapshot = Pick<CodexQuota, 'remaining_basis_points' | 'reset_at_ms' | 'observed_at_ms'>;
-  type QuotaRow = QuotaSnapshot & { key: string; name: string; period: string };
+  type QuotaRow = QuotaSnapshot & {
+    key: string;
+    provider: 'codex' | 'antigravity';
+    providerLabel: string;
+    name: string;
+    period: string;
+  };
 
   $: codexRows = [...codexQuotas].sort((a, b) => a.window_duration_minutes - b.window_duration_minutes).map((q): QuotaRow => ({
     ...q,
     key: JSON.stringify(['codex', q.source_id, q.pool_id, q.window_duration_minutes]),
+    provider: 'codex',
+    providerLabel: 'Codex',
     name: 'Codex',
     period: quotaWindowLabel(q.window_duration_minutes).replace(/周期$/, ''),
   }));
@@ -44,6 +52,8 @@
     return {
       ...q,
       key: JSON.stringify(['antigravity', q.pool_id, q.window_id]),
+      provider: 'antigravity',
+      providerLabel: 'Antigravity',
       name: formatQuotaPoolName(q.pool_id),
       period: antigravityWindowLabel(q.window_id).replace(/周期$/, ''),
     };
@@ -51,6 +61,7 @@
   $: antigravityRows = displayedAntigravityQuotas.map(antigravityRow);
   $: resetCandidates = [...codexRows, ...activeAntigravityQuotas.map(antigravityRow)];
   $: resetGroups = groupUpcomingResets(resetCandidates, $liveMinute);
+  $: upcomingResetCount = resetGroups.reduce((sum, g) => sum + g.rows.length, 0);
 </script>
 
 {#snippet quotaRows(rows: QuotaRow[])}
@@ -60,10 +71,12 @@
       {@const exhausted = remaining === 0}
       {@const warning = remaining !== null && remaining > 0 && remaining < 2000}
       {@const stale = quotaIsStale(row.observed_at_ms, $liveMinute)}
-      <li class="quota-row" class:exhausted class:warning>
-        <div class="quota-row-identity" title={`观测于 ${relativeTime(row.observed_at_ms, $liveMinute)}`}>
-          <strong>{row.name}</strong>
-          <span class="panel-tag">{row.period}</span>
+      <li class="quota-row" class:exhausted class:warning class:stale>
+        <div class="quota-row-identity" title={`${row.name} · 观测于 ${relativeTime(row.observed_at_ms, $liveMinute)}`}>
+          <div class="quota-row-title-line">
+            <strong class="quota-pool-name" title={row.name}>{row.name}</strong>
+            <span class="panel-tag">{row.period}</span>
+          </div>
           {#if exhausted || warning || stale}
             <span class="quota-row-status">
               {[exhausted ? '已耗尽' : warning ? '即将用尽' : '', stale ? '快照可能过期' : ''].filter(Boolean).join(' · ')}
@@ -146,7 +159,12 @@
     </div>
 
     <section class="panel-card quota-timeline" aria-label="重置顺序">
-      <div class="panel-head"><h2>重置顺序</h2></div>
+      <div class="panel-head quota-panel-head">
+        <h2>重置顺序</h2>
+        {#if upcomingResetCount > 0}
+          <span class="panel-tag tabular">{upcomingResetCount} 项待重置</span>
+        {/if}
+      </div>
       {#each resetGroups as group (group.label)}
         <section class="quota-timeline-group">
           <h3>{group.label}</h3>
@@ -154,7 +172,12 @@
             {#each group.rows as row (row.key)}
               <li>
                 <div class="quota-timeline-identity">
-                  <strong>{row.name}</strong>
+                  {#if row.provider === 'antigravity'}
+                    <span class="quota-source-dot antigravity" title="Antigravity">AG</span>
+                  {:else}
+                    <span class="quota-source-dot codex" title="Codex">CX</span>
+                  {/if}
+                  <strong class="quota-timeline-name" title={row.name}>{row.name}</strong>
                   <span class="panel-tag">{row.period}</span>
                 </div>
                 <span class="quota-timeline-countdown tabular">{formatCountdown(row.reset_at_ms, $liveNow)}</span>

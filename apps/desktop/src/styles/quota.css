@@ -1,4 +1,10 @@
 /* Quota availability and reset timeline */
+.quota-page-header .btn-secondary {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
 .quota-page-header .btn-secondary,
 .quota-header-actions {
   display: inline-flex;
@@ -58,44 +64,98 @@
 .quota-rows {
   list-style: none;
   margin: 0;
-  padding: 0 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  padding: 0;
 }
 
 .quota-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.65fr) minmax(0, 1.08fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.3fr) minmax(126px, auto);
   gap: 12px;
   align-items: center;
-  min-height: 50px;
-  padding-block: 9px;
+  min-height: 46px;
+  padding-block: 8px;
+}
+
+.quota-row.stale {
+  opacity: 0.86;
 }
 
 .quota-row + .quota-row {
   border-top: 1px solid var(--border-subtle);
 }
 
-.quota-row-identity,
+.quota-row-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.quota-row-title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.quota-pool-name {
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 .quota-timeline-identity {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 7px;
+  flex-wrap: nowrap;
+  gap: 6px;
   font-size: 12px;
   min-width: 0;
-  overflow-wrap: anywhere;
+}
+
+.quota-timeline-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.quota-source-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
+}
+
+.quota-source-dot.codex {
+  background: var(--color-exact-bg);
+  color: var(--color-exact);
+}
+
+.quota-source-dot.antigravity {
+  background: var(--brand-subtle);
+  color: var(--brand-strong);
 }
 
 .quota-row-identity .panel-tag,
 .quota-timeline-identity .panel-tag {
   padding: 1px 6px;
+  flex-shrink: 0;
 }
 
 .quota-row-status {
-  flex-basis: 100%;
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--color-estimated);
+  line-height: 1.25;
 }
 
 .quota-row-gauge {
@@ -115,7 +175,7 @@
 }
 
 .quota-row .quota-track .rank-fill {
-  background: var(--color-quota);
+  background: linear-gradient(90deg, var(--color-quota) 0%, var(--accent-project-end) 100%);
 }
 
 .quota-gauge-val {
@@ -165,7 +225,7 @@
 .quota-timeline-group ol {
   list-style: none;
   margin: 0;
-  padding: 0 0 0 8px;
+  padding: 0 0 0 10px;
 }
 
 .quota-timeline-group li {
@@ -174,29 +234,36 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 5px 8px;
-  min-height: 44px;
-  padding: 8px 0 8px 15px;
+  min-height: 40px;
+  padding: 7px 0 7px 14px;
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.quota-timeline-group li:last-child {
+  border-bottom: none;
 }
 
 .quota-timeline-group li::before {
   content: '';
   position: absolute;
-  inset: 50% auto auto -2px;
+  left: 0;
+  top: 50%;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--brand-primary);
-  transform: translateY(-50%);
+  transform: translate(-50%, -50%);
 }
 
 .quota-timeline-group li:not(:last-child)::after {
   content: '';
   position: absolute;
-  inset: calc(50% + 6px) auto auto 0;
+  left: 0;
+  top: calc(50% + 5px);
+  bottom: calc(-50% + 5px);
   width: 1px;
-  height: calc(100% - 12px);
   background: var(--border-strong);
+  transform: translateX(-50%);
 }
 
 .quota-timeline-countdown {

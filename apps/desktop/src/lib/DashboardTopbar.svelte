@@ -1,7 +1,10 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import DateRangePicker from "./DateRangePicker.svelte";
   import { formatCompactTokens, type DeviceScope } from "./dashboardView";
+  import { relativeTime } from "./format";
   import { icons } from "./icons";
+  import { liveMinute } from "./liveClock";
   import type { DashboardSnapshot, DashboardRange } from "./types";
 
   export let activeTabLabel: string;
@@ -24,11 +27,45 @@
 
   let customOpen = false;
   let deviceMenuOpen = false;
+  let justRefreshed = false;
+  let refreshDoneTimer: ReturnType<typeof setTimeout> | undefined;
+  let destroyed = false;
+
+  onDestroy(() => {
+    destroyed = true;
+    if (refreshDoneTimer !== undefined) clearTimeout(refreshDoneTimer);
+  });
 
   function chooseDevice(scope: DeviceScope) {
     deviceMenuOpen = false;
     selectDeviceScope(scope);
   }
+
+  async function handleManualRefresh() {
+    if (refreshing) return;
+    justRefreshed = false;
+    if (refreshDoneTimer !== undefined) {
+      clearTimeout(refreshDoneTimer);
+      refreshDoneTimer = undefined;
+    }
+    try {
+      await loadDashboard();
+      if (destroyed) return;
+      justRefreshed = true;
+      refreshDoneTimer = setTimeout(() => {
+        justRefreshed = false;
+        refreshDoneTimer = undefined;
+      }, 1600);
+    } catch {
+      // Errors are surfaced by loadDashboard's own state.
+    }
+  }
+
+  $: refreshTooltip = refreshing
+    ? '正在刷新统计数据…'
+    : snapshot?.generated_at_ms
+      ? `刷新统计（上次更新：${relativeTime(snapshot.generated_at_ms, $liveMinute)}）`
+      : '刷新统计';
 </script>
 
 <svelte:window
@@ -190,14 +227,23 @@
         </button>
       {/if}
 
-      <button type="button"
-        class="icon-btn"
-        aria-label="刷新数据"
-        title="刷新统计"
+      <button
+        type="button"
+        class="refresh-btn"
+        class:is-refreshing={refreshing}
+        class:is-done={justRefreshed && !refreshing}
+        aria-label={refreshing ? '正在刷新数据' : '刷新统计'}
+        aria-busy={refreshing}
+        title={refreshTooltip}
         disabled={refreshing}
-        onclick={() => void loadDashboard()}
+        onclick={() => void handleManualRefresh()}
       >
-        <span class:spin={refreshing}>{@html icons.refresh}</span>
+        <span class="refresh-btn-icon" class:spin={refreshing}>
+          {@html justRefreshed && !refreshing ? icons.check : icons.refresh}
+        </span>
+        <span class="refresh-btn-label">
+          {refreshing ? '刷新中' : justRefreshed ? '已更新' : '刷新'}
+        </span>
       </button>
     </div>
   {/if}

@@ -233,18 +233,6 @@
     <div class="overview-header-left">
       <h1>使用总览</h1>
     </div>
-    <div class="overview-header-right">
-      <button
-        type="button"
-        class="overview-layout-toggle-btn"
-        class:active={isEditingLayout}
-        onclick={onToggleEditLayout}
-        title={isEditingLayout ? '退出布局编辑' : '自定义看板卡片大小与位置'}
-      >
-        {@html isEditingLayout ? icons.check : icons.edit}
-        <span>{isEditingLayout ? '完成编辑' : '自定义布局'}</span>
-      </button>
-    </div>
   </div>
 
   {#if isEditingLayout}

@@ -229,10 +229,10 @@
 
       <button
         type="button"
-        class="refresh-btn"
+        class="icon-btn refresh-btn"
         class:is-refreshing={refreshing}
         class:is-done={justRefreshed && !refreshing}
-        aria-label={refreshing ? '正在刷新数据' : '刷新统计'}
+        aria-label={refreshing ? '正在刷新数据' : justRefreshed ? '统计已更新' : '刷新统计'}
         aria-busy={refreshing}
         title={refreshTooltip}
         disabled={refreshing}
@@ -240,9 +240,6 @@
       >
         <span class="refresh-btn-icon" class:spin={refreshing}>
           {@html justRefreshed && !refreshing ? icons.check : icons.refresh}
-        </span>
-        <span class="refresh-btn-label">
-          {refreshing ? '刷新中' : justRefreshed ? '已更新' : '刷新'}
         </span>
       </button>
     </div>

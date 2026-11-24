@@ -37,7 +37,7 @@ describe('DashboardTopbar.svelte', () => {
     vi.useFakeTimers();
     const loadDashboard = vi.fn().mockResolvedValue(undefined);
 
-    const { getByRole, getByText } = render(DashboardTopbar, {
+    const { getByRole } = render(DashboardTopbar, {
       props: {
         ...baseProps,
         loadDashboard,
@@ -46,24 +46,24 @@ describe('DashboardTopbar.svelte', () => {
 
     const btn = getByRole('button', { name: '刷新统计' });
     expect(btn.getAttribute('title')).toContain('上次更新：');
-    expect(getByText('刷新')).toBeTruthy();
+    expect(btn.textContent?.trim()).toBe('');
 
     await fireEvent.click(btn);
     expect(loadDashboard).toHaveBeenCalledTimes(1);
 
     await tick();
-    expect(getByText('已更新')).toBeTruthy();
     expect(btn.classList.contains('is-done')).toBe(true);
+    expect(btn.getAttribute('aria-label')).toBe('统计已更新');
 
     vi.advanceTimersByTime(1600);
     await tick();
-    expect(getByText('刷新')).toBeTruthy();
     expect(btn.classList.contains('is-done')).toBe(false);
+    expect(btn.getAttribute('aria-label')).toBe('刷新统计');
   });
 
   it('displays busy state and disables click while refreshing', async () => {
     const loadDashboard = vi.fn().mockResolvedValue(undefined);
-    const { getByRole, getByText } = render(DashboardTopbar, {
+    const { getByRole } = render(DashboardTopbar, {
       props: {
         ...baseProps,
         refreshing: true,
@@ -74,7 +74,7 @@ describe('DashboardTopbar.svelte', () => {
     const btn = getByRole('button', { name: '正在刷新数据' }) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     expect(btn.getAttribute('aria-busy')).toBe('true');
-    expect(getByText('刷新中')).toBeTruthy();
+    expect(btn.classList.contains('is-refreshing')).toBe(true);
 
     await fireEvent.click(btn);
     expect(loadDashboard).not.toHaveBeenCalled();

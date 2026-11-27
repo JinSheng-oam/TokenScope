@@ -82,13 +82,19 @@ pub(super) fn refresh_if_due(store: &mut LocalStore, db_path: &Path) {
         .as_deref()
         .is_some_and(|version| version.starts_with(CATALOG_VERSION_PREFIX));
     // A saved attempt from the old format cannot tell us whether this version tried.
-    let first_upgrade_attempt = has_catalog
-        && !current_format
-        && !LEGACY_REFRESH_ATTEMPTED.swap(true, Ordering::Relaxed);
+    let first_upgrade_attempt =
+        has_catalog && !current_format && !LEGACY_REFRESH_ATTEMPTED.swap(true, Ordering::Relaxed);
     if !first_upgrade_attempt && ((current_format && success_is_fresh) || attempt_is_recent) {
         return;
     }
-    let _ = run_refresh(store, db_path, now, state.etag.as_deref(), current_format, state.last_success_ms);
+    let _ = run_refresh(
+        store,
+        db_path,
+        now,
+        state.etag.as_deref(),
+        current_format,
+        state.last_success_ms,
+    );
 }
 
 pub(super) fn force_refresh(
@@ -110,7 +116,14 @@ pub(super) fn force_refresh(
     } else {
         None
     };
-    run_refresh(store, db_path, now, etag, current_format, state.last_success_ms)
+    run_refresh(
+        store,
+        db_path,
+        now,
+        etag,
+        current_format,
+        state.last_success_ms,
+    )
 }
 
 fn run_refresh(
@@ -362,13 +375,20 @@ fn parse_catalog(root: &Value) -> Result<Vec<ModelPriceEntry>, String> {
             if has_unsupported_pricing(cost, reference) {
                 continue;
             }
-            let (Ok(input_rate_nanos), Ok(output_rate_nanos), Ok(cache_read_rate_nanos), Ok(cache_write_rate_nanos), Ok(reasoning_rate_nanos)) = (
+            let (
+                Ok(input_rate_nanos),
+                Ok(output_rate_nanos),
+                Ok(cache_read_rate_nanos),
+                Ok(cache_write_rate_nanos),
+                Ok(reasoning_rate_nanos),
+            ) = (
                 parse_rate(cost.get("input")),
                 parse_rate(cost.get("output")),
                 parse_rate(cost.get("cache_read")),
                 parse_rate(cost.get("cache_write")),
                 parse_rate(cost.get("reasoning")),
-            ) else {
+            )
+            else {
                 continue;
             };
             let entry = ModelPriceEntry {
@@ -541,20 +561,104 @@ fn builtin_fallback_entries() -> Vec<ModelPriceEntry> {
         rate_entry("openai", "o3", "2", "8", Some("0.5"), None),
         rate_entry("openai", "o4-mini", "1.1", "4.4", Some("0.275"), None),
         // Anthropic
-        rate_entry("anthropic", "claude-opus-4-6", "15", "75", Some("1.5"), Some("18.75")),
-        rate_entry("anthropic", "claude-sonnet-4-6", "3", "15", Some("0.3"), Some("3.75")),
-        rate_entry("anthropic", "claude-sonnet-4-5", "3", "15", Some("0.3"), Some("3.75")),
-        rate_entry("anthropic", "claude-haiku-4-5", "1", "5", Some("0.1"), Some("1.25")),
-        rate_entry("anthropic", "claude-3-7-sonnet", "3", "15", Some("0.3"), Some("3.75")),
-        rate_entry("anthropic", "claude-3-5-sonnet", "3", "15", Some("0.3"), Some("3.75")),
+        rate_entry(
+            "anthropic",
+            "claude-opus-4-6",
+            "15",
+            "75",
+            Some("1.5"),
+            Some("18.75"),
+        ),
+        rate_entry(
+            "anthropic",
+            "claude-sonnet-4-6",
+            "3",
+            "15",
+            Some("0.3"),
+            Some("3.75"),
+        ),
+        rate_entry(
+            "anthropic",
+            "claude-sonnet-4-5",
+            "3",
+            "15",
+            Some("0.3"),
+            Some("3.75"),
+        ),
+        rate_entry(
+            "anthropic",
+            "claude-haiku-4-5",
+            "1",
+            "5",
+            Some("0.1"),
+            Some("1.25"),
+        ),
+        rate_entry(
+            "anthropic",
+            "claude-3-7-sonnet",
+            "3",
+            "15",
+            Some("0.3"),
+            Some("3.75"),
+        ),
+        rate_entry(
+            "anthropic",
+            "claude-3-5-sonnet",
+            "3",
+            "15",
+            Some("0.3"),
+            Some("3.75"),
+        ),
         // Google
-        rate_entry("google", "gemini-3-flash-preview", "0.5", "3", Some("0.05"), None),
-        rate_entry("google", "gemini-2.5-pro", "1.25", "10", Some("0.125"), None),
-        rate_entry("google", "gemini-2.5-flash", "0.3", "2.5", Some("0.03"), None),
-        rate_entry("google", "gemini-2.0-flash", "0.1", "0.4", Some("0.025"), None),
+        rate_entry(
+            "google",
+            "gemini-3-flash-preview",
+            "0.5",
+            "3",
+            Some("0.05"),
+            None,
+        ),
+        rate_entry(
+            "google",
+            "gemini-2.5-pro",
+            "1.25",
+            "10",
+            Some("0.125"),
+            None,
+        ),
+        rate_entry(
+            "google",
+            "gemini-2.5-flash",
+            "0.3",
+            "2.5",
+            Some("0.03"),
+            None,
+        ),
+        rate_entry(
+            "google",
+            "gemini-2.0-flash",
+            "0.1",
+            "0.4",
+            Some("0.025"),
+            None,
+        ),
         // DeepSeek
-        rate_entry("deepseek", "deepseek-chat", "0.27", "1.1", Some("0.07"), None),
-        rate_entry("deepseek", "deepseek-reasoner", "0.55", "2.19", Some("0.14"), None),
+        rate_entry(
+            "deepseek",
+            "deepseek-chat",
+            "0.27",
+            "1.1",
+            Some("0.07"),
+            None,
+        ),
+        rate_entry(
+            "deepseek",
+            "deepseek-reasoner",
+            "0.55",
+            "2.19",
+            Some("0.14"),
+            None,
+        ),
     ]
 }
 

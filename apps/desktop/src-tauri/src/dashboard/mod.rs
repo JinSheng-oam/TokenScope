@@ -5,9 +5,26 @@ use crate::state::DashboardWatch;
 use query::{query_agent, query_agent_session_analysis, request_agent_session_delete};
 use tauri::{AppHandle, Manager};
 use tokenscope_local_ipc::{DashboardResponse, SessionAnalysisResponse, SessionDeleteResponse};
+use tokenscope_local_store::{LocalStore, ModelActivityBreakdown};
 
 pub(crate) use query::query_agent_fresh;
 pub(crate) use watch::{spawn_dashboard_warmup, spawn_dashboard_watch};
+
+#[tauri::command]
+pub(crate) async fn get_model_activity(
+    app: AppHandle,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+) -> Result<Vec<ModelActivityBreakdown>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = crate::paths::database_path(&app)?;
+        LocalStore::open_readonly(&db)
+            .and_then(|store| store.model_activity_breakdown(from_ms, to_ms))
+            .map_err(|error| format!("查询模型活动失败：{error}"))
+    })
+    .await
+    .map_err(|error| format!("模型活动查询任务失败：{error}"))?
+}
 #[tauri::command]
 pub(crate) async fn delete_session(
     app: AppHandle,

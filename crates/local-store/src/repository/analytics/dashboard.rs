@@ -11,6 +11,14 @@ impl LocalStore {
     /// Read-only dashboard aggregate. Daily ranges are calculated by the Agent
     /// with the device IANA timezone, so DST boundaries are not assumed to be 24h.
     pub fn dashboard_snapshot(&self, query: DashboardQuery<'_>) -> Result<DashboardSnapshot> {
+        self.dashboard_snapshot_with_details(query, true)
+    }
+
+    pub(super) fn dashboard_snapshot_with_details(
+        &self,
+        query: DashboardQuery<'_>,
+        include_details: bool,
+    ) -> Result<DashboardSnapshot> {
         let DashboardQuery {
             range,
             from_ms,
@@ -85,10 +93,14 @@ impl LocalStore {
                 "by_model",
                 self.usage_breakdown("model_id", owner_device_id, "device_local", from_ms, to_ms)?
             ),
-            model_activity: timed!(
-                "model_activity",
-                self.model_activity_breakdown(from_ms, to_ms)?
-            ),
+            model_activity: if include_details {
+                timed!(
+                    "model_activity",
+                    self.model_activity_breakdown(from_ms, to_ms)?
+                )
+            } else {
+                Vec::new()
+            },
             by_project: timed!(
                 "by_project",
                 self.usage_breakdown(
@@ -101,7 +113,14 @@ impl LocalStore {
             ),
             session_usage: timed!(
                 "session_usage",
-                self.session_usage_page(owner_device_id, from_ms, to_ms, session_offset, 50)?
+                self.session_usage_page(
+                    owner_device_id,
+                    from_ms,
+                    to_ms,
+                    session_offset,
+                    if include_details { 50 } else { 10 },
+                    include_details
+                )?
             ),
             daily,
             remote_daily,

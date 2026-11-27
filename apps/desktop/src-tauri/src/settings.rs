@@ -187,10 +187,9 @@ fn read_windows_run_command(app_name: &str) -> Option<String> {
     };
 
     for root in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
-        let Ok(key) = RegKey::predef(root).open_subkey_with_flags(
-            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
-            KEY_READ,
-        ) else {
+        let Ok(key) = RegKey::predef(root)
+            .open_subkey_with_flags(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", KEY_READ)
+        else {
             continue;
         };
         if let Ok(value) = key.get_value::<String, _>(app_name) {
@@ -279,7 +278,8 @@ pub(crate) async fn rename_local_device(
     display_name: String,
 ) -> Result<String, String> {
     let trimmed = display_name.trim().to_string();
-    if trimmed.is_empty() || trimmed.chars().count() > 128 || trimmed.chars().any(char::is_control) {
+    if trimmed.is_empty() || trimmed.chars().count() > 128 || trimmed.chars().any(char::is_control)
+    {
         return Err("设备名称须为 1–128 个有效字符".into());
     }
     tauri::async_runtime::spawn_blocking(move || {

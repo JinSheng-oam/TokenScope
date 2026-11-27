@@ -73,6 +73,7 @@ pub(super) fn run(
     );
     let mut cached_hub_client = None;
     let mut consecutive_failures = 0_u32;
+    let mut antigravity_cache = Default::default();
     while !options.shutdown_requested() {
         if let Err(error) = session_control::process_pending_requests(store, db) {
             eprintln!("TokenScope session control warning: {error}");
@@ -91,7 +92,7 @@ pub(super) fn run(
             if options.shutdown_requested() {
                 break;
             }
-            match collect_once(store, collection) {
+            match collect_once(store, collection, &mut antigravity_cache) {
                 Ok(()) => consecutive_failures = 0,
                 Err(err) => {
                     consecutive_failures = consecutive_failures.saturating_add(1);

@@ -92,7 +92,10 @@ mod models;
 mod protobuf;
 mod snapshot;
 
-pub use collector::{collect_antigravity, collect_antigravity_tolerant};
+pub use collector::{
+    collect_antigravity, collect_antigravity_cached, collect_antigravity_tolerant,
+    AntigravityReadCache,
+};
 pub use metadata::import_titles;
 pub use protobuf::extract_model_name;
 pub use snapshot::discover_databases;

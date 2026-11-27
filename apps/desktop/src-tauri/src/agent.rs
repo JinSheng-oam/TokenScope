@@ -3,13 +3,14 @@ use crate::{
         agent_is_running, database_path, resolve_agent, rotate_agent_log, shutdown_path,
         sync_config_path, validate_time_zone, webdav_config_path,
     },
-    state::{AgentProcess, AgentStatus},
+    state::{AgentProcess, AgentStatus, AppLifecycle},
 };
 use serde::de::DeserializeOwned;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
     process::{Command, Stdio},
+    sync::atomic::Ordering,
     thread,
     time::{Duration, Instant},
 };
@@ -26,6 +27,13 @@ pub(crate) fn start_agent_inner(
     let data_dir = db.parent().ok_or("无效数据库路径")?;
     let agent = resolve_agent(app);
     let mut child_slot = process.child.lock().map_err(|_| "Agent 进程状态锁损坏")?;
+    if app
+        .state::<AppLifecycle>()
+        .quit_requested
+        .load(Ordering::SeqCst)
+    {
+        return Err("TokenScope 正在退出".into());
+    }
 
     if let Some(child) = child_slot.as_mut() {
         match child

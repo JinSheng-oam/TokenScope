@@ -4,7 +4,7 @@ use std::{
     process::Child,
     sync::{
         atomic::{AtomicBool, AtomicU64},
-        Mutex,
+        Arc, Mutex, OnceLock,
     },
     time::Instant,
 };
@@ -52,4 +52,7 @@ pub(crate) struct DashboardWatch {
     pub(crate) cache: Mutex<HashMap<String, (DashboardResponse, Instant)>>,
     pub(crate) session_filter_options: Mutex<HashMap<String, SessionFilterOptions>>,
     pub(crate) refreshing: Mutex<HashSet<String>>,
+    pub(crate) queries: Mutex<HashMap<String, DashboardQueryInFlight>>,
 }
+
+pub(crate) type DashboardQueryInFlight = Arc<OnceLock<Result<DashboardResponse, String>>>;

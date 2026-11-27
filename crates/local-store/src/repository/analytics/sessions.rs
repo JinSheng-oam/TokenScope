@@ -14,6 +14,7 @@ impl LocalStore {
         to_ms: Option<i64>,
         offset: u64,
         limit: u32,
+        include_response_counts: bool,
     ) -> Result<SessionUsagePage> {
         self.session_usage_page_filtered(
             owner_device_id,
@@ -25,6 +26,7 @@ impl LocalStore {
             None,
             None,
             None,
+            include_response_counts,
         )
     }
 
@@ -80,6 +82,7 @@ impl LocalStore {
             tool_id,
             model_id,
             project_id,
+            true,
         )?;
         let page_elapsed = started.elapsed();
         let filters_started = Instant::now();
@@ -113,6 +116,7 @@ impl LocalStore {
         tool_id: Option<&str>,
         model_id: Option<&str>,
         project_id: Option<&str>,
+        include_response_counts: bool,
     ) -> Result<SessionUsagePage> {
         if limit == 0 || limit > 200 || offset > i64::MAX as u64 {
             return Err(StoreError::InvalidInput("session page bounds"));
@@ -123,6 +127,16 @@ impl LocalStore {
         {
             return Err(StoreError::InvalidInput("session search"));
         }
+        let modern_codex = if include_response_counts {
+            r#"CASE WHEN u.tool_id='codex' THEN EXISTS (
+                SELECT 1 FROM record_sources rs
+                JOIN source_checkpoints cp ON cp.tool_id=rs.tool_id AND cp.source_key=rs.source_key
+                WHERE rs.record_id=u.record_id AND rs.tool_id='codex'
+                    AND cp.source_fingerprint LIKE '%"mode":"modern"%'
+            ) ELSE 0 END"#
+        } else {
+            "0"
+        };
         let cte = format!(
             r#"{SESSION_LINKS_CTE}, usage_sessions AS (
                 SELECT u.session_id,u.tool_id,
@@ -143,14 +157,7 @@ impl LocalStore {
                         THEN SUM(CASE WHEN u.is_modern_codex AND u.model_id IS NULL THEN 1 ELSE 0 END) ELSE NULL END AS unknown_response_count,
                     MAX(u.event_at_ms) AS last_event_at_ms,NULL AS activity_observed_at_ms
                 FROM (
-                    SELECT u.*,
-                        CASE WHEN u.tool_id='codex' THEN EXISTS (
-                            SELECT 1 FROM record_sources rs
-                            JOIN source_checkpoints cp
-                                ON cp.tool_id=rs.tool_id AND cp.source_key=rs.source_key
-                            WHERE rs.record_id=u.record_id AND rs.tool_id='codex'
-                                AND cp.source_fingerprint LIKE '%"mode":"modern"%'
-                        ) ELSE 0 END AS is_modern_codex
+                    SELECT u.*, {modern_codex} AS is_modern_codex
                     FROM usage_records u
                     WHERE u.owner_device_id=?1 AND u.scope='device_local' AND u.is_deleted=0
                         AND u.session_id IS NOT NULL AND u.tool_id<>'antigravity'
@@ -209,6 +216,15 @@ impl LocalStore {
             )
         "#
         );
+        // Bounded queries can use the device/time index when the date
+        // comparisons are outside the nullable OR expressions.
+        let mut cte = cte;
+        if from_ms.is_some() {
+            cte = cte.replace("(?2 IS NULL OR u.event_at_ms >= ?2)", "u.event_at_ms >= ?2");
+        }
+        if to_ms.is_some() {
+            cte = cte.replace("(?3 IS NULL OR u.event_at_ms < ?3)", "u.event_at_ms < ?3");
+        }
         let page_started = Instant::now();
         let page_sql = format!(
             r#"{cte}

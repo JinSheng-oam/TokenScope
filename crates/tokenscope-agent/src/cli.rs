@@ -417,6 +417,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
                     allow_antigravity_estimates: ag_estimates,
                     device_id: &device,
                 },
+                &mut Default::default(),
             )?;
         }
         if refresh_antigravity_quota {

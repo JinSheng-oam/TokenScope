@@ -215,7 +215,7 @@ impl LocalStore {
         Ok(result)
     }
 
-    pub(super) fn model_activity_breakdown(
+    pub fn model_activity_breakdown(
         &self,
         from_ms: Option<i64>,
         to_ms: Option<i64>,

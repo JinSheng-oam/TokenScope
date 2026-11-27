@@ -4,14 +4,21 @@ use common::*;
 use rusqlite::{params, Connection};
 use std::fs;
 use tokenscope_core_domain::{aggregate_device_local, stable_record_id, Precision};
-use tokenscope_source_antigravity::{collect_antigravity, collect_antigravity_tolerant};
+use tokenscope_source_antigravity::{
+    collect_antigravity, collect_antigravity_cached, collect_antigravity_tolerant,
+    AntigravityReadCache,
+};
 
 #[test]
 fn collector_observes_live_wal_and_releases_source_file() {
     let f = Fixture::new();
     let path = f.write("antigravity", "wal", &[Some("gemini-pro")]);
     let mut store = store();
-    collect_antigravity_tolerant(&f.root, &mut store, "test-device", false).unwrap();
+    let mut cache = AntigravityReadCache::default();
+    collect_antigravity_cached(&f.root, &mut store, "test-device", false, &mut cache).unwrap();
+    let unchanged =
+        collect_antigravity_cached(&f.root, &mut store, "test-device", false, &mut cache).unwrap();
+    assert_eq!(unchanged.unchanged, 1);
     let writer = Connection::open(&path).unwrap();
     writer.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
     writer
@@ -20,11 +27,11 @@ fn collector_observes_live_wal_and_releases_source_file() {
             params![blob("claude-sonnet")],
         )
         .unwrap();
-    collect_antigravity_tolerant(&f.root, &mut store, "test-device", false).unwrap();
+    collect_antigravity_cached(&f.root, &mut store, "test-device", false, &mut cache).unwrap();
     assert_eq!(store.antigravity_activity_summary().unwrap().known_turns, 2);
     drop(writer);
     fs::remove_file(&path).unwrap();
-    collect_antigravity_tolerant(&f.root, &mut store, "test-device", false).unwrap();
+    collect_antigravity_cached(&f.root, &mut store, "test-device", false, &mut cache).unwrap();
     assert_eq!(store.antigravity_activity_summary().unwrap().known_turns, 2);
 }
 

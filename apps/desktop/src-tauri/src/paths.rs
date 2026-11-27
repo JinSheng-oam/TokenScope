@@ -5,13 +5,20 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
+    sync::Mutex,
     thread,
     time::Duration,
 };
 use tauri::{AppHandle, Manager};
 use tokenscope_sync_client::HubUrl;
 
+static DATABASE_PATH_LOCK: Mutex<()> = Mutex::new(());
+
 pub(crate) fn database_path(app: &AppHandle) -> Result<PathBuf, String> {
+    // Background Agent startup and the dashboard can resolve the path together.
+    let _guard = DATABASE_PATH_LOCK
+        .lock()
+        .map_err(|_| "数据库路径状态不可用")?;
     let dir = app
         .path()
         .app_local_data_dir()

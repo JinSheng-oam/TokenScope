@@ -1,10 +1,6 @@
 use super::query::{dashboard_key, query_agent_fresh};
 use crate::{paths::database_path, state::DashboardWatch};
-use std::{
-    sync::atomic::Ordering,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{sync::atomic::Ordering, thread, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
 use tokenscope_local_store::LocalStore;
 
@@ -74,12 +70,30 @@ pub(crate) fn spawn_dashboard_watch(app: AppHandle) {
                     }
                     continue;
                 }
-                let response = query_agent_fresh(
-                    &app,
-                    &request.range,
-                    0,
-                    request.start_date.as_deref(),
-                    request.end_date.as_deref(),
+                let cached = watch.cache.lock().ok().and_then(|cache| {
+                    cache
+                        .get(&key)
+                        .filter(|(entry, _)| {
+                            entry.snapshot.data_revision == full
+                                && chrono::DateTime::from_timestamp_millis(
+                                    entry.snapshot.generated_at_ms,
+                                )
+                                .map(|at| at.with_timezone(&chrono::Local).date_naive())
+                                    == Some(chrono::Local::now().date_naive())
+                        })
+                        .map(|(entry, _)| entry.clone())
+                });
+                let response = cached.map_or_else(
+                    || {
+                        query_agent_fresh(
+                            &app,
+                            &request.range,
+                            0,
+                            request.start_date.as_deref(),
+                            request.end_date.as_deref(),
+                        )
+                    },
+                    Ok,
                 );
                 if let Ok(mut r) = watch.refreshing.lock() {
                     r.remove(&key);
@@ -88,10 +102,6 @@ pub(crate) fn spawn_dashboard_watch(app: AppHandle) {
                     Ok(response) => {
                         let rev = response.snapshot.data_revision;
                         last_full = Some(rev);
-                        if let Ok(mut cache) = watch.cache.lock() {
-                            cache.retain(|_, (cached, _)| cached.snapshot.data_revision >= rev);
-                            cache.insert(key, (response.clone(), Instant::now()));
-                        }
                         if let Err(error) = app.emit("dashboard-updated", response) {
                             eprintln!("TokenScope dashboard push warning: {error}");
                         }
@@ -126,7 +136,8 @@ pub(crate) fn spawn_dashboard_warmup(app: AppHandle) {
     }
     thread::spawn(move || {
         thread::sleep(Duration::from_secs(6));
-        for range in ["today", "7d", "30d", "all"] {
+        // Wide queries compete with navigation; load them on demand.
+        for range in ["today", "7d"] {
             if !dashboard_visible(&app) {
                 break;
             }
@@ -149,22 +160,10 @@ pub(crate) fn spawn_dashboard_warmup(app: AppHandle) {
             if !claimed {
                 continue;
             }
-            let response = query_agent_fresh(&app, range, 0, None, None);
+            let _ = query_agent_fresh(&app, range, 0, None, None);
             if let Ok(mut r) = watch.refreshing.lock() {
                 r.remove(&key);
-            }
-            if let Ok(response) = response {
-                if let Ok(mut cache) = watch.cache.lock() {
-                    let should_insert = cache.get(&key).is_none_or(|(previous, _)| {
-                        previous.snapshot.data_revision <= response.snapshot.data_revision
-                            && previous.snapshot.generated_at_ms
-                                <= response.snapshot.generated_at_ms
-                    });
-                    if should_insert {
-                        cache.insert(key, (response, Instant::now()));
-                    }
-                }
-            }
+            };
         }
         app.state::<DashboardWatch>()
             .warming

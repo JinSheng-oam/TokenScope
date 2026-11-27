@@ -7,10 +7,119 @@ use crate::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::Path,
+    fs, io,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::{Duration, Instant, SystemTime},
 };
 use tokenscope_core_domain::{stable_record_id, Precision};
 use tokenscope_local_store::{AntigravityActivity, LocalStore, SourceCheckpoint};
+
+type FileStamp = (u64, SystemTime, Option<SystemTime>);
+
+fn database_stamp(path: &Path) -> io::Result<FileStamp> {
+    fn sidecar(path: &Path, suffix: &str) -> PathBuf {
+        let mut name = path.as_os_str().to_os_string();
+        name.push(suffix);
+        PathBuf::from(name)
+    }
+    // WAL frames can be reused without growing the file, and write times
+    // can lag on Windows. With a sidecar present, always read SQLite.
+    for suffix in ["-wal", "-journal"] {
+        match fs::metadata(sidecar(path, suffix)) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            _ => return Err(io::Error::other("database may have a live journal")),
+        }
+    }
+    let metadata = fs::metadata(path)?;
+    Ok((
+        metadata.len(),
+        metadata.modified()?,
+        metadata.created().ok(),
+    ))
+}
+
+struct CachedSnapshot {
+    stamp: FileStamp,
+    device_id: String,
+    snapshot: Arc<Snapshot>,
+}
+
+/// Daemon-local reuse of complete source reads. Reconciliation still runs over
+/// all current candidates, including duplicates and changed project metadata.
+#[derive(Default)]
+pub struct AntigravityReadCache {
+    entries: BTreeMap<PathBuf, CachedSnapshot>,
+    last_full_read: Option<Instant>,
+}
+
+impl AntigravityReadCache {
+    fn begin_scan(&mut self, paths: &[PathBuf]) {
+        if self
+            .last_full_read
+            .is_none_or(|at| at.elapsed() >= Duration::from_secs(600))
+        {
+            self.entries.clear();
+            self.last_full_read = Some(Instant::now());
+        }
+        let current: BTreeSet<_> = paths.iter().collect();
+        self.entries.retain(|path, _| current.contains(path));
+    }
+
+    fn read(
+        &mut self,
+        path: &Path,
+        stem: String,
+        device_id: &str,
+        project_id: Option<String>,
+    ) -> Result<Arc<Snapshot>> {
+        let before = database_stamp(path).ok();
+        if let (Some(stamp), Some(cached)) = (&before, self.entries.get(path)) {
+            if *stamp == cached.stamp
+                && cached.device_id == device_id
+                && cached.snapshot.project_id == project_id
+            {
+                return Ok(Arc::clone(&cached.snapshot));
+            }
+        }
+        self.entries.remove(path);
+        let snapshot = Arc::new(read_db(path, stem, device_id, project_id)?);
+        if let Some(stamp) = before {
+            let complete_nonempty = snapshot.skipped_rows == 0
+                && (snapshot.known_turns > 0
+                    || snapshot.unknown_turns > 0
+                    || !snapshot.records.is_empty());
+            let retained_turns: u64 = self
+                .entries
+                .values()
+                .map(|entry| {
+                    entry
+                        .snapshot
+                        .known_turns
+                        .saturating_add(entry.snapshot.unknown_turns)
+                })
+                .sum();
+            if complete_nonempty
+                && self.entries.len() < 512
+                && retained_turns
+                    .saturating_add(snapshot.known_turns)
+                    .saturating_add(snapshot.unknown_turns)
+                    <= 100_000
+                && database_stamp(path).ok().as_ref() == Some(&stamp)
+            {
+                self.entries.insert(
+                    path.to_owned(),
+                    CachedSnapshot {
+                        stamp,
+                        device_id: device_id.to_owned(),
+                        snapshot: Arc::clone(&snapshot),
+                    },
+                );
+            }
+        }
+        Ok(snapshot)
+    }
+}
 
 pub fn collect_antigravity(
     gemini_home: &Path,
@@ -18,7 +127,7 @@ pub fn collect_antigravity(
     device_id: &str,
     estimate_tokens: bool,
 ) -> Result<AntigravityReport> {
-    collect_antigravity_with_policy(gemini_home, store, device_id, estimate_tokens, false)
+    collect_antigravity_with_policy(gemini_home, store, device_id, estimate_tokens, false, None)
 }
 
 /// Desktop collection policy: unreadable databases are counted in
@@ -29,7 +138,24 @@ pub fn collect_antigravity_tolerant(
     device_id: &str,
     estimate_tokens: bool,
 ) -> Result<AntigravityReport> {
-    collect_antigravity_with_policy(gemini_home, store, device_id, estimate_tokens, true)
+    collect_antigravity_with_policy(gemini_home, store, device_id, estimate_tokens, true, None)
+}
+
+pub fn collect_antigravity_cached(
+    gemini_home: &Path,
+    store: &mut LocalStore,
+    device_id: &str,
+    estimate_tokens: bool,
+    cache: &mut AntigravityReadCache,
+) -> Result<AntigravityReport> {
+    collect_antigravity_with_policy(
+        gemini_home,
+        store,
+        device_id,
+        estimate_tokens,
+        true,
+        Some(cache),
+    )
 }
 
 fn collect_antigravity_with_policy(
@@ -38,14 +164,18 @@ fn collect_antigravity_with_policy(
     device_id: &str,
     estimate_tokens: bool,
     skip_broken: bool,
+    mut cache: Option<&mut AntigravityReadCache>,
 ) -> Result<AntigravityReport> {
     let paths = discover_databases(gemini_home)?;
+    if let Some(cache) = cache.as_deref_mut() {
+        cache.begin_scan(&paths);
+    }
     let projects = project_index(gemini_home);
     let mut report = AntigravityReport {
         source_files: paths.len(),
         ..AntigravityReport::default()
     };
-    let mut snapshots: BTreeMap<String, Snapshot> = BTreeMap::new();
+    let mut snapshots: BTreeMap<String, Arc<Snapshot>> = BTreeMap::new();
     let mut ambiguous: BTreeSet<String> = BTreeSet::new();
     let mut incomplete: BTreeSet<String> = BTreeSet::new();
     for path in paths {
@@ -75,7 +205,11 @@ fn collect_antigravity_with_policy(
         if store.is_session_suppressed("antigravity", &source_key)? {
             continue;
         }
-        let snap = match read_db(&path, stem.clone(), device_id, project_id) {
+        let read = match cache.as_deref_mut() {
+            Some(cache) => cache.read(&path, stem.clone(), device_id, project_id),
+            None => read_db(&path, stem.clone(), device_id, project_id).map(Arc::new),
+        };
+        let snap = match read {
             Ok(snap) => snap,
             Err(_) if skip_broken => {
                 report.skipped_sources += 1;

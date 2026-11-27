@@ -1,9 +1,10 @@
 <script lang="ts">
+  import { invoke } from '@tauri-apps/api/core';
   import CustomSelect from './CustomSelect.svelte';
   import { displayCurrency } from './displayCurrency';
   import { formatCost, formatNumber, formatToolLabel, percentOf } from '../lib/format';
   import type { ModelSortBy } from '../lib/dashboardView';
-  import type { DashboardSnapshot, UsageBreakdown } from '../lib/types';
+  import type { DashboardSnapshot, ModelActivityBreakdown, UsageBreakdown } from '../lib/types';
 
   export let snapshot: DashboardSnapshot;
   export let deviceScope: string;
@@ -33,7 +34,28 @@
   $: rankOffset = (currentRankPage - 1) * rankPageSize;
   $: visibleModels = sortedModels.slice(rankOffset, rankOffset + rankPageSize);
 
-  $: modelActivity = snapshot.model_activity;
+  let modelActivity: ModelActivityBreakdown[] = [];
+  let activityLoading = false;
+  let activityError = '';
+  let activityRequest = 0;
+  let activityKey = '';
+
+  function updateActivity(fromMs: number | null, toMs: number | null, revision: number, scope: string) {
+    const key = scope === 'all' || scope === 'local' ? `${fromMs}|${toMs}|${revision}` : '';
+    if (key === activityKey) return;
+    activityKey = key;
+    const request = ++activityRequest;
+    modelActivity = [];
+    activityError = '';
+    activityLoading = Boolean(key);
+    if (!key) return;
+    void invoke<ModelActivityBreakdown[]>('get_model_activity', { fromMs, toMs })
+      .then((result) => { if (request === activityRequest) modelActivity = result; })
+      .catch((error) => { if (request === activityRequest) activityError = String(error); })
+      .finally(() => { if (request === activityRequest) activityLoading = false; });
+  }
+
+  $: updateActivity(snapshot.range_start_ms, snapshot.range_end_ms, snapshot.data_revision, deviceScope);
   $: activityTotalPages = Math.max(1, Math.ceil(modelActivity.length / activityPageSize));
   $: currentActivityPage = Math.min(activityPage, activityTotalPages);
   $: activityOffset = (currentActivityPage - 1) * activityPageSize;
@@ -154,6 +176,15 @@
 
     {#if deviceScope !== 'all' && deviceScope !== 'local'}
       <div class="empty-box">暂无该设备的调用数据。</div>
+    {:else if activityLoading}
+      <p class="empty-state" role="status">正在加载模型活动…</p>
+    {:else if activityError}
+      <p class="empty-state" role="alert">{activityError}
+        <button type="button" class="range-btn" onclick={() => {
+          activityKey = '';
+          updateActivity(snapshot.range_start_ms, snapshot.range_end_ms, snapshot.data_revision, deviceScope);
+        }}>重试</button>
+      </p>
     {:else if modelActivity.length > 0}
       <div class="table-wrap">
         <table class="models-activity-table">

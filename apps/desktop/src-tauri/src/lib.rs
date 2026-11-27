@@ -39,11 +39,6 @@ pub fn run() {
         ))
         .setup(|app| {
             build_tray(app)?;
-            let process = app.state::<AgentProcess>();
-            let time_zone = iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_string());
-            if let Err(error) = start_agent_inner(app.handle(), &time_zone, process.inner()) {
-                eprintln!("TokenScope Agent startup warning: {error}");
-            }
             spawn_dashboard_watch(app.handle().clone());
             instruction_sync::start_polling(app.handle().clone());
             // Login autostart runs the collector and tray only. No WebView is
@@ -54,6 +49,15 @@ pub fn run() {
                     eprintln!("TokenScope window startup warning: {error}");
                 }
             }
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let process = handle.state::<AgentProcess>();
+                let time_zone =
+                    iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_string());
+                if let Err(error) = start_agent_inner(&handle, &time_zone, process.inner()) {
+                    eprintln!("TokenScope Agent startup warning: {error}");
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -116,6 +120,7 @@ pub fn run() {
             session_history::save_session_message,
             session_history::remove_source_session,
             dashboard::get_dashboard_snapshot,
+            dashboard::get_model_activity,
             dashboard::get_session_analysis,
             dashboard::delete_session,
             diagnostics::run_diagnostics,
@@ -155,6 +160,10 @@ pub fn run() {
             }
         }
         tauri::RunEvent::Exit => {
+            app_handle
+                .state::<AppLifecycle>()
+                .quit_requested
+                .store(true, Ordering::SeqCst);
             let process = app_handle.state::<AgentProcess>();
             let _ = stop_agent_inner(app_handle, process.inner());
         }

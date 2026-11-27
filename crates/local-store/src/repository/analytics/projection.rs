@@ -140,6 +140,23 @@ impl LocalStore {
         start_date: Option<&str>,
         end_date: Option<&str>,
     ) -> Result<DashboardSnapshot, String> {
+        self.dashboard_snapshot_for_range_with_details(
+            range,
+            session_offset,
+            start_date,
+            end_date,
+            true,
+        )
+    }
+
+    pub fn dashboard_snapshot_for_range_with_details(
+        &self,
+        range: &str,
+        session_offset: u64,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+        include_details: bool,
+    ) -> Result<DashboardSnapshot, String> {
         if !["today", "7d", "30d", "all", "custom"].contains(&range) {
             return Err("range must be today, 7d, 30d, all or custom".into());
         }
@@ -184,16 +201,19 @@ impl LocalStore {
         } else {
             "UTC".into()
         };
-        self.dashboard_snapshot(DashboardQuery {
-            range,
-            from_ms: resolved.from_ms,
-            to_ms: resolved.to_ms,
-            daily_ranges: &daily_ranges,
-            generated_at_ms: now,
-            time_zone: zone_name,
-            time_zone_valid: zone_valid,
-            session_offset,
-        })
+        self.dashboard_snapshot_with_details(
+            DashboardQuery {
+                range,
+                from_ms: resolved.from_ms,
+                to_ms: resolved.to_ms,
+                daily_ranges: &daily_ranges,
+                generated_at_ms: now,
+                time_zone: zone_name,
+                time_zone_valid: zone_valid,
+                session_offset,
+            },
+            include_details,
+        )
         .map_err(|e| e.to_string())
     }
 

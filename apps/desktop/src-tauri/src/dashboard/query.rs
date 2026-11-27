@@ -62,13 +62,11 @@ pub(super) fn query_agent(
             .ok()
             .and_then(|cache| cache.get(&key).cloned());
         if let Some((cached, _at)) = hit {
-            let is_empty =
-                cached.snapshot.local.total_tokens == 0 && cached.snapshot.remote.total_tokens == 0;
             let is_stale = chrono::DateTime::from_timestamp_millis(cached.snapshot.generated_at_ms)
                 .map(|at| at.with_timezone(&chrono::Local).date_naive())
                 != Some(chrono::Local::now().date_naive())
                 || cached.snapshot.data_revision < watch.revision.load(Ordering::Acquire);
-            if !is_empty {
+            if !is_stale || cached.snapshot.identity.is_some() {
                 if is_stale {
                     spawn_dashboard_refresh(app, range, start_date, end_date);
                 }
@@ -76,13 +74,7 @@ pub(super) fn query_agent(
             }
         }
     }
-    let response = query_agent_fresh(app, range, session_offset, start_date, end_date)?;
-    if session_offset == 0 {
-        if let Ok(mut cache) = watch.cache.lock() {
-            cache.insert(key, (response.clone(), Instant::now()));
-        }
-    }
-    Ok(response)
+    query_agent_fresh(app, range, session_offset, start_date, end_date)
 }
 
 fn spawn_dashboard_refresh(
@@ -115,9 +107,6 @@ fn spawn_dashboard_refresh(
         }
         match result {
             Ok(response) => {
-                if let Ok(mut cache) = watch.cache.lock() {
-                    cache.insert(key, (response.clone(), Instant::now()));
-                }
                 let _ = app.emit("dashboard-updated", response);
             }
             Err(error) => eprintln!("TokenScope dashboard refresh warning: {error}"),
@@ -126,6 +115,53 @@ fn spawn_dashboard_refresh(
 }
 
 pub(crate) fn query_agent_fresh(
+    app: &AppHandle,
+    range: &str,
+    session_offset: u64,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+) -> Result<DashboardResponse, String> {
+    let key = dashboard_key(range, start_date, end_date, session_offset);
+    let watch = app.state::<DashboardWatch>();
+    let pending = watch
+        .queries
+        .lock()
+        .map_err(|_| "统计查询状态不可用")?
+        .entry(key.clone())
+        .or_default()
+        .clone();
+    let result = pending
+        .get_or_init(|| {
+            let response = read_dashboard(app, range, session_offset, start_date, end_date)?;
+            if session_offset == 0 {
+                if let Ok(mut cache) = watch.cache.lock() {
+                    if cache.len() >= 16 && !cache.contains_key(&key) {
+                        if let Some(oldest) = cache
+                            .iter()
+                            .min_by_key(|(_, (_, at))| *at)
+                            .map(|(key, _)| key.clone())
+                        {
+                            cache.remove(&oldest);
+                        }
+                    }
+                    cache.insert(key.clone(), (response.clone(), Instant::now()));
+                }
+            }
+            Ok(response)
+        })
+        .clone();
+    if let Ok(mut queries) = watch.queries.lock() {
+        if queries
+            .get(&key)
+            .is_some_and(|current| std::sync::Arc::ptr_eq(current, &pending))
+        {
+            queries.remove(&key);
+        }
+    }
+    result
+}
+
+fn read_dashboard(
     app: &AppHandle,
     range: &str,
     session_offset: u64,
@@ -144,7 +180,13 @@ pub(crate) fn query_agent_fresh(
     }
     let store = LocalStore::open_readonly(&db).map_err(|e| format!("读取本地数据库失败：{e}"))?;
     let snapshot = store
-        .dashboard_snapshot_for_range(range, session_offset, start_date, end_date)
+        .dashboard_snapshot_for_range_with_details(
+            range,
+            session_offset,
+            start_date,
+            end_date,
+            session_offset != 0,
+        )
         .map_err(|e| format!("查询 Dashboard 数据失败：{e}"))?;
     let mut response = DashboardResponse::new(snapshot);
     response.validate().map_err(|e| e.to_string())?;

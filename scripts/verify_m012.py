@@ -30,10 +30,17 @@ check('Autostart plugin initialized', 'tauri_plugin_autostart::init' in lib and 
 check('Tray menu contains open and quit', '"open"' in lib and '"quit"' in lib)
 check('Window close destroys WebView but keeps tray app', 'prevent_close()' in lib and 'window.destroy()' in lib)
 check('Background autostart does not create WebView', 'let is_bg = env::args().any(|arg| arg == "--background")' in lib and 'if !is_bg {' in lib)
-check('Agent starts before optional WebView creation', lib.index('start_agent_inner(app.handle()') < lib.index('show_or_create_main_window(app.handle())'))
+setup = lib.split('.setup(|app| {', 1)[1].split('.on_window_event(', 1)[0]
+check('Window creation does not wait for Agent startup', re.search(
+    r'show_or_create_main_window\(app\.handle\(\)\).*?spawn_blocking\(move \|\| \{.*?start_agent_inner\(&handle',
+    setup, re.S,
+))
 check('Agent process handle retained', 'Mutex<Option<Child>>' in lib)
 check('Explicit Quit is distinguished from window close', '!lifecycle.quit_requested.load' in lib and re.search(r'keep_alive_after_window_close\s*\.swap\(false', lib))
-check('Agent is started during app setup', 'start_agent_inner(app.handle()' in lib)
+check('Agent starts in both foreground and background', re.search(
+    r'if !is_bg \{.*?\n\s*\}\s*let handle = app\.handle\(\)\.clone\(\);\s*tauri::async_runtime::spawn_blocking',
+    setup, re.S,
+))
 check('Lazy window creation uses config', 'WebviewWindowBuilder::from_config' in lib)
 check('macOS Dock reopen recreates the WebView', re.search(r'RunEvent::Reopen\s*\{\s*has_visible_windows: false,\s*\.\.\s*\}', lib))
 check('Local IANA timezone used for background startup', 'iana_time_zone::get_timezone()' in lib)

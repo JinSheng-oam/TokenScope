@@ -1,6 +1,6 @@
 use std::path::Path;
 use tokenscope_local_store::LocalStore;
-use tokenscope_source_antigravity::collect_antigravity_tolerant;
+use tokenscope_source_antigravity::{collect_antigravity_cached, AntigravityReadCache};
 use tokenscope_source_claude::collect_claude;
 use tokenscope_source_codex::collect_codex_precise_tolerant;
 use tokenscope_source_deepseek_harness::collect_deepseek_harness;
@@ -23,6 +23,7 @@ pub(super) struct CollectionOptions<'a> {
 pub(super) fn collect_once(
     store: &mut LocalStore,
     options: &CollectionOptions<'_>,
+    antigravity_cache: &mut AntigravityReadCache,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut failures = Vec::new();
     let mut succeeded = 0usize;
@@ -71,11 +72,12 @@ pub(super) fn collect_once(
     }
     if options.antigravity {
         // An unreadable Antigravity corpus must not abort Codex/Claude collection.
-        match collect_antigravity_tolerant(
+        match collect_antigravity_cached(
             options.antigravity_root,
             store,
             options.device_id,
             options.allow_antigravity_estimates,
+            antigravity_cache,
         ) {
             Ok(r) => {
                 succeeded += 1;
@@ -179,6 +181,7 @@ mod tests {
                 allow_antigravity_estimates: false,
                 device_id: "test",
             },
+            &mut AntigravityReadCache::default(),
         );
         let checkpoints = store.source_checkpoints().unwrap();
         assert!(root.starts_with(std::env::temp_dir()));

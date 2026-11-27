@@ -89,6 +89,10 @@
   }
 
   $: targetValue = value ?? 0;
+  $: formattedDisplay = formatTokenAtTier(enabled ? displayValue : targetValue, activeTier);
+  $: if (spanEl) {
+    spanEl.textContent = formattedDisplay;
+  }
   $: if (mounted) {
     if (!enabled) {
       stopAnimation();
@@ -131,4 +135,4 @@
   class="rolling-num"
   class:is-updating={pulsing}
   title={activeTier !== 'full' ? formatNumber(targetValue) : undefined}
->{formatTokenAtTier(enabled ? displayValue : targetValue, activeTier)}</span>
+></span>

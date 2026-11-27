@@ -6,12 +6,13 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
+    sync::OnceLock,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager};
 
-const SUMMARY_FILE: &str = ".tokenscope-ai-summary.json";
+pub(crate) const SUMMARY_FILE: &str = ".tokenscope-ai-summary.json";
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct AiConfig {
@@ -23,11 +24,28 @@ pub(crate) struct AiConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct SkillSummary {
     pub(crate) skill_name: String,
+    #[serde(default)]
+    pub(crate) brief: String,
     pub(crate) overview: String,
+    #[serde(default)]
+    pub(crate) scenarios: String,
     pub(crate) usage_guide: String,
     pub(crate) raw_response: String,
     pub(crate) model: String,
     pub(crate) updated_at_ms: i64,
+}
+
+fn shared_http_client() -> Result<&'static reqwest::Client, String> {
+    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .build()
+                .map_err(|e| format!("创建 HTTP 客户端失败：{e}"))
+        })
+        .as_ref()
+        .map_err(Clone::clone)
 }
 
 pub(crate) fn normalize_api_url(input: &str) -> String {
@@ -195,6 +213,15 @@ pub(crate) async fn fetch_models(api_url: &str, api_key: &str) -> Result<Vec<Str
     Ok(models)
 }
 
+pub(crate) fn read_cached_summary_in_dir(dir: &Path) -> Option<SkillSummary> {
+    let summary_path = dir.join(SUMMARY_FILE);
+    if !summary_path.is_file() {
+        return None;
+    }
+    let data = fs::read(&summary_path).ok()?;
+    serde_json::from_slice(&data).ok()
+}
+
 pub(crate) fn get_cached_summary(id: &CustomizationId) -> Result<Option<SkillSummary>, String> {
     let (_, path) = resolve(id)?;
     let dir = path.parent().ok_or("无效的 skill 路径")?;
@@ -208,6 +235,74 @@ pub(crate) fn get_cached_summary(id: &CustomizationId) -> Result<Option<SkillSum
         .map_err(|e| format!("解析摘要缓存失败：{e}"))
 }
 
+fn clean_brief_line(raw: &str) -> String {
+    let first_line = raw
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("");
+    first_line
+        .trim_start_matches(['-', '*', '•', '>', ' '])
+        .replace("**", "")
+        .replace("__", "")
+        .replace('`', "")
+        .trim()
+        .trim_matches(['"', '“', '”'])
+        .to_string()
+}
+
+pub(crate) fn parse_summary_sections(raw: &str) -> (String, String, String, String) {
+    let mut current: Option<&str> = None;
+    let mut brief_lines = Vec::new();
+    let mut overview_lines = Vec::new();
+    let mut scenario_lines = Vec::new();
+    let mut usage_lines = Vec::new();
+
+    let normalized = raw.replace("\r\n", "\n");
+    for line in normalized.lines() {
+        let trimmed = line.trim();
+        let heading_text = trimmed.trim_start_matches('#').trim();
+        let is_heading = trimmed.starts_with('#') && !heading_text.is_empty();
+        if is_heading {
+            if heading_text.contains("一句话简介") || heading_text.contains("核心简介") {
+                current = Some("brief");
+                continue;
+            }
+            if heading_text.contains("功能定位") {
+                current = Some("overview");
+                continue;
+            }
+            if heading_text.contains("适用场景") || heading_text.contains("触发时机") {
+                current = Some("scenarios");
+                continue;
+            }
+            if heading_text.contains("使用方式") || heading_text.contains("调用指南") {
+                current = Some("usage");
+                continue;
+            }
+        }
+        match current {
+            Some("brief") => brief_lines.push(line),
+            Some("overview") => overview_lines.push(line),
+            Some("scenarios") => scenario_lines.push(line),
+            Some("usage") => usage_lines.push(line),
+            None => overview_lines.push(line),
+            _ => {}
+        }
+    }
+
+    let brief = clean_brief_line(&brief_lines.join("\n"));
+    let overview = overview_lines.join("\n").trim().to_string();
+    let scenarios = scenario_lines.join("\n").trim().to_string();
+    let usage_guide = usage_lines.join("\n").trim().to_string();
+
+    if overview.is_empty() && usage_guide.is_empty() && scenarios.is_empty() && brief.is_empty() {
+        (String::new(), raw.trim().to_string(), String::new(), String::new())
+    } else {
+        (brief, overview, scenarios, usage_guide)
+    }
+}
+
 pub(crate) async fn analyze_skill(
     app: AppHandle,
     id: CustomizationId,
@@ -215,10 +310,10 @@ pub(crate) async fn analyze_skill(
     let cfg = read_ai_config(&app)?;
     let base = normalize_api_url(&cfg.api_url);
     if base.is_empty() {
-        return Err("未配置 AI API 地址，请在右上角【AI 助手设置】中配置".into());
+        return Err("未配置 AI API 地址，请在右上角【AI 助手配置】中配置".into());
     }
     if cfg.model.trim().is_empty() {
-        return Err("未配置 AI 模型，请在右上角【AI 助手设置】中选择模型".into());
+        return Err("未配置 AI 模型，请在右上角【AI 助手配置】中选择模型".into());
     }
 
     let (_, path) = resolve(&id)?;
@@ -230,13 +325,9 @@ pub(crate) async fn analyze_skill(
     };
 
     let truncated_content: String = content.chars().take(8000).collect();
+    let client = shared_http_client()?;
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败：{e}"))?;
-
-    let system_prompt = "你是一位精通各类 AI 编码助手（如 Claude Code, Codex, Antigravity, Cursor 等）的资深架构师与技能分析专家。用户会提供一份 Agent Skill 的定义文件（SKILL.md）。请仔细阅读并进行专业分析，输出结构化的中文摘要。\n\n请严格按照以下两部分输出：\n\n### 💡 功能定位（干什么的）\n用精炼的 2~3 句话明确总结这个 Skill 主要是干什么的、解决了什么核心痛点、具备哪些关键能力。\n\n### 🚀 使用方式与调用指南\n用精炼的要点说明它在什么场景下被触发、如何向 AI Agent 下达调用指令或提示词（附简短实用的 Prompt 或调用指令示例）。";
+    let system_prompt = "你是一位精通各类 AI 编码助手（如 Claude Code, Codex, Antigravity, Pi Agent, DeepSeek Harness 等）的资深架构师与技能分析专家。用户会提供一份 Agent Skill 的定义文件（SKILL.md）。请仔细阅读并进行专业分析，输出结构化的中文摘要。\n\n请严格按照以下四部分输出：\n\n### ✨ 一句话简介\n用 18~42 字的一句精炼中文，直接概括这个 Skill 是干什么的（不要使用 Markdown 粗体、列表符号或多余前缀，适合展示在技能卡片上）。\n\n### 💡 功能定位\n用精炼的 2~3 句话明确总结这个 Skill 的核心能力、解决了什么痛点、以及能力边界。\n\n### 🎯 适用场景\n用 2~4 条简洁要点说明它在哪些开发任务或问题场景下应该被触发或主动调用。\n\n### 🚀 使用方式与调用指南\n说明如何向 AI Agent 下达调用指令，并附 1~2 条简短实用的调用 Prompt 示例。";
 
     let messages = serde_json::json!([
         { "role": "system", "content": system_prompt },
@@ -279,26 +370,13 @@ pub(crate) async fn analyze_skill(
         .ok_or_else(|| "AI 响应中未包含有效文本内容".to_string())?
         .trim();
 
-    let (overview, usage_guide) =
-        if let Some(usage_idx) = assistant_content.find("### 🚀 使用方式与调用指南") {
-            let (p1, p2) = assistant_content.split_at(usage_idx);
-            (
-                p1.trim()
-                    .trim_start_matches("### 💡 功能定位（干什么的）")
-                    .trim()
-                    .to_string(),
-                p2.trim()
-                    .trim_start_matches("### 🚀 使用方式与调用指南")
-                    .trim()
-                    .to_string(),
-            )
-        } else {
-            (assistant_content.to_string(), String::new())
-        };
+    let (brief, overview, scenarios, usage_guide) = parse_summary_sections(assistant_content);
 
     let summary = SkillSummary {
         skill_name: id.name.clone(),
+        brief,
         overview,
+        scenarios,
         usage_guide,
         raw_response: assistant_content.to_string(),
         model: cfg.model.clone(),
@@ -380,5 +458,21 @@ mod tests {
             normalize_api_url("https://my-proxy.com/api"),
             "https://my-proxy.com/api"
         );
+    }
+
+    #[test]
+    fn parses_four_section_summary_and_legacy_json() {
+        let raw = "### ✨ 一句话简介\n**用深模块视角**评审和重构代码接口边界。\n\n### 💡 功能定位\n建立统一架构术语。\n\n### 🎯 适用场景\n- 接口评审\n- 重构拆界\n\n### 🚀 使用方式与调用指南\n```text\n用深模块原则重构\n```";
+        let (brief, overview, scenarios, usage) = parse_summary_sections(raw);
+        assert_eq!(brief, "用深模块视角评审和重构代码接口边界。");
+        assert_eq!(overview, "建立统一架构术语。");
+        assert!(scenarios.contains("接口评审"));
+        assert!(usage.contains("用深模块原则重构"));
+
+        let legacy = r#"{"skill_name":"tdd","overview":"测试驱动开发","usage_guide":"先写测试","raw_response":"raw","model":"gpt-4o","updated_at_ms":123}"#;
+        let parsed: SkillSummary = serde_json::from_str(legacy).expect("legacy json parses");
+        assert_eq!(parsed.brief, "");
+        assert_eq!(parsed.scenarios, "");
+        assert_eq!(parsed.overview, "测试驱动开发");
     }
 }

@@ -201,8 +201,8 @@
     { id: 'projects', label: '项目分析', iconKey: 'projects' },
     { id: 'sessions', label: '会话分析', iconKey: 'sessions' },
     { id: 'quota', label: '额度活动', iconKey: 'quota' },
-    { id: 'customizations', label: '规则配置', iconKey: 'tools' },
-    { id: 'shared-instruction', label: '统一指令', iconKey: 'edit' },
+    { id: 'customizations', label: '技能库', iconKey: 'layers' },
+    { id: 'shared-instruction', label: '指令文件', iconKey: 'edit' },
     { id: 'mcp', label: 'MCP 配置', iconKey: 'cpu' },
     { id: 'settings', label: '系统设置', iconKey: 'settings' },
   ];

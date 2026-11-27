@@ -49,6 +49,24 @@ pub(super) fn manager(args: &[&str]) -> Result<serde_json::Value, String> {
     }
     serde_json::from_slice(&output.stdout).map_err(|_| "Skills Manager 返回格式无效".into())
 }
+pub(super) fn list_manager_index() -> std::collections::HashMap<PathBuf, ManagerSkill> {
+    let mut index = std::collections::HashMap::new();
+    let Ok(Some(_)) = manager_exe() else {
+        return index;
+    };
+    let Ok(val) = manager(&["skills", "list"]) else {
+        return index;
+    };
+    let Ok(items) = serde_json::from_value::<Vec<ManagerSkill>>(val) else {
+        return index;
+    };
+    for item in items {
+        if let Ok(canon) = fs::canonicalize(&item.path) {
+            index.insert(canon, item);
+        }
+    }
+    index
+}
 pub(super) fn managed(id: &CustomizationId) -> Result<Option<ManagerSkill>, String> {
     let (_, path) = resolve(id)?;
     let target = path.parent().ok_or("无效的 skill 路径")?;

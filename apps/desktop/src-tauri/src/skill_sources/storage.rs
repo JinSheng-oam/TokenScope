@@ -42,7 +42,7 @@ pub(super) fn snapshot(root: &Path) -> Result<BTreeMap<String, String>, String> 
                 .to_str()
                 .ok_or("skill 路径不是 UTF-8")?
                 .replace('\\', "/");
-            if rel == META {
+            if rel == META || rel == crate::ai_assistant::SUMMARY_FILE {
                 continue;
             }
             if ty.is_symlink() {

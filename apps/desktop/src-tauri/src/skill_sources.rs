@@ -49,6 +49,29 @@ pub(crate) struct UpdateInfo {
     detail: String,
 }
 
+pub(crate) struct LocalSourceRecord {
+    pub(crate) url: String,
+    pub(crate) revision: String,
+    pub(crate) subpath: String,
+}
+
+pub(crate) fn load_manager_source_index(
+) -> std::collections::HashMap<std::path::PathBuf, (String, Option<String>)> {
+    manager::list_manager_index()
+        .into_iter()
+        .map(|(path, item)| (path, (item.source_type, item.source_ref)))
+        .collect()
+}
+
+pub(crate) fn read_local_source_record(dir: &std::path::Path) -> Option<LocalSourceRecord> {
+    let meta = storage::read_meta(dir).ok().flatten()?;
+    Some(LocalSourceRecord {
+        url: meta.source.url,
+        revision: meta.revision,
+        subpath: meta.skill_path,
+    })
+}
+
 #[tauri::command]
 pub(crate) async fn inspect_skill_source(input: String) -> Result<Inspection, String> {
     tauri::async_runtime::spawn_blocking(move || inspect(&input))

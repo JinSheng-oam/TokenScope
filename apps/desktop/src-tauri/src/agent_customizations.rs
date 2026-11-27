@@ -5,6 +5,7 @@ use std::{fs, path::PathBuf};
 
 mod dsh_mcp;
 mod file_io;
+pub(crate) mod library;
 pub(crate) mod mcp;
 mod paths;
 use file_io::{read, save};
@@ -13,7 +14,7 @@ use paths::check_target;
 use paths::valid_instruction_name;
 pub(crate) use paths::{display_path, is_link, resolve, roots, valid_skill_name};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct CustomizationId {
     pub(crate) provider: String,
     pub(crate) root: String,
@@ -22,18 +23,18 @@ pub(crate) struct CustomizationId {
 
 #[derive(Serialize)]
 pub(crate) struct CustomizationEntry {
-    id: CustomizationId,
-    path: String,
-    kind: &'static str,
-    exists: bool,
-    editable: bool,
-    builtin: bool,
+    pub(crate) id: CustomizationId,
+    pub(crate) path: String,
+    pub(crate) kind: &'static str,
+    pub(crate) exists: bool,
+    pub(crate) editable: bool,
+    pub(crate) builtin: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    builtin_description: Option<&'static str>,
-    linked: bool,
-    enabled: bool,
+    pub(crate) builtin_description: Option<&'static str>,
+    pub(crate) linked: bool,
+    pub(crate) enabled: bool,
     #[serde(rename = "instructionEntry")]
-    instruction_entry: bool,
+    pub(crate) instruction_entry: bool,
 }
 
 pub(crate) struct Root {

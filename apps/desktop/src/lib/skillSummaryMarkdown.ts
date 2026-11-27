@@ -154,3 +154,20 @@ export function parseSummaryMarkdown(source: string): SummaryBlock[] {
 
   return blocks;
 }
+
+export function stripMarkdownToPlainText(source: string): string {
+  return source
+    .replace(/\r\n?/g, '\n')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^>\s?/gm, '')
+    .replace(/^[-*•]\s+/gm, '')
+    .replace(/^\d+[.)]\s+/gm, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+

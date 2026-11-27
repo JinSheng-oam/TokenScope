@@ -9,11 +9,10 @@
     deriveCardBrief,
     isSkillAnalyzable,
     sourceTypeLabel,
-    type SkillDeployment,
     type SkillLibraryItem,
   } from './skillLibraryTypes';
   import type { BatchItemState } from './skillBatchAnalyzer';
-  import type { Entry } from './agentCustomizationEntries';
+  import type { Entry, Provider } from './agentCustomizationEntries';
   import type { UpdateInfo } from './agentSkillSourceTypes';
   import AgentFileEditor from './AgentFileEditor.svelte';
   import AgentSkillUpdates from './AgentSkillUpdates.svelte';
@@ -25,7 +24,8 @@
   export let onClose: () => void = () => {};
   export let onRefreshLibrary: () => Promise<void> = async () => {};
   export let onAnalyzeSingle: (item: SkillLibraryItem) => void = () => {};
-  export let onToggleDeployment: (item: SkillLibraryItem, dep?: SkillDeployment) => Promise<void> = async () => {};
+  export let onToggleEnabled: (item: SkillLibraryItem) => Promise<void> = async () => {};
+  export let onToggleProvider: (item: SkillLibraryItem, provider: Provider, enabled: boolean) => Promise<void> = async () => {};
   export let onOpenAiConfig: () => void = () => {};
 
   let contentTab: 'preview' | 'edit' = 'preview';
@@ -61,8 +61,7 @@
   $: analyzable = isSkillAnalyzable(item);
   $: isAnalyzing = batchState?.status === 'running' || batchState?.status === 'retrying';
   $: deploymentMap = new Map(item.deployments.map((d) => [d.provider, d]));
-  $: installedCount = item.deployments.length;
-  $: enabledCount = item.deployments.filter((d) => d.enabled).length;
+  $: enabledCount = ALL_PROVIDERS.filter((p) => Boolean(deploymentMap.get(p.id)?.enabled)).length;
 
   $: overviewBlocks = parseSummaryMarkdown(item.summary?.overview ?? '');
   $: scenarioBlocks = parseSummaryMarkdown(item.summary?.scenarios ?? '');
@@ -249,17 +248,15 @@
       <div class="detail-meta-strip">
         <div class="provider-icons-row">
           {#each ALL_PROVIDERS as p (p.id)}
-            {@const dep = deploymentMap.get(p.id)}
-            {#if dep}
-              <span
-                class="provider-chip"
-                class:inactive={!dep.enabled}
-                style={`--p-color: ${p.color}; --p-bg: ${p.bg}`}
-                title={`${p.label}（${dep.enabled ? '已启用' : '已停用'}）`}
-              >
-                {@html p.icon}
-              </span>
-            {/if}
+            {@const isOn = Boolean(deploymentMap.get(p.id)?.enabled)}
+            <span
+              class="provider-chip"
+              class:inactive={!isOn}
+              style={`--p-color: ${p.color}; --p-bg: ${p.bg}`}
+              title={`${p.label}（${isOn ? '已启用' : '已禁用'}）`}
+            >
+              {@html p.icon}
+            </span>
           {/each}
         </div>
 
@@ -280,9 +277,9 @@
           type="button"
           class="btn-secondary btn-sm"
           disabled={saving}
-          onclick={() => void onToggleDeployment(item)}
+          onclick={() => void onToggleEnabled(item)}
         >
-          {item.enabled ? '停用 Skill' : '启用 Skill'}
+          {item.enabled ? '禁用 Skill' : '启用 Skill'}
         </button>
       {/if}
       {#if item.editable && item.exists}
@@ -598,36 +595,35 @@
     <div class="detail-card-head">
       <div class="card-head-left">
         <strong>工具工作区</strong>
-        <span class="sync-pill">已启用 {enabledCount} / {installedCount}（共 5 工具）</span>
-        {#if item.linked}
-          <span class="shared-hint">共享软链接目录：启停会同步影响共用同一目标的工具</span>
-        {/if}
+        <span class="sync-pill">已启用 {enabledCount} / {ALL_PROVIDERS.length}</span>
       </div>
     </div>
 
     <div class="workspace-matrix">
       {#each ALL_PROVIDERS as p (p.id)}
         {@const dep = deploymentMap.get(p.id)}
+        {@const isOn = Boolean(dep?.enabled)}
         <button
           type="button"
           class="agent-cell"
-          class:installed={Boolean(dep)}
-          class:enabled={Boolean(dep?.enabled)}
-          disabled={!dep || dep.builtin || saving}
-          title={dep
-            ? `${p.label} · ${dep.enabled ? '已启用（点击停用）' : '已停用（点击启用）'}\n${dep.path}`
-            : `${p.label} 未安装此 Skill`}
+          class:enabled={isOn}
+          disabled={item.builtin || saving}
+          title={item.builtin
+            ? `${p.label}（系统内置）`
+            : isOn
+              ? `${p.label}：已启用（点击禁用）`
+              : `${p.label}：已禁用（点击启用并自动同步到该工具）`}
           onclick={() => {
-            if (dep && !dep.builtin) void onToggleDeployment(item, dep);
+            if (!item.builtin) void onToggleProvider(item, p.id, !isOn);
           }}
         >
-          <span class="agent-check" class:on={Boolean(dep?.enabled)} class:off={Boolean(dep && !dep.enabled)}>
-            {#if dep?.enabled}✓{:else if dep}−{:else}·{/if}
+          <span class="agent-check" class:on={isOn} class:off={!isOn}>
+            {isOn ? '✓' : '−'}
           </span>
-          <span class="agent-icon" style={`--p-color: ${p.color}; --p-bg: ${p.bg}`}>{@html p.icon}</span>
+          <span class="agent-icon" class:dim={!isOn} style={`--p-color: ${p.color}; --p-bg: ${p.bg}`}>{@html p.icon}</span>
           <span class="agent-label">{p.label}</span>
-          <span class="agent-state">
-            {#if dep?.enabled}已启用{:else if dep}已停用{:else}未安装{/if}
+          <span class="agent-state" class:on={isOn}>
+            {isOn ? '已启用' : '已禁用'}
           </span>
         </button>
       {/each}
@@ -1222,14 +1218,19 @@
     background: var(--bg-card-hover);
   }
 
-  .agent-cell:not(.installed) {
-    opacity: 0.48;
-    cursor: default;
-  }
-
   .agent-cell.enabled {
     border-color: color-mix(in srgb, var(--color-exact-border) 80%, var(--border-subtle));
     background: color-mix(in srgb, var(--color-exact-bg) 35%, var(--bg-card));
+  }
+
+  .agent-icon.dim {
+    opacity: 0.4;
+    filter: grayscale(1);
+  }
+
+  .agent-state.on {
+    color: var(--color-exact);
+    font-weight: 600;
   }
 
   .agent-check {

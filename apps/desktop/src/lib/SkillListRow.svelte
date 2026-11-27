@@ -94,16 +94,15 @@
     <div class="provider-strip">
       {#each ALL_PROVIDERS as p (p.id)}
         {@const dep = deploymentMap.get(p.id)}
-        {#if dep}
-          <span
-            class="provider-chip"
-            class:inactive={!dep.enabled}
-            style={`--p-color: ${p.color}; --p-bg: ${p.bg}`}
-            title={`${p.label}：${dep.enabled ? '已启用' : '已停用'}`}
-          >
-            {@html p.icon}
-          </span>
-        {/if}
+        {@const isOn = Boolean(dep?.enabled)}
+        <span
+          class="provider-chip"
+          class:inactive={!isOn}
+          style={`--p-color: ${p.color}; --p-bg: ${p.bg}`}
+          title={`${p.label}：${isOn ? '已启用' : '已禁用'}`}
+        >
+          {@html p.icon}
+        </span>
       {/each}
     </div>
 

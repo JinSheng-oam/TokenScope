@@ -10,7 +10,6 @@
     groupSkillItemsBySource,
     isSkillAnalyzable,
     type SkillAiFilter,
-    type SkillDeployment,
     type SkillFilterState,
     type SkillLibraryItem,
     type SkillSourceFilter,
@@ -163,19 +162,38 @@
     }
   }
 
-  async function toggleEnabled(item: SkillLibraryItem, specificDeployment?: SkillDeployment) {
+  async function toggleEnabled(item: SkillLibraryItem) {
     if (busy || item.builtin) return;
-    const targetId = specificDeployment?.id ?? item.primary_id;
-    const currentEnabled = specificDeployment ? specificDeployment.enabled : item.enabled;
-    const nextEnabled = !currentEnabled;
+    const nextEnabled = !item.enabled;
 
     busy = true;
     error = '';
     notice = '';
     try {
-      await invoke('toggle_skill_enabled', { id: targetId, enabled: nextEnabled });
+      await invoke('toggle_skill_enabled', { id: item.primary_id, enabled: nextEnabled });
       await refresh();
-      notice = nextEnabled ? `已启用 ${item.name}` : `已停用 ${item.name}`;
+      notice = nextEnabled ? `已启用 ${item.name}` : `已禁用 ${item.name}`;
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function toggleProviderEnabled(item: SkillLibraryItem, targetProvider: Provider, enabled: boolean) {
+    if (busy || item.builtin) return;
+    busy = true;
+    error = '';
+    notice = '';
+    try {
+      await invoke('set_skill_provider_enabled', {
+        sourceId: item.primary_id,
+        targetProvider,
+        enabled,
+      });
+      await refresh();
+      const label = ALL_PROVIDERS.find((p) => p.id === targetProvider)?.label ?? targetProvider;
+      notice = enabled ? `已在 ${label} 启用 ${item.name}` : `已在 ${label} 禁用 ${item.name}`;
     } catch (e) {
       error = String(e);
     } finally {
@@ -374,7 +392,8 @@
     onClose={() => { activeItemKey = null; detailDirty = false; }}
     onRefreshLibrary={refresh}
     onAnalyzeSingle={(target) => void analyzeSingleItem(target)}
-    onToggleDeployment={toggleEnabled}
+    onToggleEnabled={toggleEnabled}
+    onToggleProvider={toggleProviderEnabled}
     {onOpenAiConfig}
   />
 {:else if panelMode !== 'none'}

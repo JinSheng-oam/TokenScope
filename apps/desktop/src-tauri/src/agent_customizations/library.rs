@@ -1,4 +1,4 @@
-use super::{display_path, list, CustomizationId};
+use super::{display_path, is_link, list, resolve, roots, valid_skill_name, CustomizationId};
 use crate::{
     ai_assistant::{read_cached_summary_in_dir, SkillSummary},
     skill_sources::{load_manager_source_index, read_local_source_record},
@@ -384,11 +384,265 @@ fn build_skill_library() -> Result<Vec<SkillLibraryItem>, String> {
     Ok(result)
 }
 
+fn dedicated_skill_root_id(provider: &str) -> Result<&'static str, String> {
+    match provider {
+        "codex" => Ok("codex-skills"),
+        "claude" => Ok("claude-skills"),
+        "antigravity" => Ok("antigravity-skills"),
+        "pi" => Ok("pi-skills"),
+        "deepseek" => Ok("dsh-skills"),
+        _ => Err("不支持的工具".into()),
+    }
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::create_dir_all(dst).map_err(|e| format!("创建目标技能目录失败：{e}"))?;
+    for entry in fs::read_dir(src).map_err(|e| format!("读取源技能目录失败：{e}"))? {
+        let entry = entry.map_err(|e| format!("读取源技能文件失败：{e}"))?;
+        let name = entry.file_name();
+        if name == ".git" {
+            continue;
+        }
+        let from = entry.path();
+        let to = dst.join(&name);
+        let ft = entry
+            .file_type()
+            .map_err(|e| format!("读取文件类型失败：{e}"))?;
+        if ft.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else if ft.is_file() {
+            fs::copy(&from, &to).map_err(|e| format!("复制技能文件失败：{e}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn link_or_copy_skill_dir(src_dir: &Path, dst_dir: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        if std::os::unix::fs::symlink(src_dir, dst_dir).is_ok() {
+            return Ok(());
+        }
+        return copy_dir_recursive(src_dir, dst_dir);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        if std::os::windows::fs::symlink_dir(src_dir, dst_dir).is_ok() {
+            return Ok(());
+        }
+        // Fallback to NTFS directory junction (works without Developer Mode / admin rights)
+        let status = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                &display_path(dst_dir),
+                &display_path(src_dir),
+            ])
+            .creation_flags(0x08000000)
+            .output();
+        if status.is_ok_and(|o| o.status.success()) && dst_dir.exists() {
+            return Ok(());
+        }
+        copy_dir_recursive(src_dir, dst_dir)
+    }
+}
+
+fn remove_link_only(path: &Path) -> Result<(), String> {
+    if !is_link(path) {
+        return Err("仅允许移除符号链接，避免误删源目录".into());
+    }
+    #[cfg(windows)]
+    {
+        fs::remove_dir(path)
+            .or_else(|_| fs::remove_file(path))
+            .map_err(|e| format!("移除技能链接失败：{e}"))
+    }
+    #[cfg(unix)]
+    {
+        fs::remove_file(path).map_err(|e| format!("移除技能链接失败：{e}"))
+    }
+}
+
+fn ensure_active_skill_file(dir: &Path) -> Result<(), String> {
+    let active = dir.join("SKILL.md");
+    let disabled = dir.join("SKILL.md.disabled");
+    if active.is_file() {
+        return Ok(());
+    }
+    if disabled.is_file() {
+        fs::rename(&disabled, &active).map_err(|e| format!("启用 SKILL.md 失败：{e}"))?;
+        return Ok(());
+    }
+    Err("找不到可启用的 SKILL.md 文件".into())
+}
+
+fn disable_skill_file(dir: &Path) -> Result<(), String> {
+    let active = dir.join("SKILL.md");
+    let disabled = dir.join("SKILL.md.disabled");
+    if disabled.is_file() && !active.is_file() {
+        return Ok(());
+    }
+    if active.is_file() {
+        fs::rename(&active, &disabled).map_err(|e| format!("停用 SKILL.md 失败：{e}"))?;
+        return Ok(());
+    }
+    Err("找不到可停用的 SKILL.md 文件".into())
+}
+
+fn count_other_deployments_for_target(
+    canonical_dir: &Path,
+    exclude_path: &Path,
+) -> usize {
+    let target_norm = display_path(canonical_dir).to_ascii_lowercase();
+    let exclude_norm = display_path(exclude_path).to_ascii_lowercase();
+    let mut count = 0;
+
+    for provider in PROVIDERS {
+        let Ok(provider_roots) = roots(provider) else {
+            continue;
+        };
+        for root in provider_roots {
+            if root.kind != "skill" || root.is_builtin() {
+                continue;
+            }
+            let Ok(entries) = fs::read_dir(&root.path) else {
+                continue;
+            };
+            for item in entries.flatten() {
+                let p = item.path();
+                if display_path(&p).to_ascii_lowercase() == exclude_norm {
+                    continue;
+                }
+                if let Ok(canon) = fs::canonicalize(&p) {
+                    if display_path(&canon).to_ascii_lowercase() == target_norm {
+                        count += 1;
+                    }
+                }
+            }
+        }
+    }
+    count
+}
+
+fn set_provider_enabled(
+    source_id: &CustomizationId,
+    target_provider: &str,
+    enabled: bool,
+) -> Result<bool, String> {
+    if !valid_skill_name(&source_id.name) {
+        return Err("无效的 skill 名称".into());
+    }
+    let (source_root, source_file_path) = resolve(source_id)?;
+    source_root.require_writable()?;
+    if source_root.kind != "skill" {
+        return Err("仅支持对 skill 切换启用状态".into());
+    }
+    let source_dir = source_file_path
+        .parent()
+        .ok_or("无效的 skill 目录")?
+        .to_path_buf();
+    let target_root_id = dedicated_skill_root_id(target_provider)?;
+    let target_roots = roots(target_provider)?;
+    let dedicated_root = target_roots
+        .iter()
+        .find(|r| r.id == target_root_id)
+        .ok_or("找不到目标工具的技能目录")?;
+    dedicated_root.require_writable()?;
+
+    let existing_in_provider: Vec<(String, PathBuf)> = target_roots
+        .iter()
+        .filter(|r| r.kind == "skill" && !r.is_builtin())
+        .filter_map(|r| {
+            let dir = r.path.join(&source_id.name);
+            let active = dir.join("SKILL.md");
+            let disabled = dir.join("SKILL.md.disabled");
+            if active.is_file() || disabled.is_file() {
+                Some((r.id.to_string(), dir))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if enabled {
+        ensure_active_skill_file(&source_dir)?;
+        if !existing_in_provider.is_empty() {
+            for (_, dir) in existing_in_provider {
+                let _ = ensure_active_skill_file(&dir);
+            }
+            return Ok(true);
+        }
+        fs::create_dir_all(&dedicated_root.path)
+            .map_err(|e| format!("创建目标工具技能目录失败：{e}"))?;
+        let dest_dir = dedicated_root.path.join(&source_id.name);
+        if fs::symlink_metadata(&dest_dir).is_ok() {
+            ensure_active_skill_file(&dest_dir)?;
+            return Ok(true);
+        }
+        link_or_copy_skill_dir(&source_dir, &dest_dir)?;
+        Ok(true)
+    } else {
+        if existing_in_provider.is_empty() {
+            return Ok(false);
+        }
+        let shared_root_ids = ["shared-skills", "pi-shared-skills", "dsh-shared-skills"];
+        for (root_id, dir) in existing_in_provider {
+            let is_shared = shared_root_ids.contains(&root_id.as_str());
+            if is_link(&dir) {
+                let canon = fs::canonicalize(&dir).unwrap_or_else(|_| source_dir.clone());
+                if is_shared {
+                    // Preserve other providers that currently read the same shared directory
+                    for sibling in ["codex", "pi", "deepseek"] {
+                        if sibling == target_provider {
+                            continue;
+                        }
+                        if let Ok(sib_root_id) = dedicated_skill_root_id(sibling) {
+                            if let Ok(sib_roots) = roots(sibling) {
+                                if let Some(sib_root) = sib_roots.into_iter().find(|r| r.id == sib_root_id) {
+                                    let sib_dest = sib_root.path.join(&source_id.name);
+                                    if fs::symlink_metadata(&sib_dest).is_err() {
+                                        let _ = fs::create_dir_all(&sib_root.path);
+                                        let _ = link_or_copy_skill_dir(&canon, &sib_dest);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                let others = count_other_deployments_for_target(&canon, &dir);
+                if others > 0 {
+                    remove_link_only(&dir)?;
+                } else {
+                    disable_skill_file(&dir)?;
+                }
+            } else {
+                disable_skill_file(&dir)?;
+            }
+        }
+        Ok(false)
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn list_skill_library() -> Result<Vec<SkillLibraryItem>, String> {
     tauri::async_runtime::spawn_blocking(build_skill_library)
         .await
         .map_err(|_| "读取技能库任务失败")?
+}
+
+#[tauri::command]
+pub(crate) async fn set_skill_provider_enabled(
+    source_id: CustomizationId,
+    target_provider: String,
+    enabled: bool,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        set_provider_enabled(&source_id, &target_provider, enabled)
+    })
+    .await
+    .map_err(|_| "切换工具技能状态任务失败")?
 }
 
 #[cfg(test)]

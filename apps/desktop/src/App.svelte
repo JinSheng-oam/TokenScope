@@ -681,6 +681,7 @@
       class="page-content"
       class:fit-viewport={loading && !isLocalConfigTab && activeTab !== 'overview'}
       class:overview-page={activeTab === 'overview'}
+      class:lock-viewport={activeTab === 'sessions' || activeTab === 'pricing' || activeTab === 'projects'}
       class:compact-page={activeTab === 'models' || activeTab === 'projects' || isLocalConfigTab}
       class:compact-session={activeTab === 'sessions' && ($sessionState.pageSize <= 7 || ($sessionState.loading && !$sessionState.analysis))}
       class:is-refreshing={isContentRefreshing}

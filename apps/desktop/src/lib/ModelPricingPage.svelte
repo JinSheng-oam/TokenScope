@@ -529,15 +529,39 @@
 
 <style>
   .pricing-panel {
+    flex: 1 1 0;
+    min-height: 0;
     min-width: 0;
     padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 
   .pricing-panel-head {
+    flex-shrink: 0;
     align-items: center;
     flex-wrap: wrap;
     gap: 10px 12px;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
+  }
+
+  .pricing-panel :global(.table-wrap) {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .pricing-panel :global(.pricing-table thead th) {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-card);
+  }
+
+  .pricing-panel :global(.data-pagination) {
+    flex-shrink: 0;
   }
 
   .pricing-panel-head p strong {

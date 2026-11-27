@@ -344,6 +344,7 @@
 
 <style>
   .project-summary-strip {
+    flex-shrink: 0;
     margin-bottom: 10px;
   }
 
@@ -352,11 +353,35 @@
   }
 
   .project-matrix-panel {
+    flex: 1 1 0;
+    min-height: 0;
     padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 
   .project-matrix-panel .panel-head {
+    flex-shrink: 0;
     margin-bottom: 10px;
+  }
+
+  .project-matrix-panel :global(.table-wrap) {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .project-matrix-panel :global(.project-table thead th) {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-card);
+  }
+
+  .project-matrix-panel :global(.data-pagination) {
+    flex-shrink: 0;
   }
 
   .project-matrix-panel :global(.project-table th),

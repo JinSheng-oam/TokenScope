@@ -69,15 +69,19 @@
   .session-loading-shell {
     display: flex;
     flex-direction: column;
+    flex: 1 1 0;
+    min-height: 0;
     min-width: 0;
+    overflow: hidden;
   }
 
   .sk-sort-bar {
     display: flex;
     align-items: center;
     gap: 7px;
-    margin-top: 8px;
+    margin-top: 6px;
     min-height: 25px;
+    flex-shrink: 0;
   }
 
   .sk-sort-label {
@@ -97,8 +101,11 @@
 
   .session-loading-timeline {
     position: relative;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
     border-top: 1px solid var(--border-subtle);
-    margin-top: 8px;
+    margin-top: 6px;
     padding-top: 2px;
   }
 

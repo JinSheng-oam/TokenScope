@@ -95,6 +95,23 @@
   padding-bottom: 14px;
 }
 
+.page-content.lock-viewport {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 14px;
+}
+
+.page-content.lock-viewport > .page-header {
+  flex-shrink: 0;
+}
+
+@media (max-height: 540px), (max-width: 760px) {
+  .page-content.lock-viewport {
+    overflow-y: auto;
+  }
+}
+
 .page-header {
   display: flex;
   align-items: center;

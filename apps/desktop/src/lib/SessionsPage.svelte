@@ -250,7 +250,7 @@
         </button>
       {/each}
     </div>
-    {@const timelineUpdating = sessionLoading && (isPaginating || sessionPage.offset !== sessionOffset || sessionPage.limit !== sessionPageSize)}
+    {@const timelineUpdating = sessionLoading}
     <div class="session-timeline" class:is-updating={timelineUpdating} bind:this={timelineStart} aria-busy={sessionLoading}>
       {#if timelineUpdating}
         <div class="session-table-progress session-timeline-progress" aria-hidden="true"></div>

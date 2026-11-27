@@ -97,7 +97,7 @@ pub fn run() {
             agent_customizations::library::list_skill_library,
             agent_customizations::library::set_skill_provider_enabled,
             agent_customizations::library::set_skill_all_enabled,
-            agent_customizations::library::apply_skill_sync_mode,
+            agent_customizations::library::apply_provider_sync_mode,
             agent_customizations::mcp::read_mcp_config,
             agent_customizations::mcp::save_mcp_config,
             agent_customizations::mcp::upsert_mcp_server,

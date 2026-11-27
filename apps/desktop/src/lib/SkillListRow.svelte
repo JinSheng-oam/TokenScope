@@ -10,15 +10,19 @@
     isSkillAnalyzable,
     sourceTypeLabel,
     type SkillLibraryItem,
-    type SkillSyncMode,
   } from './skillLibraryTypes';
-  import { syncModeLabel } from './skillSyncPrefs';
+  import {
+    DEFAULT_PROVIDER_SYNC_PREFS,
+    getProviderConfiguredSyncMode,
+    syncModeLabel,
+    type ProviderSyncPrefs,
+  } from './skillSyncPrefs';
   import type { BatchItemState } from './skillBatchAnalyzer';
   import type { SkillUpdateItemState } from './skillBatchUpdater';
 
   export let item: SkillLibraryItem;
   export let providerScope: 'all' | Provider = 'all';
-  export let effectiveSyncMode: SkillSyncMode = 'link';
+  export let providerSyncPrefs: ProviderSyncPrefs = DEFAULT_PROVIDER_SYNC_PREFS;
   export let batchState: BatchItemState | undefined = undefined;
   export let updateState: SkillUpdateItemState | undefined = undefined;
   export let multiSelect = false;
@@ -123,6 +127,7 @@
       {#each ALL_PROVIDERS as p (p.id)}
         {@const isOn = isProviderEnabled(item, p.id)}
         {@const pMode = getProviderSyncMode(item, p.id)}
+        {@const cfgMode = getProviderConfiguredSyncMode(providerSyncPrefs, p.id)}
         <button
           type="button"
           class="provider-chip"
@@ -135,7 +140,7 @@
             ? `${p.label}（内置）`
             : isOn
               ? `${p.label}：已启用（${pMode === 'copy' ? '复制' : '链接'}）· 点击禁用`
-              : `${p.label}：已禁用 · 点击启用（${syncModeLabel(effectiveSyncMode)}）`}
+              : `${p.label}：已禁用 · 点击启用（${syncModeLabel(cfgMode)}）`}
           onclick={(e) => {
             e.stopPropagation();
             if (!item.builtin) onToggleProvider(item, p.id, !isOn);

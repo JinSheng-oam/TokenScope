@@ -1,42 +1,42 @@
+import type { Provider } from './agentCustomizationEntries';
 import type { SkillSyncMode } from './skillLibraryTypes';
 
-export type SkillSyncOverride = 'inherit' | SkillSyncMode;
+export type ProviderSyncPrefs = Record<Provider, SkillSyncMode>;
 
-export type SkillSyncPrefs = {
-  defaultMode: SkillSyncMode;
-  overrides: Record<string, SkillSyncMode>;
+const STORAGE_KEY = 'tokenscope:provider-sync-prefs';
+
+const PROVIDERS: Provider[] = ['claude', 'codex', 'antigravity', 'pi', 'deepseek'];
+
+export const DEFAULT_PROVIDER_SYNC_PREFS: ProviderSyncPrefs = {
+  claude: 'link',
+  codex: 'link',
+  antigravity: 'link',
+  pi: 'link',
+  deepseek: 'link',
 };
 
-const STORAGE_KEY = 'tokenscope:skill-sync-prefs';
-
-export const DEFAULT_SYNC_PREFS: SkillSyncPrefs = {
-  defaultMode: 'link',
-  overrides: {},
-};
-
-export function loadSkillSyncPrefs(): SkillSyncPrefs {
+export function loadProviderSyncPrefs(): ProviderSyncPrefs {
+  const result: ProviderSyncPrefs = { ...DEFAULT_PROVIDER_SYNC_PREFS };
   try {
     const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
-    if (!raw) return { defaultMode: 'link', overrides: {} };
-    const parsed = JSON.parse(raw) as Partial<SkillSyncPrefs>;
-    const defaultMode: SkillSyncMode = parsed.defaultMode === 'copy' ? 'copy' : 'link';
-    const overrides: Record<string, SkillSyncMode> = {};
-    if (parsed.overrides && typeof parsed.overrides === 'object') {
-      for (const [k, v] of Object.entries(parsed.overrides)) {
-        if (v === 'link' || v === 'copy') overrides[k] = v;
+    if (!raw) return result;
+    const parsed = JSON.parse(raw) as Partial<Record<Provider, string>>;
+    for (const p of PROVIDERS) {
+      if (parsed[p] === 'copy' || parsed[p] === 'link') {
+        result[p] = parsed[p] as SkillSyncMode;
       }
     }
-    return { defaultMode, overrides };
+    return result;
   } catch {
-    return { defaultMode: 'link', overrides: {} };
+    return result;
   }
 }
 
-export function saveSkillSyncPrefs(prefs: SkillSyncPrefs): SkillSyncPrefs {
-  const normalized: SkillSyncPrefs = {
-    defaultMode: prefs.defaultMode === 'copy' ? 'copy' : 'link',
-    overrides: { ...prefs.overrides },
-  };
+export function saveProviderSyncPrefs(prefs: ProviderSyncPrefs): ProviderSyncPrefs {
+  const normalized: ProviderSyncPrefs = { ...DEFAULT_PROVIDER_SYNC_PREFS };
+  for (const p of PROVIDERS) {
+    normalized[p] = prefs[p] === 'copy' ? 'copy' : 'link';
+  }
   try {
     globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(normalized));
   } catch {
@@ -45,26 +45,19 @@ export function saveSkillSyncPrefs(prefs: SkillSyncPrefs): SkillSyncPrefs {
   return normalized;
 }
 
-export function getSkillSyncOverride(prefs: SkillSyncPrefs, skillKey: string): SkillSyncOverride {
-  return prefs.overrides[skillKey] ?? 'inherit';
+export function getProviderConfiguredSyncMode(
+  prefs: ProviderSyncPrefs,
+  provider: Provider
+): SkillSyncMode {
+  return prefs[provider] === 'copy' ? 'copy' : 'link';
 }
 
-export function resolveSkillSyncMode(prefs: SkillSyncPrefs, skillKey: string): SkillSyncMode {
-  return prefs.overrides[skillKey] ?? prefs.defaultMode;
-}
-
-export function setSkillSyncOverride(
-  prefs: SkillSyncPrefs,
-  skillKey: string,
-  override: SkillSyncOverride
-): SkillSyncPrefs {
-  const nextOverrides = { ...prefs.overrides };
-  if (override === 'inherit') {
-    delete nextOverrides[skillKey];
-  } else {
-    nextOverrides[skillKey] = override;
-  }
-  return saveSkillSyncPrefs({ ...prefs, overrides: nextOverrides });
+export function setProviderConfiguredSyncMode(
+  prefs: ProviderSyncPrefs,
+  provider: Provider,
+  mode: SkillSyncMode
+): ProviderSyncPrefs {
+  return saveProviderSyncPrefs({ ...prefs, [provider]: mode });
 }
 
 export function syncModeLabel(mode: SkillSyncMode): string {

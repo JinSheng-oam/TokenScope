@@ -10,16 +10,19 @@
     isSkillAnalyzable,
     sourceTypeLabel,
     type SkillLibraryItem,
-    type SkillSyncMode,
   } from './skillLibraryTypes';
-  import { syncModeLabel } from './skillSyncPrefs';
+  import {
+    DEFAULT_PROVIDER_SYNC_PREFS,
+    getProviderConfiguredSyncMode,
+    syncModeLabel,
+    type ProviderSyncPrefs,
+  } from './skillSyncPrefs';
   import type { BatchItemState } from './skillBatchAnalyzer';
   import type { SkillUpdateItemState } from './skillBatchUpdater';
 
   export let item: SkillLibraryItem;
   export let providerScope: 'all' | Provider = 'all';
-  export let effectiveSyncMode: SkillSyncMode = 'link';
-  export let hasCustomSyncMode = false;
+  export let providerSyncPrefs: ProviderSyncPrefs = DEFAULT_PROVIDER_SYNC_PREFS;
   export let batchState: BatchItemState | undefined = undefined;
   export let updateState: SkillUpdateItemState | undefined = undefined;
   export let multiSelect = false;
@@ -139,7 +142,7 @@
               : '启用此技能'
             : scopeEnabled
               ? `在当前工具中禁用 ${item.name}`
-              : `在当前工具中启用 ${item.name}（${syncModeLabel(effectiveSyncMode)}）`}
+              : `在当前工具中启用 ${item.name}（${syncModeLabel(getProviderConfiguredSyncMode(providerSyncPrefs, providerScope))}）`}
           disabled={busy}
           onclick={(e) => {
             e.stopPropagation();
@@ -197,11 +200,6 @@
       <span class="source-pill">{sourceTypeLabel(item.source.source_type)}</span>
       <span class="source-dot">·</span>
       <span class="source-group" title={groupTag}>{groupTag}</span>
-      {#if hasCustomSyncMode}
-        <span class="sync-badge" title={`独立同步设置：${syncModeLabel(effectiveSyncMode)}`}>
-          {effectiveSyncMode === 'copy' ? '复制' : '链接'}
-        </span>
-      {/if}
       {#if !item.summary && analyzable && !isRunning && !isQueued && !isFailed}
         <span class="unanalyzed-dot" title="尚未进行 AI 分析">未分析</span>
       {/if}
@@ -211,6 +209,7 @@
       {#each ALL_PROVIDERS as p (p.id)}
         {@const isOn = isProviderEnabled(item, p.id)}
         {@const pMode = getProviderSyncMode(item, p.id)}
+        {@const cfgMode = getProviderConfiguredSyncMode(providerSyncPrefs, p.id)}
         <button
           type="button"
           class="provider-chip"
@@ -223,7 +222,7 @@
             ? `${p.label}（内置）`
             : isOn
               ? `${p.label}：已启用（${pMode === 'copy' ? '复制' : '链接'}）· 点击禁用`
-              : `${p.label}：已禁用 · 点击启用（${syncModeLabel(effectiveSyncMode)}）`}
+              : `${p.label}：已禁用 · 点击启用（${syncModeLabel(cfgMode)}）`}
           onclick={(e) => {
             e.stopPropagation();
             if (!item.builtin) onToggleProvider(item, p.id, !isOn);
@@ -613,17 +612,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .sync-badge {
-    padding: 0 5px;
-    border-radius: 4px;
-    background: var(--brand-subtle);
-    color: var(--brand-text);
-    font-size: 9.5px;
-    font-weight: 600;
-    white-space: nowrap;
-    flex-shrink: 0;
   }
 
   .unanalyzed-dot {

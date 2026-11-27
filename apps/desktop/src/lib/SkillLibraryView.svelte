@@ -19,14 +19,11 @@
     type SkillViewMode,
   } from './skillLibraryTypes';
   import {
-    getSkillSyncOverride,
-    loadSkillSyncPrefs,
-    resolveSkillSyncMode,
-    saveSkillSyncPrefs,
-    setSkillSyncOverride,
+    getProviderConfiguredSyncMode,
+    loadProviderSyncPrefs,
+    setProviderConfiguredSyncMode,
     syncModeLabel,
-    type SkillSyncOverride,
-    type SkillSyncPrefs,
+    type ProviderSyncPrefs,
   } from './skillSyncPrefs';
   import {
     createSkillBatchController,
@@ -94,7 +91,8 @@
     showBuiltin: false,
   };
 
-  let syncPrefs: SkillSyncPrefs = loadSkillSyncPrefs();
+  let providerSyncPrefs: ProviderSyncPrefs = loadProviderSyncPrefs();
+  let showSyncSettings = false;
 
   let multiSelect = false;
   let selectedKeys = new Set<string>();
@@ -202,33 +200,22 @@
     }
   }
 
-  function setGlobalSyncMode(mode: SkillSyncMode) {
-    syncPrefs = saveSkillSyncPrefs({ ...syncPrefs, defaultMode: mode });
-    notice = `默认同步方式已切换为「${syncModeLabel(mode)}」（后续启用新工具将按此方式同步）。`;
-  }
-
-  async function handleChangeSkillSyncOverride(
-    item: SkillLibraryItem,
-    next: SkillSyncOverride,
-    applyNow: boolean
-  ) {
-    syncPrefs = setSkillSyncOverride(syncPrefs, item.key, next);
-    const effective = resolveSkillSyncMode(syncPrefs, item.key);
-    if (!applyNow || item.builtin) return;
-
+  async function handleChangeProviderSyncMode(targetProviderId: Provider, mode: SkillSyncMode) {
+    providerSyncPrefs = setProviderConfiguredSyncMode(providerSyncPrefs, targetProviderId, mode);
+    const label = ALL_PROVIDERS.find((p) => p.id === targetProviderId)?.label ?? targetProviderId;
     busy = true;
     error = '';
     notice = '';
     try {
-      const converted = await invoke<number>('apply_skill_sync_mode', {
-        sourceId: item.primary_id,
-        syncMode: effective,
+      const converted = await invoke<number>('apply_provider_sync_mode', {
+        targetProvider: targetProviderId,
+        syncMode: mode,
       });
       await refresh();
       notice =
         converted > 0
-          ? `已将 ${item.name} 的 ${converted} 处已启用部署切换为「${syncModeLabel(effective)}」。`
-          : `已设置 ${item.name} 为「${syncModeLabel(effective)}」。`;
+          ? `已将 ${label} 设为「${syncModeLabel(mode)}」，并转换了 ${converted} 个已启用技能。`
+          : `已将 ${label} 的同步方式设为「${syncModeLabel(mode)}」。`;
     } catch (e) {
       error = String(e);
     } finally {
@@ -238,7 +225,7 @@
 
   async function toggleProviderEnabled(item: SkillLibraryItem, targetProviderId: Provider, enabled: boolean) {
     if (busy || item.builtin) return;
-    const syncMode = resolveSkillSyncMode(syncPrefs, item.key);
+    const syncMode = getProviderConfiguredSyncMode(providerSyncPrefs, targetProviderId);
     busy = true;
     error = '';
     notice = '';
@@ -263,7 +250,6 @@
 
   async function toggleCardEnabled(item: SkillLibraryItem) {
     if (busy || item.builtin) return;
-    // When scoped to a specific app, flip that app directly!
     if (filter.provider !== 'all') {
       const currentlyOn = isItemEnabledInScope(item, filter.provider);
       await toggleProviderEnabled(item, filter.provider, !currentlyOn);
@@ -271,7 +257,6 @@
     }
 
     const nextEnabled = !item.enabled;
-    const syncMode = resolveSkillSyncMode(syncPrefs, item.key);
     busy = true;
     error = '';
     notice = '';
@@ -279,8 +264,9 @@
       await invoke('set_skill_all_enabled', {
         sourceId: item.primary_id,
         enabled: nextEnabled,
-        syncMode,
+        syncMode: 'link',
         targetProviders: ALL_PROVIDERS.map((p) => p.id),
+        providerSyncModes: providerSyncPrefs,
       });
       await refresh();
       notice = nextEnabled ? `已启用 ${item.name}` : `已禁用 ${item.name}`;
@@ -318,8 +304,8 @@
     const errors: string[] = [];
     try {
       for (const item of targets) {
-        const syncMode = resolveSkillSyncMode(syncPrefs, item.key);
         for (const tp of targetProviders) {
+          const syncMode = getProviderConfiguredSyncMode(providerSyncPrefs, tp);
           try {
             await invoke('set_skill_provider_enabled', {
               sourceId: item.primary_id,
@@ -555,8 +541,7 @@
   <SkillDetailView
     item={activeItem}
     batchState={batchProgress.items[activeItem.key]}
-    globalSyncMode={syncPrefs.defaultMode}
-    syncOverride={getSkillSyncOverride(syncPrefs, activeItem.key)}
+    {providerSyncPrefs}
     {hasAiConfig}
     bind:dirty={detailDirty}
     onClose={() => { activeItemKey = null; detailDirty = false; }}
@@ -564,7 +549,7 @@
     onAnalyzeSingle={(target) => void analyzeSingleItem(target)}
     onToggleEnabled={toggleCardEnabled}
     onToggleProvider={toggleProviderEnabled}
-    onChangeSyncOverride={handleChangeSkillSyncOverride}
+    onChangeProviderSyncMode={handleChangeProviderSyncMode}
     {onOpenAiConfig}
   />
 {:else if panelMode !== 'none'}
@@ -844,25 +829,15 @@
       </div>
 
       <div class="chips-group right-controls">
-        <div class="global-sync-toggle" title="设置启用技能时的默认同步方式（也可在详情页为单个技能单独设置）">
-          <span class="sync-label">默认同步</span>
-          <button
-            type="button"
-            class="sync-opt"
-            class:active={syncPrefs.defaultMode === 'link'}
-            onclick={() => setGlobalSyncMode('link')}
-          >
-            静态链接
-          </button>
-          <button
-            type="button"
-            class="sync-opt"
-            class:active={syncPrefs.defaultMode === 'copy'}
-            onclick={() => setGlobalSyncMode('copy')}
-          >
-            文件复制
-          </button>
-        </div>
+        <button
+          type="button"
+          class="filter-chip"
+          class:active={showSyncSettings}
+          onclick={() => (showSyncSettings = !showSyncSettings)}
+          title="为每个应用单独设置静态链接或文件复制"
+        >
+          同步方式
+        </button>
 
         <span class="chips-divider"></span>
 
@@ -881,7 +856,7 @@
               class="provider-filter-chip"
               class:active={filter.provider === p.id}
               style={`--p-color: ${p.color}; --p-bg: ${p.bg}`}
-              title={`切换到 ${p.label} 视图：卡片开关直接控制该应用的启停`}
+              title={`切换到 ${p.label} 视图（当前：${syncModeLabel(getProviderConfiguredSyncMode(providerSyncPrefs, p.id))}）`}
               onclick={() => setProviderFilter(p.id)}
             >
               <span class="pf-icon">{@html p.icon}</span>
@@ -892,12 +867,77 @@
       </div>
     </div>
 
+    {#if showSyncSettings}
+      <div class="provider-sync-panel" role="region" aria-label="各应用同步方式设置">
+        <div class="psp-head">
+          <strong>各应用同步方式</strong>
+          <button type="button" class="scope-clear-btn" onclick={() => (showSyncSettings = false)}>收起</button>
+        </div>
+        <div class="psp-grid">
+          {#each ALL_PROVIDERS as p (p.id)}
+            {@const mode = getProviderConfiguredSyncMode(providerSyncPrefs, p.id)}
+            <div class="psp-item">
+              <div class="psp-app">
+                <span class="pf-icon" style={`--p-color: ${p.color}`}>{@html p.icon}</span>
+                <span>{p.label}</span>
+              </div>
+              <div class="global-sync-toggle">
+                <button
+                  type="button"
+                  class="sync-opt"
+                  class:active={mode === 'link'}
+                  disabled={busy}
+                  onclick={() => void handleChangeProviderSyncMode(p.id, 'link')}
+                >
+                  静态链接
+                </button>
+                <button
+                  type="button"
+                  class="sync-opt"
+                  class:active={mode === 'copy'}
+                  disabled={busy}
+                  onclick={() => void handleChangeProviderSyncMode(p.id, 'copy')}
+                >
+                  文件复制
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     {#if filter.provider !== 'all'}
+      {@const scopedProvider = filter.provider}
+      {@const scopedMode = getProviderConfiguredSyncMode(providerSyncPrefs, scopedProvider)}
       <div class="scope-hint-bar">
-        <span>当前按 <strong>{activeProviderLabel}</strong> 管理：卡片右侧开关直接控制该应用的启用 / 禁用（也可随时点击卡片底部任意工具图标单独切换）。</span>
-        <button type="button" class="scope-clear-btn" onclick={() => (filter = { ...filter, provider: 'all' })}>
-          返回全部应用
-        </button>
+        <span>当前按 <strong>{activeProviderLabel}</strong> 管理：卡片开关直接控制该应用的启停。</span>
+        <div class="scope-right">
+          <div class="global-sync-toggle" title={`设置 ${activeProviderLabel} 的同步方式`}>
+            <span class="sync-label">{activeProviderLabel} 同步</span>
+            <button
+              type="button"
+              class="sync-opt"
+              class:active={scopedMode === 'link'}
+              disabled={busy}
+              onclick={() => void handleChangeProviderSyncMode(scopedProvider, 'link')}
+            >
+              静态链接
+            </button>
+            <button
+              type="button"
+              class="sync-opt"
+              class:active={scopedMode === 'copy'}
+              disabled={busy}
+              onclick={() => void handleChangeProviderSyncMode(scopedProvider, 'copy')}
+            >
+              文件复制
+            </button>
+          </div>
+          <button type="button" class="scope-clear-btn" onclick={() => (filter = { ...filter, provider: 'all' })}>
+            返回全部应用
+          </button>
+        </div>
       </div>
     {/if}
 
@@ -1031,8 +1071,7 @@
                     <SkillCard
                       {item}
                       providerScope={filter.provider}
-                      effectiveSyncMode={resolveSkillSyncMode(syncPrefs, item.key)}
-                      hasCustomSyncMode={getSkillSyncOverride(syncPrefs, item.key) !== 'inherit'}
+                      {providerSyncPrefs}
                       batchState={batchProgress.items[item.key]}
                       updateState={updateProgress.items[item.key]}
                       {multiSelect}
@@ -1053,7 +1092,7 @@
                     <SkillListRow
                       {item}
                       providerScope={filter.provider}
-                      effectiveSyncMode={resolveSkillSyncMode(syncPrefs, item.key)}
+                      {providerSyncPrefs}
                       batchState={batchProgress.items[item.key]}
                       updateState={updateProgress.items[item.key]}
                       {multiSelect}
@@ -1079,8 +1118,7 @@
           <SkillCard
             {item}
             providerScope={filter.provider}
-            effectiveSyncMode={resolveSkillSyncMode(syncPrefs, item.key)}
-            hasCustomSyncMode={getSkillSyncOverride(syncPrefs, item.key) !== 'inherit'}
+            {providerSyncPrefs}
             batchState={batchProgress.items[item.key]}
             updateState={updateProgress.items[item.key]}
             {multiSelect}
@@ -1101,7 +1139,7 @@
           <SkillListRow
             {item}
             providerScope={filter.provider}
-            effectiveSyncMode={resolveSkillSyncMode(syncPrefs, item.key)}
+            {providerSyncPrefs}
             batchState={batchProgress.items[item.key]}
             updateState={updateProgress.items[item.key]}
             {multiSelect}
@@ -1486,12 +1524,64 @@
     align-items: center;
     justify-content: space-between;
     gap: 10px;
+    flex-wrap: wrap;
     padding: 7px 12px;
     border: 1px solid var(--brand-border);
     border-radius: var(--radius-sm);
     background: color-mix(in srgb, var(--brand-subtle) 50%, var(--bg-card));
     font-size: 11.5px;
     color: var(--text-secondary);
+  }
+
+  .scope-right {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .provider-sync-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+  }
+
+  .psp-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-primary);
+  }
+
+  .psp-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(225px, 1fr));
+    gap: 8px;
+  }
+
+  .psp-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated);
+  }
+
+  .psp-app {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
   }
 
   .scope-hint-bar strong {

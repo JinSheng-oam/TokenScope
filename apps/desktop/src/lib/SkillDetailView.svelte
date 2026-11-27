@@ -14,7 +14,12 @@
     type SkillLibraryItem,
     type SkillSyncMode,
   } from './skillLibraryTypes';
-  import { syncModeLabel, type SkillSyncOverride } from './skillSyncPrefs';
+  import {
+    DEFAULT_PROVIDER_SYNC_PREFS,
+    getProviderConfiguredSyncMode,
+    syncModeLabel,
+    type ProviderSyncPrefs,
+  } from './skillSyncPrefs';
   import type { BatchItemState } from './skillBatchAnalyzer';
   import type { Entry, Provider } from './agentCustomizationEntries';
   import type { UpdateInfo } from './agentSkillSourceTypes';
@@ -23,8 +28,7 @@
 
   export let item: SkillLibraryItem;
   export let batchState: BatchItemState | undefined = undefined;
-  export let globalSyncMode: SkillSyncMode = 'link';
-  export let syncOverride: SkillSyncOverride = 'inherit';
+  export let providerSyncPrefs: ProviderSyncPrefs = DEFAULT_PROVIDER_SYNC_PREFS;
   export let hasAiConfig = false;
   export let dirty = false;
   export let onClose: () => void = () => {};
@@ -32,7 +36,7 @@
   export let onAnalyzeSingle: (item: SkillLibraryItem) => void = () => {};
   export let onToggleEnabled: (item: SkillLibraryItem) => Promise<void> = async () => {};
   export let onToggleProvider: (item: SkillLibraryItem, provider: Provider, enabled: boolean) => Promise<void> = async () => {};
-  export let onChangeSyncOverride: (item: SkillLibraryItem, next: SkillSyncOverride, applyNow: boolean) => Promise<void> = async () => {};
+  export let onChangeProviderSyncMode: (provider: Provider, mode: SkillSyncMode) => Promise<void> = async () => {};
   export let onOpenAiConfig: () => void = () => {};
 
   let contentTab: 'preview' | 'edit' = 'preview';
@@ -67,7 +71,6 @@
   $: brief = deriveCardBrief(item);
   $: analyzable = isSkillAnalyzable(item);
   $: isAnalyzing = batchState?.status === 'running' || batchState?.status === 'retrying';
-  $: effectiveSyncMode = syncOverride === 'inherit' ? globalSyncMode : syncOverride;
   $: enabledCount = ALL_PROVIDERS.filter((p) => isProviderEnabled(item, p.id)).length;
 
   $: overviewBlocks = parseSummaryMarkdown(item.summary?.overview ?? '');
@@ -597,76 +600,69 @@
     {/if}
   </section>
 
-  <!-- 3. Cross-Agent Deployment Matrix & Per-Skill Sync Mode -->
+  <!-- 3. Cross-Agent Deployment Matrix & Per-App Sync Mode -->
   <section class="detail-card">
     <div class="detail-card-head">
       <div class="card-head-left">
         <strong>工具工作区</strong>
         <span class="sync-pill">已启用 {enabledCount} / {ALL_PROVIDERS.length}</span>
       </div>
-      {#if !item.builtin}
-        <div class="card-head-right sync-mode-controls">
-          <span class="sync-mode-label">同步方式：</span>
-          <div class="sync-seg" role="group" aria-label="设置此技能同步方式">
-            <button
-              type="button"
-              class="sync-seg-btn"
-              class:active={syncOverride === 'inherit'}
-              disabled={saving}
-              onclick={() => void onChangeSyncOverride(item, 'inherit', true)}
-            >
-              跟随全局 ({syncModeLabel(globalSyncMode)})
-            </button>
-            <button
-              type="button"
-              class="sync-seg-btn"
-              class:active={syncOverride === 'link'}
-              disabled={saving}
-              onclick={() => void onChangeSyncOverride(item, 'link', true)}
-            >
-              静态链接
-            </button>
-            <button
-              type="button"
-              class="sync-seg-btn"
-              class:active={syncOverride === 'copy'}
-              disabled={saving}
-              onclick={() => void onChangeSyncOverride(item, 'copy', true)}
-            >
-              文件复制
-            </button>
-          </div>
-        </div>
-      {/if}
     </div>
 
     <div class="workspace-matrix">
       {#each ALL_PROVIDERS as p (p.id)}
         {@const isOn = isProviderEnabled(item, p.id)}
         {@const pMode = getProviderSyncMode(item, p.id)}
-        <button
-          type="button"
-          class="agent-cell"
-          class:enabled={isOn}
-          disabled={item.builtin || saving}
-          title={item.builtin
-            ? `${p.label}（系统内置）`
-            : isOn
-              ? `${p.label}：已启用（${pMode === 'copy' ? '文件复制' : '静态链接'}）· 点击禁用`
-              : `${p.label}：已禁用 · 点击启用（将按${syncModeLabel(effectiveSyncMode)}同步）`}
-          onclick={() => {
-            if (!item.builtin) void onToggleProvider(item, p.id, !isOn);
-          }}
-        >
-          <span class="agent-check" class:on={isOn} class:off={!isOn}>
-            {isOn ? '✓' : '−'}
-          </span>
-          <span class="agent-icon" class:dim={!isOn} style={`--p-color: ${p.color}; --p-bg: ${p.bg}`}>{@html p.icon}</span>
-          <span class="agent-label">{p.label}</span>
-          <span class="agent-state" class:on={isOn}>
-            {isOn ? (pMode === 'copy' ? '已启用 · 复制' : '已启用 · 链接') : '已禁用'}
-          </span>
-        </button>
+        {@const cfgMode = getProviderConfiguredSyncMode(providerSyncPrefs, p.id)}
+        <div class="agent-cell" class:enabled={isOn}>
+          <button
+            type="button"
+            class="agent-toggle-main"
+            disabled={item.builtin || saving}
+            title={item.builtin
+              ? `${p.label}（系统内置）`
+              : isOn
+                ? `${p.label}：已启用（${pMode === 'copy' ? '文件复制' : '静态链接'}）· 点击禁用`
+                : `${p.label}：已禁用 · 点击启用（将按${syncModeLabel(cfgMode)}同步）`}
+            onclick={() => {
+              if (!item.builtin) void onToggleProvider(item, p.id, !isOn);
+            }}
+          >
+            <span class="agent-check" class:on={isOn} class:off={!isOn}>
+              {isOn ? '✓' : '−'}
+            </span>
+            <span class="agent-icon" class:dim={!isOn} style={`--p-color: ${p.color}; --p-bg: ${p.bg}`}>{@html p.icon}</span>
+            <span class="agent-label">{p.label}</span>
+            <span class="agent-state" class:on={isOn}>
+              {isOn ? '已启用' : '已禁用'}
+            </span>
+          </button>
+
+          {#if !item.builtin}
+            <div class="sync-seg" role="group" aria-label={`${p.label} 同步方式`}>
+              <button
+                type="button"
+                class="sync-seg-btn"
+                class:active={cfgMode === 'link'}
+                disabled={saving}
+                title={`将 ${p.label} 的同步方式设为静态链接`}
+                onclick={() => void onChangeProviderSyncMode(p.id, 'link')}
+              >
+                链接
+              </button>
+              <button
+                type="button"
+                class="sync-seg-btn"
+                class:active={cfgMode === 'copy'}
+                disabled={saving}
+                title={`将 ${p.label} 的同步方式设为文件复制`}
+                onclick={() => void onChangeProviderSyncMode(p.id, 'copy')}
+              >
+                复制
+              </button>
+            </div>
+          {/if}
+        </div>
       {/each}
     </div>
   </section>
@@ -1234,7 +1230,7 @@
 
   .workspace-matrix {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(195px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
     gap: 8px;
     padding: 14px 16px;
   }
@@ -1242,21 +1238,17 @@
   .agent-cell {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 9px 11px;
+    gap: 6px;
+    padding: 6px 8px 6px 10px;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     background: var(--bg-card);
     color: var(--text-primary);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
     transition: all var(--transition-fast);
   }
 
-  .agent-cell:hover:not(:disabled) {
+  .agent-cell:hover {
     border-color: var(--brand-border);
-    background: var(--bg-card-hover);
   }
 
   .agent-cell.enabled {
@@ -1264,54 +1256,28 @@
     background: color-mix(in srgb, var(--color-exact-bg) 35%, var(--bg-card));
   }
 
+  .agent-toggle-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    padding: 2px 0;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .agent-toggle-main:disabled {
+    cursor: default;
+  }
+
   .agent-icon.dim {
     opacity: 0.4;
     filter: grayscale(1);
-  }
-
-  .agent-state.on {
-    color: var(--color-exact);
-    font-weight: 600;
-  }
-
-  .sync-mode-controls {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-
-  .sync-mode-label {
-    font-size: 11px;
-    color: var(--text-muted);
-  }
-
-  .sync-seg {
-    display: inline-flex;
-    gap: 2px;
-    padding: 2px;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-xs);
-    background: var(--bg-card);
-  }
-
-  .sync-seg-btn {
-    height: 22px;
-    padding: 0 8px;
-    border: none;
-    border-radius: 4px;
-    background: transparent;
-    color: var(--text-secondary);
-    font: inherit;
-    font-size: 11px;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .sync-seg-btn.active {
-    background: var(--brand-subtle);
-    color: var(--brand-text);
-    font-weight: 600;
   }
 
   .agent-check {
@@ -1353,6 +1319,40 @@
     font-size: 10.5px;
     color: var(--text-muted);
     flex-shrink: 0;
+  }
+
+  .agent-state.on {
+    color: var(--color-exact);
+    font-weight: 600;
+  }
+
+  .sync-seg {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    background: var(--bg-card);
+    flex-shrink: 0;
+  }
+
+  .sync-seg-btn {
+    height: 20px;
+    padding: 0 6px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 10px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .sync-seg-btn.active {
+    background: var(--brand-subtle);
+    color: var(--brand-text);
+    font-weight: 600;
   }
 
   .content-tabs-bar {

@@ -827,6 +827,7 @@ fn set_all_providers_enabled(
     enabled: bool,
     sync_mode: &str,
     target_providers: Vec<String>,
+    provider_sync_modes: &HashMap<String, String>,
 ) -> Result<bool, String> {
     let providers_to_touch: Vec<String> = if target_providers.is_empty() {
         PROVIDERS.iter().map(|s| (*s).to_string()).collect()
@@ -834,8 +835,14 @@ fn set_all_providers_enabled(
         target_providers
     };
 
+    let mode_for = |provider: &str| -> &str {
+        provider_sync_modes
+            .get(provider)
+            .map(String::as_str)
+            .unwrap_or(sync_mode)
+    };
+
     if enabled {
-        // Re-enable existing disabled providers first; if none exist, enable all requested providers
         let mut any_existing = false;
         for provider in &providers_to_touch {
             let Ok(p_roots) = roots(provider) else {
@@ -852,46 +859,47 @@ fn set_all_providers_enabled(
             });
             if has_entry {
                 any_existing = true;
-                set_provider_enabled(source_id, provider, true, sync_mode)?;
+                set_provider_enabled(source_id, provider, true, mode_for(provider))?;
             }
         }
         if !any_existing {
             for provider in &providers_to_touch {
-                set_provider_enabled(source_id, provider, true, sync_mode)?;
+                set_provider_enabled(source_id, provider, true, mode_for(provider))?;
             }
         }
         Ok(true)
     } else {
         for provider in &providers_to_touch {
-            set_provider_enabled(source_id, provider, false, sync_mode)?;
+            set_provider_enabled(source_id, provider, false, mode_for(provider))?;
         }
         Ok(false)
     }
 }
 
-fn convert_sync_mode(source_id: &CustomizationId, sync_mode: &str) -> Result<usize, String> {
-    let (source_root, source_file_path) = resolve(source_id)?;
-    source_root.require_writable()?;
-    let source_dir = source_file_path
-        .parent()
-        .ok_or("无效的 skill 目录")?
-        .to_path_buf();
-    ensure_active_skill_file(&source_dir)?;
-    let anchor = ensure_central_anchor(&source_dir, &source_id.name)?;
+fn convert_provider_sync_mode(target_provider: &str, sync_mode: &str) -> Result<usize, String> {
+    let target_roots = roots(target_provider)?;
     let mut converted = 0;
 
-    for provider in PROVIDERS {
-        let Ok(p_roots) = roots(provider) else {
+    for root in target_roots {
+        if root.kind != "skill" || root.is_builtin() {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&root.path) else {
             continue;
         };
-        for root in p_roots {
-            if root.kind != "skill" || root.is_builtin() {
+        for item in entries.flatten() {
+            let Some(name) = item.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if !valid_skill_name(&name) {
                 continue;
             }
-            let dir = root.path.join(&source_id.name);
+            let dir = item.path();
             if !dir.join("SKILL.md").is_file() {
                 continue;
             }
+            let canon = fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+            let anchor = ensure_central_anchor(&canon, &name)?;
             if sync_mode == "copy" && is_link(&dir) {
                 remove_link_only(&dir)?;
                 copy_dir_recursive(&anchor, &dir)?;
@@ -933,24 +941,28 @@ pub(crate) async fn set_skill_all_enabled(
     enabled: bool,
     sync_mode: Option<String>,
     target_providers: Option<Vec<String>>,
+    provider_sync_modes: Option<HashMap<String, String>>,
 ) -> Result<bool, String> {
     let mode = sync_mode.unwrap_or_else(|| "link".into());
     let providers = target_providers.unwrap_or_default();
+    let mode_map = provider_sync_modes.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
-        set_all_providers_enabled(&source_id, enabled, &mode, providers)
+        set_all_providers_enabled(&source_id, enabled, &mode, providers, &mode_map)
     })
     .await
     .map_err(|_| "批量切换技能状态任务失败")?
 }
 
 #[tauri::command]
-pub(crate) async fn apply_skill_sync_mode(
-    source_id: CustomizationId,
+pub(crate) async fn apply_provider_sync_mode(
+    target_provider: String,
     sync_mode: String,
 ) -> Result<usize, String> {
-    tauri::async_runtime::spawn_blocking(move || convert_sync_mode(&source_id, &sync_mode))
-        .await
-        .map_err(|_| "切换技能同步模式任务失败")?
+    tauri::async_runtime::spawn_blocking(move || {
+        convert_provider_sync_mode(&target_provider, &sync_mode)
+    })
+    .await
+    .map_err(|_| "切换应用同步方式任务失败")?
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ use std::{
     },
     time::Instant,
 };
-use tokenscope_local_ipc::DashboardResponse;
+use tokenscope_local_ipc::{DashboardResponse, SessionAnalysisResponse};
 use tokenscope_local_store::SessionFilterOptions;
 
 #[derive(Clone, Debug, Serialize)]
@@ -51,6 +51,7 @@ pub(crate) struct DashboardWatch {
     pub(crate) request: Mutex<DashboardRequest>,
     pub(crate) cache: Mutex<HashMap<String, (DashboardResponse, Instant)>>,
     pub(crate) session_filter_options: Mutex<HashMap<String, SessionFilterOptions>>,
+    pub(crate) session_pages: Mutex<HashMap<String, SessionAnalysisResponse>>,
     pub(crate) refreshing: Mutex<HashSet<String>>,
     pub(crate) queries: Mutex<HashMap<String, DashboardQueryInFlight>>,
 }

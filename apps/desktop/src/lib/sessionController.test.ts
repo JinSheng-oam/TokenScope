@@ -145,4 +145,34 @@ describe('session controller', () => {
     });
     expect(loadPage).toHaveBeenCalledTimes(1);
   });
+
+  it('retains per-range cached pages across range switches without re-querying', async () => {
+    let activeRange: DashboardRange = '30d';
+    const loadPage = vi.fn<MockSessionLoader>().mockImplementation(async (range, offset) =>
+      analysis(range === 'all' ? 50 : 12, offset),
+    );
+    const sessions = createSessionController({
+      isRuntimeAvailable: () => true,
+      isActive: () => true,
+      range: () => activeRange,
+      customStart: () => '',
+      customEnd: () => '',
+      refreshDashboard: async () => {},
+      loadPage,
+    });
+
+    await sessions.load(false, 1);
+    expect(getState(sessions).analysis?.page.total).toBe(12);
+
+    activeRange = 'all';
+    sessions.resetForRangeChange();
+    await sessions.load(false, 1);
+    expect(getState(sessions).analysis?.page.total).toBe(50);
+
+    activeRange = '30d';
+    sessions.resetForRangeChange();
+    await sessions.load(false, 1);
+    expect(getState(sessions).analysis?.page.total).toBe(12);
+    expect(loadPage).toHaveBeenCalledTimes(2);
+  });
 });

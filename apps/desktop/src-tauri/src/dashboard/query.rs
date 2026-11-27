@@ -217,16 +217,32 @@ pub(super) fn query_agent_session_analysis(
     if !(1..=200).contains(&session_limit) {
         return Err("每页会话数必须在 1 到 200 之间".into());
     }
-    let filter_cache_key = format!(
-        "{}|{range}|{}|{}",
-        app.state::<DashboardWatch>()
-            .revision
-            .load(Ordering::Acquire),
+    let watch = app.state::<DashboardWatch>();
+    let revision = watch.revision.load(Ordering::Acquire);
+    let local_date = chrono::Local::now().date_naive();
+    let page_cache_key = format!(
+        "{revision}|{local_date}|{range}|{session_offset}|{session_limit}|{}|{}|{}|{}|{}|{}",
+        search.unwrap_or_default(),
+        tool_id.unwrap_or_default(),
+        model_id.unwrap_or_default(),
+        project_id.unwrap_or_default(),
         start_date.unwrap_or_default(),
         end_date.unwrap_or_default()
     );
-    let cached_filter_options = app
-        .state::<DashboardWatch>()
+    if let Some(cached) = watch
+        .session_pages
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(&page_cache_key).cloned())
+    {
+        return Ok(cached);
+    }
+    let filter_cache_key = format!(
+        "{revision}|{local_date}|{range}|{}|{}",
+        start_date.unwrap_or_default(),
+        end_date.unwrap_or_default()
+    );
+    let cached_filter_options = watch
         .session_filter_options
         .lock()
         .ok()
@@ -252,7 +268,6 @@ pub(super) fn query_agent_session_analysis(
         .map_err(|e| format!("查询会话分析失败：{e}"))?;
     let mut response = SessionAnalysisResponse::new(analysis);
     response.validate().map_err(|e| e.to_string())?;
-    let watch = app.state::<DashboardWatch>();
     if let Some(options) = cached_filter_options {
         response.analysis.filter_options = options;
     } else if let Ok(mut cache) = watch.session_filter_options.lock() {
@@ -260,6 +275,12 @@ pub(super) fn query_agent_session_analysis(
             cache.clear();
         }
         cache.insert(filter_cache_key, response.analysis.filter_options.clone());
+    }
+    if let Ok(mut cache) = watch.session_pages.lock() {
+        if cache.len() >= 48 {
+            cache.clear();
+        }
+        cache.insert(page_cache_key, response.clone());
     }
     Ok(response)
 }

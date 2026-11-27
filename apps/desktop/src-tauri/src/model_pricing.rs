@@ -160,6 +160,9 @@ pub(crate) async fn refresh_model_price_catalog(
     if let Ok(mut cache) = app.state::<DashboardWatch>().cache.lock() {
         cache.clear();
     }
+    if let Ok(mut cache) = app.state::<DashboardWatch>().session_pages.lock() {
+        cache.clear();
+    }
     Ok(response)
 }
 
@@ -175,6 +178,9 @@ pub(crate) async fn save_model_pricing_preferences(
     .await
     .map_err(|error| error.to_string())??;
     if let Ok(mut cache) = app.state::<DashboardWatch>().cache.lock() {
+        cache.clear();
+    }
+    if let Ok(mut cache) = app.state::<DashboardWatch>().session_pages.lock() {
         cache.clear();
     }
     Ok(())

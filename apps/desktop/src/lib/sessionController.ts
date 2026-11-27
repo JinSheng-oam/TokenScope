@@ -1,6 +1,7 @@
 import { get, writable } from 'svelte/store';
 import { deleteSession, getSessionAnalysis } from './api';
 import { formatNumber } from './format';
+import { clearSessionSnapshots, readSessionSnapshot, saveSessionSnapshot } from './sessionSnapshotStorage';
 import type {
   DashboardRange,
   SessionAnalysisPage,
@@ -37,8 +38,8 @@ type SessionControllerDependencies = {
 export const SESSION_PAGE_SIZES = [7, 10, 15, 20, 50, 100] as const;
 const DEFAULT_PAGE_SIZE = 7;
 const MAX_BATCH_SIZE = 100;
-const CACHED_PAGES = 6;
-const PAGE_CACHE_MS = 60_000;
+const CACHED_PAGES = 32;
+const PAGE_CACHE_MS = 10 * 60_000;
 const PAGE_SIZE_STORAGE_KEY = 'tokenscope.sessionPageSize.v3';
 
 function restorePageSize(): number {
@@ -108,17 +109,29 @@ export function createSessionController(dependencies: SessionControllerDependenc
     debounceTimer = undefined;
   }
 
+  function snapshotKey(current: SessionControllerState, range: DashboardRange): string {
+    return `${range}|${range === 'custom' ? dependencies.customStart() : ''}|${range === 'custom' ? dependencies.customEnd() : ''}|${current.pageSize}`;
+  }
+
+  function isDefaultUnfilteredPage(current: SessionControllerState): boolean {
+    return (
+      current.offset === 0 &&
+      current.search.trim() === '' &&
+      current.toolFilter === '' &&
+      current.modelFilter === '' &&
+      current.projectFilter === ''
+    );
+  }
+
   function resetForRangeChange() {
     requestSequence += 1;
     pendingKey = undefined;
     loadedKey = undefined;
-    pages.clear();
     clearDebounce();
     update({ offset: 0, loading: false });
   }
 
   function schedule() {
-    pages.clear();
     requestSequence += 1;
     pendingKey = undefined;
     update({ offset: 0, loading: false });
@@ -182,7 +195,16 @@ export function createSessionController(dependencies: SessionControllerDependenc
       return;
     }
     pendingKey = key;
-    update({ offset: current.offset, loading: true, error: '' });
+    if (!force && isDefaultUnfilteredPage(current)) {
+      const persisted = readSessionSnapshot(range, snapshotKey(current, range));
+      if (persisted) {
+        update({ offset: current.offset, analysis: persisted, loading: true, error: '' });
+      } else {
+        update({ offset: current.offset, loading: true, error: '' });
+      }
+    } else {
+      update({ offset: current.offset, loading: true, error: '' });
+    }
     const filters = {
       search: current.search.trim(),
       toolId: current.toolFilter,
@@ -213,6 +235,9 @@ export function createSessionController(dependencies: SessionControllerDependenc
       };
       loadedKey = requestKey({ ...current, offset }, range);
       remember(loadedKey, result);
+      if (isDefaultUnfilteredPage({ ...current, offset })) {
+        saveSessionSnapshot(range, snapshotKey({ ...current, offset }, range), result);
+      }
       if (batch.page.sessions.length > current.pageSize) {
         const nextOffset = offset + current.pageSize;
         remember(requestKey({ ...current, offset: nextOffset }, range), {
@@ -277,6 +302,7 @@ export function createSessionController(dependencies: SessionControllerDependenc
       });
       loadedKey = undefined;
       pages.clear();
+      clearSessionSnapshots();
       await dependencies.refreshDashboard(false);
     } catch (error) {
       update({ actionError: error instanceof Error ? error.message : String(error) });

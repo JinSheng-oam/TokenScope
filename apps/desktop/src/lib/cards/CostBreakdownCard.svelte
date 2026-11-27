@@ -2,7 +2,7 @@
   import { adaptiveFitRow, adaptiveFitText } from '../adaptiveFit';
   import { buildCostCandidates } from '../adaptiveFormat';
   import { displayCurrency } from '../displayCurrency';
-  import { formatCost, formatNumber, percentOf } from '../format';
+  import { compactModelLabel, formatCost, formatNumber, percentOf } from '../format';
   import type { UsageBreakdown, UsageTotals } from '../types';
 
   let {
@@ -16,13 +16,6 @@
     sortedModels?: UsageBreakdown[];
     onNavigatePricing?: () => void;
   } = $props();
-
-  function compactModelLabel(label: string): string {
-    const [provider, model, ...rest] = label.split('/');
-    return provider && model && rest.length === 0 && model.toLowerCase().startsWith(`${provider.toLowerCase()}-`)
-      ? model
-      : label;
-  }
 
   let costRankedModels = $derived(
     [...sortedModels]

@@ -47,3 +47,10 @@ export function percentOf(value: number, total: number): number {
   if (total <= 0 || value <= 0) return 0;
   return Math.max(0, Math.min(100, (value / total) * 100));
 }
+
+export function compactModelLabel(label: string): string {
+  const [provider, model, ...rest] = label.split('/');
+  return provider && model && rest.length === 0 && model.toLowerCase().startsWith(`${provider.toLowerCase()}-`)
+    ? model
+    : label;
+}

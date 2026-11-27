@@ -3,7 +3,7 @@
   import { buildCostCandidates, buildTokenCandidates } from './adaptiveFormat';
   import { displayCurrency } from './displayCurrency';
   import { resolveSessionActivityState } from './dashboardView';
-  import { formatCost, formatNumber, formatToolLabel, percentOf, relativeTime } from './format';
+  import { compactModelLabel, formatCost, formatNumber, formatToolLabel, percentOf, relativeTime } from './format';
   import type { HeatmapCalendar } from './heatmap';
   import { liveMinute } from './liveClock';
   import { sessionRateLabel, sessionRateTitle, type SessionRates } from './sessionRates';
@@ -90,12 +90,6 @@
     onNavigatePricing?: () => void;
   } = $props();
 
-  function compactModelLabel(label: string): string {
-    const [provider, model, ...rest] = label.split('/');
-    return provider && model && rest.length === 0 && model.toLowerCase().startsWith(`${provider.toLowerCase()}-`)
-      ? model
-      : label;
-  }
 </script>
 
 {#if cardId === 'tools'}

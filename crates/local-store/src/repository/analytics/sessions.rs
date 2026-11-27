@@ -127,16 +127,6 @@ impl LocalStore {
         {
             return Err(StoreError::InvalidInput("session search"));
         }
-        let modern_codex = if include_response_counts {
-            r#"CASE WHEN u.tool_id='codex' THEN EXISTS (
-                SELECT 1 FROM record_sources rs
-                JOIN source_checkpoints cp ON cp.tool_id=rs.tool_id AND cp.source_key=rs.source_key
-                WHERE rs.record_id=u.record_id AND rs.tool_id='codex'
-                    AND cp.source_fingerprint LIKE '%"mode":"modern"%'
-            ) ELSE 0 END"#
-        } else {
-            "0"
-        };
         let cte = format!(
             r#"{SESSION_LINKS_CTE}, usage_sessions AS (
                 SELECT u.session_id,u.tool_id,
@@ -151,18 +141,13 @@ impl LocalStore {
                     SUM(CASE WHEN u.precision='unknown' THEN 1 ELSE 0 END) AS unknown_precision_records,
                     SUM(CASE WHEN u.event_at_ms IS NULL THEN 1 ELSE 0 END) AS untimed_records,
                     COUNT(DISTINCT u.model_id) AS model_count,
-                    CASE WHEN SUM(CASE WHEN u.is_modern_codex THEN 1 ELSE 0 END)>0
-                        THEN SUM(CASE WHEN u.is_modern_codex AND u.model_id IS NOT NULL THEN 1 ELSE 0 END) ELSE NULL END AS known_response_count,
-                    CASE WHEN SUM(CASE WHEN u.is_modern_codex THEN 1 ELSE 0 END)>0
-                        THEN SUM(CASE WHEN u.is_modern_codex AND u.model_id IS NULL THEN 1 ELSE 0 END) ELSE NULL END AS unknown_response_count,
+                    NULL AS known_response_count,
+                    NULL AS unknown_response_count,
                     MAX(u.event_at_ms) AS last_event_at_ms,NULL AS activity_observed_at_ms
-                FROM (
-                    SELECT u.*, {modern_codex} AS is_modern_codex
-                    FROM usage_records u
-                    WHERE u.owner_device_id=?1 AND u.scope='device_local' AND u.is_deleted=0
-                        AND u.session_id IS NOT NULL AND u.tool_id<>'antigravity'
-                        AND (?2 IS NULL OR u.event_at_ms >= ?2) AND (?3 IS NULL OR u.event_at_ms < ?3)
-                ) u
+                FROM usage_records u
+                WHERE u.owner_device_id=?1 AND u.scope='device_local' AND u.is_deleted=0
+                    AND u.session_id IS NOT NULL AND u.tool_id<>'antigravity'
+                    AND (?2 IS NULL OR u.event_at_ms >= ?2) AND (?3 IS NULL OR u.event_at_ms < ?3)
                 GROUP BY u.tool_id,u.session_id
             ),
             ag_usage AS (
@@ -406,6 +391,59 @@ impl LocalStore {
             eprintln!("session page: {:?}", page_started.elapsed());
         }
         if !sessions.is_empty() {
+            if include_response_counts {
+                let codex_ids: Vec<&str> = sessions
+                    .iter()
+                    .filter(|s| s.tool_id == "codex")
+                    .map(|s| s.session_id.as_str())
+                    .collect();
+                if !codex_ids.is_empty() {
+                    let codex_ids_json = serde_json::to_string(&codex_ids)
+                        .map_err(|_| StoreError::InvalidInput("codex session page keys"))?;
+                    let mut counts_stmt = self.conn.prepare(
+                        r#"WITH modern_codex_sources AS (
+                               SELECT source_key FROM source_checkpoints
+                               WHERE tool_id='codex' AND source_fingerprint LIKE '%"mode":"modern"%'
+                           )
+                           SELECT u.session_id,
+                                  SUM(CASE WHEN u.model_id IS NOT NULL THEN 1 ELSE 0 END),
+                                  SUM(CASE WHEN u.model_id IS NULL THEN 1 ELSE 0 END)
+                           FROM usage_records u
+                           WHERE u.owner_device_id=?1 AND u.scope='device_local' AND u.is_deleted=0
+                             AND u.tool_id='codex'
+                             AND u.session_id IN (SELECT value FROM json_each(?4))
+                             AND (?2 IS NULL OR u.event_at_ms >= ?2)
+                             AND (?3 IS NULL OR u.event_at_ms < ?3)
+                             AND EXISTS (
+                                 SELECT 1 FROM record_sources rs
+                                 JOIN modern_codex_sources ms ON ms.source_key=rs.source_key
+                                 WHERE rs.record_id=u.record_id AND rs.tool_id='codex'
+                             )
+                           GROUP BY u.session_id"#,
+                    )?;
+                    let mut codex_counts = std::collections::HashMap::<String, (u64, u64)>::new();
+                    let mut rows = counts_stmt.query(params![
+                        owner_device_id,
+                        from_ms,
+                        to_ms,
+                        codex_ids_json
+                    ])?;
+                    while let Some(row) = rows.next()? {
+                        let session_id: String = row.get(0)?;
+                        let known: i64 = row.get(1)?;
+                        let unknown: i64 = row.get(2)?;
+                        codex_counts.insert(session_id, (pos_u64(known)?, pos_u64(unknown)?));
+                    }
+                    for session in &mut sessions {
+                        if session.tool_id == "codex" {
+                            if let Some((known, unknown)) = codex_counts.get(&session.session_id) {
+                                session.known_response_count = Some(*known);
+                                session.unknown_response_count = Some(*unknown);
+                            }
+                        }
+                    }
+                }
+            }
             let page_keys = serde_json::to_string(
                 &sessions
                     .iter()

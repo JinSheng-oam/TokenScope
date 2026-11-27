@@ -3,6 +3,7 @@ import type { SkillSummary } from './agentSkillSourceTypes';
 import { stripMarkdownToPlainText } from './skillSummaryMarkdown';
 
 export type SkillSourceType = 'skills.sh' | 'git' | 'import' | 'local' | 'builtin' | string;
+export type SkillSyncMode = 'link' | 'copy';
 
 export type SkillDeployment = {
   id: Id;
@@ -11,6 +12,7 @@ export type SkillDeployment = {
   path: string;
   enabled: boolean;
   linked: boolean;
+  sync_mode?: SkillSyncMode;
   editable: boolean;
   builtin: boolean;
 };
@@ -24,10 +26,12 @@ export type SkillSourceInfo = {
   revision: string | null;
 };
 
+export type SkillLibraryId = { provider: Provider | 'library'; root: string; name: string };
+
 export type SkillLibraryItem = {
   key: string;
   name: string;
-  primary_id: Id;
+  primary_id: SkillLibraryId;
   path: string;
   exists: boolean;
   editable: boolean;
@@ -51,6 +55,7 @@ export type SkillFilterState = {
   source: SkillSourceFilter;
   ai: SkillAiFilter;
   provider: 'all' | Provider;
+  showBuiltin: boolean;
 };
 
 export type SkillCardBrief = {
@@ -65,6 +70,22 @@ export type SkillGroup = {
 
 export function isSkillAnalyzable(item: SkillLibraryItem): boolean {
   return item.exists && Boolean(item.path);
+}
+
+export function isProviderEnabled(item: SkillLibraryItem, provider: Provider): boolean {
+  return item.deployments.some((d) => d.provider === provider && d.enabled);
+}
+
+export function getProviderSyncMode(item: SkillLibraryItem, provider: Provider): SkillSyncMode | null {
+  const active = item.deployments.find((d) => d.provider === provider && d.enabled);
+  if (!active) return null;
+  if (active.sync_mode === 'link' || active.sync_mode === 'copy') return active.sync_mode;
+  return active.linked ? 'link' : 'copy';
+}
+
+export function isItemEnabledInScope(item: SkillLibraryItem, providerScope: 'all' | Provider): boolean {
+  if (providerScope === 'all') return item.enabled;
+  return isProviderEnabled(item, providerScope);
 }
 
 export function deriveCardBrief(item: SkillLibraryItem): SkillCardBrief {
@@ -116,14 +137,20 @@ export function filterSkillItems(
   const q = filter.query.trim().toLowerCase();
 
   return items.filter((item) => {
-    if (filter.status === 'enabled' && !item.enabled) return false;
-    if (filter.status === 'disabled' && item.enabled) return false;
+    // Builtin skills are hidden by default unless explicitly toggled or filtered
+    if (item.builtin && !filter.showBuiltin && filter.source !== 'builtin') {
+      return false;
+    }
+
+    const enabledInScope = isItemEnabledInScope(item, filter.provider);
+    if (filter.status === 'enabled' && !enabledInScope) return false;
+    if (filter.status === 'disabled' && enabledInScope) return false;
 
     if (filter.source !== 'all' && item.source.source_type !== filter.source) return false;
 
-    if (filter.provider !== 'all') {
-      const hasProvider = item.deployments.some((d) => d.provider === filter.provider);
-      if (!hasProvider) return false;
+    // For builtin items scoped to a specific provider, only show builtins belonging to that provider
+    if (item.builtin && filter.provider !== 'all') {
+      if (!item.deployments.some((d) => d.provider === filter.provider)) return false;
     }
 
     if (filter.ai === 'analyzed' && !item.summary) return false;

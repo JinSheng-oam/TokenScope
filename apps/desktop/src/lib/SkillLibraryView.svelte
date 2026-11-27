@@ -4,18 +4,30 @@
   import { icons } from './icons';
   import { ALL_PROVIDERS } from './providerBadges';
   import type { Id, Provider } from './agentCustomizationEntries';
-  import type { SkillSummary } from './agentSkillSourceTypes';
+  import type { SkillSummary, UpdateInfo } from './agentSkillSourceTypes';
   import {
     filterSkillItems,
     groupSkillItemsBySource,
+    isItemEnabledInScope,
     isSkillAnalyzable,
     type SkillAiFilter,
     type SkillFilterState,
     type SkillLibraryItem,
     type SkillSourceFilter,
     type SkillStatusFilter,
+    type SkillSyncMode,
     type SkillViewMode,
   } from './skillLibraryTypes';
+  import {
+    getSkillSyncOverride,
+    loadSkillSyncPrefs,
+    resolveSkillSyncMode,
+    saveSkillSyncPrefs,
+    setSkillSyncOverride,
+    syncModeLabel,
+    type SkillSyncOverride,
+    type SkillSyncPrefs,
+  } from './skillSyncPrefs';
   import {
     createSkillBatchController,
     emptyBatchProgress,
@@ -26,6 +38,11 @@
     type BatchAnalysisPrefs,
     type BatchProgress,
   } from './skillBatchAnalyzer';
+  import {
+    createSkillBatchUpdater,
+    emptyBatchUpdateProgress,
+    type BatchUpdateProgress,
+  } from './skillBatchUpdater';
   import SkillBatchPanel from './SkillBatchPanel.svelte';
   import SkillCard from './SkillCard.svelte';
   import SkillListRow from './SkillListRow.svelte';
@@ -43,8 +60,8 @@
 
   const providerRoots: Record<Provider, { id: string; label: string }[]> = {
     codex: [
-      { id: 'shared-skills', label: '共享 skills' },
       { id: 'codex-skills', label: 'Codex skills' },
+      { id: 'shared-skills', label: '共享 skills' },
     ],
     claude: [{ id: 'claude-skills', label: 'Claude skills' }],
     antigravity: [{ id: 'antigravity-skills', label: 'Antigravity skills' }],
@@ -74,10 +91,14 @@
     source: 'all',
     ai: 'all',
     provider: 'all',
+    showBuiltin: false,
   };
+
+  let syncPrefs: SkillSyncPrefs = loadSkillSyncPrefs();
 
   let multiSelect = false;
   let selectedKeys = new Set<string>();
+  let bulkTargetProviders = new Set<Provider>(ALL_PROVIDERS.map((p) => p.id));
   let activeItemKey: string | null = null;
   let detailDirty = false;
 
@@ -93,6 +114,9 @@
   let batchPrefs: BatchAnalysisPrefs = loadBatchAnalysisPrefs();
   let batchProgress: BatchProgress = emptyBatchProgress();
 
+  // Batch Update Checker & Updater state
+  let updateProgress: BatchUpdateProgress = emptyBatchUpdateProgress();
+
   const batchController = createSkillBatchController({
     analyze: (item) => invoke<SkillSummary>('generate_skill_summary', { id: item.primary_id }),
     onItemSuccess: (item, summary) => {
@@ -100,6 +124,17 @@
     },
     onChange: (next) => {
       batchProgress = next;
+    },
+  });
+
+  const batchUpdater = createSkillBatchUpdater({
+    checkOne: (item) => invoke<UpdateInfo>('check_skill_update', { id: item.primary_id }),
+    updateOne: (item) => invoke<string>('update_skill_source', { id: item.primary_id }),
+    onChange: (next) => {
+      updateProgress = next;
+    },
+    onFinishedUpdate: async () => {
+      await refresh();
     },
   });
 
@@ -123,21 +158,27 @@
     }
   }
 
-  $: totalCount = items.length;
+  $: userItems = items.filter((i) => !i.builtin);
+  $: builtinCount = items.length - userItems.length;
+  $: totalCount = filter.showBuiltin ? items.length : userItems.length;
   $: dirty = detailDirty;
   $: failedKeySet = new Set(batchProgress.failedList.map((f) => f.key));
   $: filteredItems = filterSkillItems(items, filter, failedKeySet);
   $: groupedItems = grouped ? groupSkillItemsBySource(filteredItems) : [];
   $: activeItem = activeItemKey ? items.find((i) => i.key === activeItemKey) ?? null : null;
-  $: analyzableItems = items.filter(isSkillAnalyzable);
+  $: analyzableItems = (filter.showBuiltin ? items : userItems).filter(isSkillAnalyzable);
   $: unanalyzedCount = analyzableItems.filter((i) => i.summary === null).length;
   $: batchTargetCount = selectBatchTargets(
-    items,
+    filter.showBuiltin ? items : userItems,
     batchMode,
     selectedKeys,
     batchPrefs.skipAnalyzedOnSelected
   ).length;
   $: providerRootOptions = providerRoots[targetProvider].map((r) => ({ key: r.id, label: r.label }));
+  $: activeProviderLabel =
+    filter.provider === 'all'
+      ? ''
+      : ALL_PROVIDERS.find((p) => p.id === filter.provider)?.label ?? filter.provider;
 
   async function refresh() {
     if (!runtimeAvailable) return;
@@ -148,7 +189,6 @@
       if (activeItemKey && !items.some((i) => i.key === activeItemKey)) {
         activeItemKey = null;
       }
-      // Prune stale selections
       const existing = new Set(items.map((i) => i.key));
       const nextSelected = new Set<string>();
       for (const k of selectedKeys) {
@@ -162,15 +202,86 @@
     }
   }
 
-  async function toggleEnabled(item: SkillLibraryItem) {
-    if (busy || item.builtin) return;
-    const nextEnabled = !item.enabled;
+  function setGlobalSyncMode(mode: SkillSyncMode) {
+    syncPrefs = saveSkillSyncPrefs({ ...syncPrefs, defaultMode: mode });
+    notice = `默认同步方式已切换为「${syncModeLabel(mode)}」（后续启用新工具将按此方式同步）。`;
+  }
+
+  async function handleChangeSkillSyncOverride(
+    item: SkillLibraryItem,
+    next: SkillSyncOverride,
+    applyNow: boolean
+  ) {
+    syncPrefs = setSkillSyncOverride(syncPrefs, item.key, next);
+    const effective = resolveSkillSyncMode(syncPrefs, item.key);
+    if (!applyNow || item.builtin) return;
 
     busy = true;
     error = '';
     notice = '';
     try {
-      await invoke('toggle_skill_enabled', { id: item.primary_id, enabled: nextEnabled });
+      const converted = await invoke<number>('apply_skill_sync_mode', {
+        sourceId: item.primary_id,
+        syncMode: effective,
+      });
+      await refresh();
+      notice =
+        converted > 0
+          ? `已将 ${item.name} 的 ${converted} 处已启用部署切换为「${syncModeLabel(effective)}」。`
+          : `已设置 ${item.name} 为「${syncModeLabel(effective)}」。`;
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function toggleProviderEnabled(item: SkillLibraryItem, targetProviderId: Provider, enabled: boolean) {
+    if (busy || item.builtin) return;
+    const syncMode = resolveSkillSyncMode(syncPrefs, item.key);
+    busy = true;
+    error = '';
+    notice = '';
+    try {
+      await invoke('set_skill_provider_enabled', {
+        sourceId: item.primary_id,
+        targetProvider: targetProviderId,
+        enabled,
+        syncMode,
+      });
+      await refresh();
+      const label = ALL_PROVIDERS.find((p) => p.id === targetProviderId)?.label ?? targetProviderId;
+      notice = enabled
+        ? `已在 ${label} 启用 ${item.name}（${syncModeLabel(syncMode)}）`
+        : `已在 ${label} 禁用 ${item.name}`;
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function toggleCardEnabled(item: SkillLibraryItem) {
+    if (busy || item.builtin) return;
+    // When scoped to a specific app, flip that app directly!
+    if (filter.provider !== 'all') {
+      const currentlyOn = isItemEnabledInScope(item, filter.provider);
+      await toggleProviderEnabled(item, filter.provider, !currentlyOn);
+      return;
+    }
+
+    const nextEnabled = !item.enabled;
+    const syncMode = resolveSkillSyncMode(syncPrefs, item.key);
+    busy = true;
+    error = '';
+    notice = '';
+    try {
+      await invoke('set_skill_all_enabled', {
+        sourceId: item.primary_id,
+        enabled: nextEnabled,
+        syncMode,
+        targetProviders: ALL_PROVIDERS.map((p) => p.id),
+      });
       await refresh();
       notice = nextEnabled ? `已启用 ${item.name}` : `已禁用 ${item.name}`;
     } catch (e) {
@@ -180,51 +291,98 @@
     }
   }
 
-  async function toggleProviderEnabled(item: SkillLibraryItem, targetProvider: Provider, enabled: boolean) {
-    if (busy || item.builtin) return;
+  function toggleBulkTargetProvider(p: Provider) {
+    const next = new Set(bulkTargetProviders);
+    if (next.has(p)) next.delete(p);
+    else next.add(p);
+    bulkTargetProviders = next;
+  }
+
+  async function bulkApplyProviders(enable: boolean) {
+    if (busy || selectedKeys.size === 0) return;
+    const targetProviders =
+      filter.provider !== 'all'
+        ? [filter.provider]
+        : Array.from(bulkTargetProviders);
+    if (targetProviders.length === 0) {
+      error = '请至少选择一个目标应用工具。';
+      return;
+    }
+    const targets = items.filter((i) => selectedKeys.has(i.key) && !i.builtin);
+    if (targets.length === 0) return;
+
     busy = true;
     error = '';
     notice = '';
+    let okCount = 0;
+    const errors: string[] = [];
     try {
-      await invoke('set_skill_provider_enabled', {
-        sourceId: item.primary_id,
-        targetProvider,
-        enabled,
-      });
+      for (const item of targets) {
+        const syncMode = resolveSkillSyncMode(syncPrefs, item.key);
+        for (const tp of targetProviders) {
+          try {
+            await invoke('set_skill_provider_enabled', {
+              sourceId: item.primary_id,
+              targetProvider: tp,
+              enabled: enable,
+              syncMode,
+            });
+            okCount += 1;
+          } catch (e) {
+            errors.push(`${item.name}/${tp}: ${String(e)}`);
+          }
+        }
+      }
       await refresh();
-      const label = ALL_PROVIDERS.find((p) => p.id === targetProvider)?.label ?? targetProvider;
-      notice = enabled ? `已在 ${label} 启用 ${item.name}` : `已在 ${label} 禁用 ${item.name}`;
-    } catch (e) {
-      error = String(e);
+      notice = enable
+        ? `已批量启用 ${targets.length} 个技能到 ${targetProviders.length} 个应用（${okCount} 项成功）。`
+        : `已批量在 ${targetProviders.length} 个应用中禁用 ${targets.length} 个技能。`;
+      if (errors.length > 0) {
+        error = `部分操作失败：${errors.slice(0, 2).join('；')}`;
+      }
     } finally {
       busy = false;
     }
   }
 
-  async function bulkToggleEnabled(enable: boolean) {
-    if (busy || selectedKeys.size === 0) return;
-    const targets = items.filter((i) => selectedKeys.has(i.key) && !i.builtin && i.enabled !== enable);
-    if (targets.length === 0) {
-      notice = enable ? '所选技能均已启用。' : '所选技能均已停用。';
-      return;
-    }
-    busy = true;
+  async function handleCheckAllUpdates() {
     error = '';
     notice = '';
-    let changed = 0;
-    try {
-      for (const item of targets) {
-        try {
-          await invoke('toggle_skill_enabled', { id: item.primary_id, enabled: enable });
-          changed += 1;
-        } catch {
-          // continue others
-        }
-      }
-      await refresh();
-      notice = enable ? `已批量启用 ${changed} 个技能。` : `已批量停用 ${changed} 个技能。`;
-    } finally {
-      busy = false;
+    const scope = multiSelect && selectedKeys.size > 0
+      ? userItems.filter((i) => selectedKeys.has(i.key))
+      : userItems;
+    await batchUpdater.checkBatch(scope, 3);
+    if (updateProgress.availableCount > 0) {
+      notice = `检查完成：发现 ${updateProgress.availableCount} 个技能有新版本可更新。`;
+    } else if (updateProgress.errorCount > 0) {
+      notice = `检查完成：暂无可更新项（${updateProgress.errorCount} 项检查出错）。`;
+    } else {
+      notice = '检查完成：所有已纳管技能均已是最新版本。';
+    }
+  }
+
+  async function handleUpdateAllAvailable() {
+    error = '';
+    notice = '';
+    const onlyKeys = multiSelect && selectedKeys.size > 0 ? selectedKeys : undefined;
+    await batchUpdater.updateAvailable(userItems, 2, onlyKeys);
+    if (updateProgress.updatedCount > 0) {
+      notice = `更新完成：已成功更新 ${updateProgress.updatedCount} 个技能。`;
+    }
+    if (updateProgress.errorCount > 0) {
+      error = `有 ${updateProgress.errorCount} 个技能更新失败，请查看详情或重试。`;
+    }
+  }
+
+  async function handleUpdateSingle(item: SkillLibraryItem) {
+    error = '';
+    notice = '';
+    await batchUpdater.updateSingle(item);
+    const st = updateProgress.items[item.key];
+    if (st?.status === 'updated') {
+      notice = `${item.name}：${st.detail}`;
+    } else if (st?.status === 'error') {
+      error = `${item.name} 更新失败：${st.detail}`;
     }
   }
 
@@ -268,7 +426,7 @@
     }
     error = '';
     notice = '';
-    await batchController.start(items, {
+    await batchController.start(filter.showBuiltin ? items : userItems, {
       mode: batchMode,
       selectedKeys,
       skipAnalyzedOnSelected: batchPrefs.skipAnalyzedOnSelected,
@@ -318,6 +476,15 @@
 
   function setProviderFilter(next: 'all' | Provider) {
     filter = { ...filter, provider: filter.provider === next ? 'all' : next };
+  }
+
+  function toggleShowBuiltin() {
+    const next = !filter.showBuiltin;
+    filter = {
+      ...filter,
+      showBuiltin: next,
+      source: !next && filter.source === 'builtin' ? 'all' : filter.source,
+    };
   }
 
   function toggleGroupCollapsed(group: string) {
@@ -380,6 +547,7 @@
 
   onDestroy(() => {
     batchController.stop();
+    batchUpdater.stop();
   });
 </script>
 
@@ -387,13 +555,16 @@
   <SkillDetailView
     item={activeItem}
     batchState={batchProgress.items[activeItem.key]}
+    globalSyncMode={syncPrefs.defaultMode}
+    syncOverride={getSkillSyncOverride(syncPrefs, activeItem.key)}
     {hasAiConfig}
     bind:dirty={detailDirty}
     onClose={() => { activeItemKey = null; detailDirty = false; }}
     onRefreshLibrary={refresh}
     onAnalyzeSingle={(target) => void analyzeSingleItem(target)}
-    onToggleEnabled={toggleEnabled}
+    onToggleEnabled={toggleCardEnabled}
     onToggleProvider={toggleProviderEnabled}
+    onChangeSyncOverride={handleChangeSkillSyncOverride}
     {onOpenAiConfig}
   />
 {:else if panelMode !== 'none'}
@@ -484,7 +655,7 @@
             class:active={filter.status === 'enabled'}
             onclick={() => setStatusFilter('enabled')}
           >
-            已启用
+            {activeProviderLabel ? `${activeProviderLabel} 已启用` : '已启用'}
           </button>
           <button
             type="button"
@@ -492,12 +663,42 @@
             class:active={filter.status === 'disabled'}
             onclick={() => setStatusFilter('disabled')}
           >
-            未启用
+            {activeProviderLabel ? `${activeProviderLabel} 未启用` : '未启用'}
           </button>
         </div>
       </div>
 
       <div class="toolbar-right">
+        <button
+          type="button"
+          class="toolbar-btn"
+          disabled={updateProgress.phase !== 'idle' || userItems.length === 0}
+          onclick={() => void handleCheckAllUpdates()}
+          title="批量检查所有技能是否有远程更新"
+        >
+          <span class="btn-svg" class:spin={updateProgress.phase === 'checking'} aria-hidden="true">{@html icons.refresh}</span>
+          <span>
+            {updateProgress.phase === 'checking'
+              ? `检查中 ${updateProgress.completed}/${updateProgress.total}`
+              : '检查全部'}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          class="toolbar-btn update-all-btn"
+          class:has-updates={updateProgress.availableCount > 0}
+          disabled={updateProgress.phase !== 'idle' || updateProgress.availableCount === 0}
+          onclick={() => void handleUpdateAllAvailable()}
+          title="批量更新所有检测到新版本的技能"
+        >
+          <span>
+            {updateProgress.phase === 'updating'
+              ? `更新中 ${updateProgress.completed}/${updateProgress.total}`
+              : `全部更新 (${updateProgress.availableCount})`}
+          </span>
+        </button>
+
         <button
           type="button"
           class="toolbar-btn ai-batch-btn"
@@ -529,17 +730,6 @@
         <button type="button" class="toolbar-btn" disabled={busy} onclick={openImportSkill}>
           <span class="btn-svg" aria-hidden="true">{@html icons.arrowDown}</span>
           <span>导入</span>
-        </button>
-
-        <button
-          type="button"
-          class="toolbar-icon-btn"
-          disabled={loading}
-          onclick={() => void refresh()}
-          title="刷新技能库"
-          aria-label="刷新技能库"
-        >
-          <span class="btn-svg" class:spin={loading}>{@html icons.refresh}</span>
         </button>
 
         <div class="view-switcher" role="group" aria-label="视图布局">
@@ -591,7 +781,7 @@
       </div>
     </div>
 
-    <!-- Toolbar Row 2: Source, AI status & Provider Filter Chips -->
+    <!-- Toolbar Row 2: Source, AI status, Global Sync Mode & App Scope Selector -->
     <div class="filter-chips-row">
       <div class="chips-group">
         {#each [
@@ -599,7 +789,6 @@
           { id: 'import', label: '导入' },
           { id: 'git', label: 'Git' },
           { id: 'skills.sh', label: 'skills.sh' },
-          { id: 'builtin', label: '内置' },
         ] as chip (chip.id)}
           <button
             type="button"
@@ -615,7 +804,7 @@
 
         <button
           type="button"
-          class="filter-chip ai-chip"
+          class="filter-chip"
           class:active={filter.ai === 'analyzed'}
           onclick={() => toggleAiFilter('analyzed')}
         >
@@ -623,7 +812,7 @@
         </button>
         <button
           type="button"
-          class="filter-chip ai-chip"
+          class="filter-chip"
           class:active={filter.ai === 'unanalyzed'}
           onclick={() => toggleAiFilter('unanalyzed')}
         >
@@ -639,24 +828,78 @@
             分析失败 ({batchProgress.failed})
           </button>
         {/if}
+
+        {#if builtinCount > 0}
+          <span class="chips-divider"></span>
+          <button
+            type="button"
+            class="filter-chip"
+            class:active={filter.showBuiltin}
+            title="默认隐藏各工具自带的内置技能，点击可展开查看"
+            onclick={toggleShowBuiltin}
+          >
+            显示内置 ({builtinCount})
+          </button>
+        {/if}
       </div>
 
-      <div class="chips-group provider-filters">
-        {#each ALL_PROVIDERS as p (p.id)}
+      <div class="chips-group right-controls">
+        <div class="global-sync-toggle" title="设置启用技能时的默认同步方式（也可在详情页为单个技能单独设置）">
+          <span class="sync-label">默认同步</span>
+          <button
+            type="button"
+            class="sync-opt"
+            class:active={syncPrefs.defaultMode === 'link'}
+            onclick={() => setGlobalSyncMode('link')}
+          >
+            静态链接
+          </button>
+          <button
+            type="button"
+            class="sync-opt"
+            class:active={syncPrefs.defaultMode === 'copy'}
+            onclick={() => setGlobalSyncMode('copy')}
+          >
+            文件复制
+          </button>
+        </div>
+
+        <span class="chips-divider"></span>
+
+        <div class="app-scope-group" role="group" aria-label="按应用单独管理启停">
           <button
             type="button"
             class="provider-filter-chip"
-            class:active={filter.provider === p.id}
-            style={`--p-color: ${p.color}; --p-bg: ${p.bg}`}
-            title={`仅显示 ${p.label} 中的技能`}
-            onclick={() => setProviderFilter(p.id)}
+            class:active={filter.provider === 'all'}
+            onclick={() => (filter = { ...filter, provider: 'all' })}
           >
-            <span class="pf-icon">{@html p.icon}</span>
-            <span>{p.shortLabel}</span>
+            全部应用
           </button>
-        {/each}
+          {#each ALL_PROVIDERS as p (p.id)}
+            <button
+              type="button"
+              class="provider-filter-chip"
+              class:active={filter.provider === p.id}
+              style={`--p-color: ${p.color}; --p-bg: ${p.bg}`}
+              title={`切换到 ${p.label} 视图：卡片开关直接控制该应用的启停`}
+              onclick={() => setProviderFilter(p.id)}
+            >
+              <span class="pf-icon">{@html p.icon}</span>
+              <span>{p.shortLabel}</span>
+            </button>
+          {/each}
+        </div>
       </div>
     </div>
+
+    {#if filter.provider !== 'all'}
+      <div class="scope-hint-bar">
+        <span>当前按 <strong>{activeProviderLabel}</strong> 管理：卡片右侧开关直接控制该应用的启用 / 禁用（也可随时点击卡片底部任意工具图标单独切换）。</span>
+        <button type="button" class="scope-clear-btn" onclick={() => (filter = { ...filter, provider: 'all' })}>
+          返回全部应用
+        </button>
+      </div>
+    {/if}
 
     {#if multiSelect}
       <div class="bulk-bar">
@@ -668,30 +911,56 @@
             <button type="button" class="bulk-link" onclick={() => (selectedKeys = new Set())}>清空</button>
           {/if}
         </div>
+
         <div class="bulk-actions">
+          {#if filter.provider === 'all'}
+            <div class="bulk-app-picker" title="选择批量启用或禁用的目标应用">
+              {#each ALL_PROVIDERS as p (p.id)}
+                <button
+                  type="button"
+                  class="bulk-app-chip"
+                  class:active={bulkTargetProviders.has(p.id)}
+                  style={`--p-color: ${p.color}; --p-bg: ${p.bg}`}
+                  onclick={() => toggleBulkTargetProvider(p.id)}
+                >
+                  <span class="pf-icon">{@html p.icon}</span>
+                  <span>{p.shortLabel}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+
+          <button
+            type="button"
+            class="btn-secondary btn-xs"
+            disabled={selectedKeys.size === 0 || busy}
+            onclick={() => void bulkApplyProviders(true)}
+          >
+            {activeProviderLabel ? `启用到 ${activeProviderLabel}` : '批量启用'}
+          </button>
+          <button
+            type="button"
+            class="btn-secondary btn-xs"
+            disabled={selectedKeys.size === 0 || busy}
+            onclick={() => void bulkApplyProviders(false)}
+          >
+            {activeProviderLabel ? `在 ${activeProviderLabel} 禁用` : '批量禁用'}
+          </button>
+          <button
+            type="button"
+            class="btn-secondary btn-xs"
+            disabled={selectedKeys.size === 0 || updateProgress.phase !== 'idle'}
+            onclick={() => void handleCheckAllUpdates()}
+          >
+            检查更新
+          </button>
           <button
             type="button"
             class="btn-primary btn-xs"
             disabled={selectedKeys.size === 0 || batchProgress.running}
             onclick={() => openBatchAnalysis('selected')}
           >
-            批量 AI 分析已选
-          </button>
-          <button
-            type="button"
-            class="btn-secondary btn-xs"
-            disabled={selectedKeys.size === 0 || busy}
-            onclick={() => void bulkToggleEnabled(true)}
-          >
-            批量启用
-          </button>
-          <button
-            type="button"
-            class="btn-secondary btn-xs"
-            disabled={selectedKeys.size === 0 || busy}
-            onclick={() => void bulkToggleEnabled(false)}
-          >
-            批量停用
+            批量 AI 分析
           </button>
           <button type="button" class="btn-secondary btn-xs" onclick={exitMultiSelect}>退出多选</button>
         </div>
@@ -761,14 +1030,20 @@
                   {#each grp.items as item (item.key)}
                     <SkillCard
                       {item}
+                      providerScope={filter.provider}
+                      effectiveSyncMode={resolveSkillSyncMode(syncPrefs, item.key)}
+                      hasCustomSyncMode={getSkillSyncOverride(syncPrefs, item.key) !== 'inherit'}
                       batchState={batchProgress.items[item.key]}
+                      updateState={updateProgress.items[item.key]}
                       {multiSelect}
                       selected={selectedKeys.has(item.key)}
                       {busy}
                       onOpen={(target) => { activeItemKey = target.key; }}
-                      onToggleEnabled={(target) => void toggleEnabled(target)}
+                      onToggleEnabled={(target) => void toggleCardEnabled(target)}
+                      onToggleProvider={(target, p, nextOn) => void toggleProviderEnabled(target, p, nextOn)}
                       onToggleSelect={toggleSelectKey}
                       onAnalyzeSingle={(target) => void analyzeSingleItem(target)}
+                      onUpdateSingle={(target) => void handleUpdateSingle(target)}
                     />
                   {/each}
                 </div>
@@ -777,14 +1052,19 @@
                   {#each grp.items as item (item.key)}
                     <SkillListRow
                       {item}
+                      providerScope={filter.provider}
+                      effectiveSyncMode={resolveSkillSyncMode(syncPrefs, item.key)}
                       batchState={batchProgress.items[item.key]}
+                      updateState={updateProgress.items[item.key]}
                       {multiSelect}
                       selected={selectedKeys.has(item.key)}
                       {busy}
                       onOpen={(target) => { activeItemKey = target.key; }}
-                      onToggleEnabled={(target) => void toggleEnabled(target)}
+                      onToggleEnabled={(target) => void toggleCardEnabled(target)}
+                      onToggleProvider={(target, p, nextOn) => void toggleProviderEnabled(target, p, nextOn)}
                       onToggleSelect={toggleSelectKey}
                       onAnalyzeSingle={(target) => void analyzeSingleItem(target)}
+                      onUpdateSingle={(target) => void handleUpdateSingle(target)}
                     />
                   {/each}
                 </div>
@@ -798,14 +1078,20 @@
         {#each filteredItems as item (item.key)}
           <SkillCard
             {item}
+            providerScope={filter.provider}
+            effectiveSyncMode={resolveSkillSyncMode(syncPrefs, item.key)}
+            hasCustomSyncMode={getSkillSyncOverride(syncPrefs, item.key) !== 'inherit'}
             batchState={batchProgress.items[item.key]}
+            updateState={updateProgress.items[item.key]}
             {multiSelect}
             selected={selectedKeys.has(item.key)}
             {busy}
             onOpen={(target) => { activeItemKey = target.key; }}
-            onToggleEnabled={(target) => void toggleEnabled(target)}
+            onToggleEnabled={(target) => void toggleCardEnabled(target)}
+            onToggleProvider={(target, p, nextOn) => void toggleProviderEnabled(target, p, nextOn)}
             onToggleSelect={toggleSelectKey}
             onAnalyzeSingle={(target) => void analyzeSingleItem(target)}
+            onUpdateSingle={(target) => void handleUpdateSingle(target)}
           />
         {/each}
       </div>
@@ -814,14 +1100,19 @@
         {#each filteredItems as item (item.key)}
           <SkillListRow
             {item}
+            providerScope={filter.provider}
+            effectiveSyncMode={resolveSkillSyncMode(syncPrefs, item.key)}
             batchState={batchProgress.items[item.key]}
+            updateState={updateProgress.items[item.key]}
             {multiSelect}
             selected={selectedKeys.has(item.key)}
             {busy}
             onOpen={(target) => { activeItemKey = target.key; }}
-            onToggleEnabled={(target) => void toggleEnabled(target)}
+            onToggleEnabled={(target) => void toggleCardEnabled(target)}
+            onToggleProvider={(target, p, nextOn) => void toggleProviderEnabled(target, p, nextOn)}
             onToggleSelect={toggleSelectKey}
             onAnalyzeSingle={(target) => void analyzeSingleItem(target)}
+            onUpdateSingle={(target) => void handleUpdateSingle(target)}
           />
         {/each}
       </div>
@@ -841,7 +1132,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
+    gap: 8px;
     flex-wrap: wrap;
   }
 
@@ -849,13 +1140,13 @@
   .toolbar-right {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 7px;
     flex-wrap: wrap;
   }
 
   .search-box {
     position: relative;
-    width: clamp(190px, 24vw, 270px);
+    width: clamp(180px, 22vw, 250px);
   }
 
   .search-input {
@@ -929,15 +1220,16 @@
 
   .seg-btn {
     height: 26px;
-    padding: 0 10px;
+    padding: 0 9px;
     border: none;
     border-radius: var(--radius-xs);
     background: transparent;
     color: var(--text-secondary);
     font: inherit;
-    font-size: 12px;
+    font-size: 11.5px;
     font-weight: 500;
     cursor: pointer;
+    white-space: nowrap;
     transition: all var(--transition-fast);
   }
 
@@ -956,13 +1248,13 @@
     align-items: center;
     gap: 5px;
     height: 32px;
-    padding: 0 10px;
+    padding: 0 9px;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     background: var(--bg-card);
     color: var(--text-secondary);
     font: inherit;
-    font-size: 12px;
+    font-size: 11.5px;
     font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
@@ -975,10 +1267,22 @@
     background: var(--bg-card-hover);
   }
 
+  .toolbar-btn:disabled {
+    opacity: 0.52;
+    cursor: not-allowed;
+  }
+
   .toolbar-btn.active {
     color: var(--brand-text);
     background: var(--brand-subtle);
     border-color: var(--brand-border);
+  }
+
+  .update-all-btn.has-updates {
+    color: var(--color-exact);
+    background: var(--color-exact-bg);
+    border-color: var(--color-exact-border);
+    font-weight: 600;
   }
 
   .ai-batch-btn {
@@ -994,7 +1298,7 @@
 
   .count-pill {
     padding: 0 5px;
-    min-width: 18px;
+    min-width: 17px;
     height: 16px;
     border-radius: 999px;
     display: inline-flex;
@@ -1005,26 +1309,6 @@
     font-size: 10px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
-  }
-
-  .toolbar-icon-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    padding: 0;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    background: var(--bg-card);
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .toolbar-icon-btn:hover:not(:disabled) {
-    color: var(--text-primary);
-    border-color: var(--border-default);
   }
 
   .btn-svg {
@@ -1074,11 +1358,12 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px 14px;
+    gap: 8px 12px;
     flex-wrap: wrap;
   }
 
-  .chips-group {
+  .chips-group,
+  .app-scope-group {
     display: flex;
     align-items: center;
     gap: 5px;
@@ -1089,7 +1374,7 @@
     width: 1px;
     height: 14px;
     background: var(--border-subtle);
-    margin: 0 3px;
+    margin: 0 2px;
   }
 
   .filter-chip {
@@ -1124,12 +1409,47 @@
     background: var(--color-danger-bg);
   }
 
-  .provider-filter-chip {
+  .global-sync-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 3px 2px 8px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    background: var(--bg-card);
+  }
+
+  .sync-label {
+    font-size: 10.5px;
+    color: var(--text-muted);
+    margin-right: 3px;
+  }
+
+  .sync-opt {
+    height: 20px;
+    padding: 0 7px;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 10.5px;
+    cursor: pointer;
+  }
+
+  .sync-opt.active {
+    background: var(--brand-subtle);
+    color: var(--brand-text);
+    font-weight: 600;
+  }
+
+  .provider-filter-chip,
+  .bulk-app-chip {
     display: inline-flex;
     align-items: center;
     gap: 4px;
     height: 24px;
-    padding: 0 8px 0 6px;
+    padding: 0 8px;
     border: 1px solid var(--border-subtle);
     border-radius: 999px;
     background: var(--bg-card);
@@ -1140,14 +1460,16 @@
     transition: all var(--transition-fast);
   }
 
-  .provider-filter-chip:hover {
+  .provider-filter-chip:hover,
+  .bulk-app-chip:hover {
     border-color: var(--border-default);
     color: var(--text-primary);
   }
 
-  .provider-filter-chip.active {
-    border-color: var(--p-color);
-    background: var(--p-bg);
+  .provider-filter-chip.active,
+  .bulk-app-chip.active {
+    border-color: var(--p-color, var(--brand-border));
+    background: var(--p-bg, var(--brand-subtle));
     color: var(--text-primary);
     font-weight: 600;
   }
@@ -1157,6 +1479,34 @@
     width: 12px;
     height: 12px;
     color: var(--p-color);
+  }
+
+  .scope-hint-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 12px;
+    border: 1px solid var(--brand-border);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--brand-subtle) 50%, var(--bg-card));
+    font-size: 11.5px;
+    color: var(--text-secondary);
+  }
+
+  .scope-hint-bar strong {
+    color: var(--brand-strong);
+  }
+
+  .scope-clear-btn {
+    border: none;
+    background: transparent;
+    color: var(--brand-text);
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
   }
 
   .bulk-bar {
@@ -1173,10 +1523,11 @@
   }
 
   .bulk-left,
-  .bulk-actions {
+  .bulk-actions,
+  .bulk-app-picker {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     flex-wrap: wrap;
   }
 

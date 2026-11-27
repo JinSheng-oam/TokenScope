@@ -3,12 +3,13 @@ import {
   deriveCardBrief,
   filterSkillItems,
   groupSkillItemsBySource,
+  isProviderEnabled,
   type SkillLibraryItem,
 } from './skillLibraryTypes';
 
 function makeItem(overrides: Partial<SkillLibraryItem> = {}): SkillLibraryItem {
   return {
-    key: 'c:/skills/demo',
+    key: 'skill:demo-skill',
     name: 'demo-skill',
     primary_id: { provider: 'codex', root: 'codex-skills', name: 'demo-skill' },
     path: 'C:\\skills\\demo\\SKILL.md',
@@ -35,6 +36,7 @@ function makeItem(overrides: Partial<SkillLibraryItem> = {}): SkillLibraryItem {
         path: 'C:\\skills\\demo\\SKILL.md',
         enabled: true,
         linked: false,
+        sync_mode: 'copy',
         editable: true,
         builtin: false,
       },
@@ -83,67 +85,76 @@ describe('skillLibraryTypes', () => {
     });
   });
 
-  it('filters by status, source, ai analysis state, provider, and search query', () => {
-    const analyzed = makeItem({
+  it('hides builtin skills by default and evaluates enabled status per selected provider scope', () => {
+    const userSkill = makeItem({
       key: 'k1',
       name: 'codebase-design',
       enabled: true,
-      source: {
-        source_type: 'skills.sh',
-        source_group: 'mattpcock/skills',
-        source_ref: 'mattpcock/skills/codebase-design',
-        resolved_url: 'https://github.com/mattpcock/skills.git',
-        subpath: null,
-        revision: null,
-      },
-      summary: {
-        skill_name: 'codebase-design',
-        brief: '深模块设计评审词汇表',
-        overview: '详细定位',
-        usage_guide: '',
-        raw_response: '',
-        model: 'gpt-4o-mini',
-        updated_at_ms: 1,
-      },
-    });
-    const unanalyzedDisabled = makeItem({
-      key: 'k2',
-      name: 'tdd',
-      enabled: false,
-      summary: null,
       deployments: [
         {
-          id: { provider: 'claude', root: 'claude-skills', name: 'tdd' },
-          provider: 'claude',
-          root: 'claude-skills',
-          path: 'C:\\skills\\tdd\\SKILL.md',
-          enabled: false,
-          linked: false,
+          id: { provider: 'codex', root: 'codex-skills', name: 'codebase-design' },
+          provider: 'codex',
+          root: 'codex-skills',
+          path: 'C:\\codex\\codebase-design\\SKILL.md',
+          enabled: true,
+          linked: true,
+          sync_mode: 'link',
           editable: true,
           builtin: false,
         },
       ],
     });
+    const builtinSkill = makeItem({
+      key: 'k-builtin',
+      name: 'system-helper',
+      builtin: true,
+      source: {
+        source_type: 'builtin',
+        source_group: '内置技能',
+        source_ref: null,
+        resolved_url: null,
+        subpath: null,
+        revision: null,
+      },
+    });
 
+    // Hidden by default
     expect(
-      filterSkillItems([analyzed, unanalyzedDisabled], {
-        query: '深模块',
-        status: 'enabled',
-        source: 'skills.sh',
-        ai: 'analyzed',
-        provider: 'codex',
-      }).map((x) => x.key)
-    ).toEqual(['k1']);
-
-    expect(
-      filterSkillItems([analyzed, unanalyzedDisabled], {
+      filterSkillItems([userSkill, builtinSkill], {
         query: '',
         status: 'all',
         source: 'all',
-        ai: 'unanalyzed',
-        provider: 'claude',
+        ai: 'all',
+        provider: 'all',
+        showBuiltin: false,
       }).map((x) => x.key)
-    ).toEqual(['k2']);
+    ).toEqual(['k1']);
+
+    // Shown when showBuiltin is true
+    expect(
+      filterSkillItems([userSkill, builtinSkill], {
+        query: '',
+        status: 'all',
+        source: 'all',
+        ai: 'all',
+        provider: 'all',
+        showBuiltin: true,
+      }).map((x) => x.key)
+    ).toEqual(['k1', 'k-builtin']);
+
+    // Provider-scoped status: k1 is enabled in codex, disabled in claude
+    expect(isProviderEnabled(userSkill, 'codex')).toBe(true);
+    expect(isProviderEnabled(userSkill, 'claude')).toBe(false);
+    expect(
+      filterSkillItems([userSkill], {
+        query: '',
+        status: 'disabled',
+        source: 'all',
+        ai: 'all',
+        provider: 'claude',
+        showBuiltin: false,
+      }).map((x) => x.key)
+    ).toEqual(['k1']);
   });
 
   it('groups by source with named repositories first and uncategorized/builtin last', () => {

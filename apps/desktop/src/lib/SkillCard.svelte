@@ -1,36 +1,50 @@
 <script lang="ts">
   import { icons } from './icons';
   import { ALL_PROVIDERS } from './providerBadges';
+  import type { Provider } from './agentCustomizationEntries';
   import {
     deriveCardBrief,
+    getProviderSyncMode,
+    isItemEnabledInScope,
+    isProviderEnabled,
     isSkillAnalyzable,
     sourceTypeLabel,
     type SkillLibraryItem,
+    type SkillSyncMode,
   } from './skillLibraryTypes';
+  import { syncModeLabel } from './skillSyncPrefs';
   import type { BatchItemState } from './skillBatchAnalyzer';
+  import type { SkillUpdateItemState } from './skillBatchUpdater';
 
   export let item: SkillLibraryItem;
+  export let providerScope: 'all' | Provider = 'all';
+  export let effectiveSyncMode: SkillSyncMode = 'link';
+  export let hasCustomSyncMode = false;
   export let batchState: BatchItemState | undefined = undefined;
+  export let updateState: SkillUpdateItemState | undefined = undefined;
   export let multiSelect = false;
   export let selected = false;
   export let busy = false;
   export let onOpen: (item: SkillLibraryItem) => void = () => {};
   export let onToggleEnabled: (item: SkillLibraryItem) => void = () => {};
+  export let onToggleProvider: (item: SkillLibraryItem, provider: Provider, enabled: boolean) => void = () => {};
   export let onToggleSelect: (key: string) => void = () => {};
   export let onAnalyzeSingle: (item: SkillLibraryItem) => void = () => {};
+  export let onUpdateSingle: (item: SkillLibraryItem) => void = () => {};
 
   $: brief = deriveCardBrief(item);
   $: analyzable = isSkillAnalyzable(item);
+  $: scopeEnabled = isItemEnabledInScope(item, providerScope);
   $: isRunning = batchState?.status === 'running' || batchState?.status === 'retrying';
   $: isQueued = batchState?.status === 'queued';
   $: isFailed = batchState?.status === 'failed';
-  $: deploymentMap = new Map(item.deployments.map((d) => [d.provider, d]));
+  $: hasUpdate = updateState?.status === 'available';
+  $: isUpdating = updateState?.status === 'updating';
+  $: isCheckingUpdate = updateState?.status === 'checking';
   $: groupTag =
     item.source.source_group && item.source.source_group !== '未分类' && item.source.source_group !== '内置技能'
       ? item.source.source_group
-      : item.linked
-        ? '软链接'
-        : 'Default';
+      : 'Default';
 
   function handleCardClick() {
     if (multiSelect) {
@@ -44,8 +58,8 @@
 <div
   class="skill-card"
   class:is-selected={multiSelect && selected}
-  class:is-disabled={!item.enabled}
-  class:is-analyzing={isRunning}
+  class:is-disabled={!scopeEnabled}
+  class:is-analyzing={isRunning || isUpdating}
   class:is-failed={isFailed}
   role="button"
   tabindex="0"
@@ -59,8 +73,26 @@
 >
   <div class="card-head">
     <div class="card-title-wrap">
-      <span class="status-dot" class:enabled={item.enabled}></span>
+      <span class="status-dot" class:enabled={scopeEnabled}></span>
       <strong class="card-name" title={item.name}>{item.name}</strong>
+      {#if hasUpdate}
+        <button
+          type="button"
+          class="update-badge-btn"
+          title={`${updateState?.detail ?? '检测到更新'}（点击立即更新）`}
+          disabled={isUpdating || busy}
+          onclick={(e) => {
+            e.stopPropagation();
+            onUpdateSingle(item);
+          }}
+        >
+          可更新
+        </button>
+      {:else if isUpdating}
+        <span class="update-state-tag">更新中…</span>
+      {:else if isCheckingUpdate}
+        <span class="update-state-tag">检查中…</span>
+      {/if}
     </div>
 
     <div class="card-head-right">
@@ -99,8 +131,15 @@
           type="button"
           class="skill-switch"
           role="switch"
-          aria-checked={item.enabled}
-          aria-label={item.enabled ? `停用 ${item.name}` : `启用 ${item.name}`}
+          aria-checked={scopeEnabled}
+          aria-label={scopeEnabled ? `禁用 ${item.name}` : `启用 ${item.name}`}
+          title={providerScope === 'all'
+            ? scopeEnabled
+              ? '在所有工具中禁用此技能'
+              : '启用此技能'
+            : scopeEnabled
+              ? `在当前工具中禁用 ${item.name}`
+              : `在当前工具中启用 ${item.name}（${syncModeLabel(effectiveSyncMode)}）`}
           disabled={busy}
           onclick={(e) => {
             e.stopPropagation();
@@ -158,23 +197,40 @@
       <span class="source-pill">{sourceTypeLabel(item.source.source_type)}</span>
       <span class="source-dot">·</span>
       <span class="source-group" title={groupTag}>{groupTag}</span>
+      {#if hasCustomSyncMode}
+        <span class="sync-badge" title={`独立同步设置：${syncModeLabel(effectiveSyncMode)}`}>
+          {effectiveSyncMode === 'copy' ? '复制' : '链接'}
+        </span>
+      {/if}
       {#if !item.summary && analyzable && !isRunning && !isQueued && !isFailed}
         <span class="unanalyzed-dot" title="尚未进行 AI 分析">未分析</span>
       {/if}
     </div>
 
-    <div class="provider-strip" aria-label="工具启用状态">
+    <div class="provider-strip" aria-label="快速切换各工具启用状态">
       {#each ALL_PROVIDERS as p (p.id)}
-        {@const dep = deploymentMap.get(p.id)}
-        {@const isOn = Boolean(dep?.enabled)}
-        <span
+        {@const isOn = isProviderEnabled(item, p.id)}
+        {@const pMode = getProviderSyncMode(item, p.id)}
+        <button
+          type="button"
           class="provider-chip"
           class:inactive={!isOn}
+          class:focused={providerScope === p.id}
           style={`--p-color: ${p.color}; --p-bg: ${p.bg}`}
-          title={`${p.label}：${isOn ? '已启用' : '已禁用'}`}
+          disabled={item.builtin || busy}
+          aria-pressed={isOn}
+          title={item.builtin
+            ? `${p.label}（内置）`
+            : isOn
+              ? `${p.label}：已启用（${pMode === 'copy' ? '复制' : '链接'}）· 点击禁用`
+              : `${p.label}：已禁用 · 点击启用（${syncModeLabel(effectiveSyncMode)}）`}
+          onclick={(e) => {
+            e.stopPropagation();
+            if (!item.builtin) onToggleProvider(item, p.id, !isOn);
+          }}
         >
           {@html p.icon}
-        </span>
+        </button>
       {/each}
     </div>
   </div>
@@ -193,7 +249,7 @@
     background: var(--bg-card);
     cursor: pointer;
     overflow: hidden;
-    transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
     min-height: 124px;
   }
 
@@ -213,7 +269,7 @@
   }
 
   .skill-card.is-disabled {
-    opacity: 0.78;
+    opacity: 0.82;
   }
 
   .skill-card.is-failed {
@@ -256,7 +312,7 @@
   .card-title-wrap {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: 6px;
     min-width: 0;
     flex: 1;
   }
@@ -281,6 +337,33 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     line-height: 1.3;
+  }
+
+  .update-badge-btn {
+    height: 18px;
+    padding: 0 6px;
+    border: 1px solid var(--color-exact-border);
+    border-radius: 999px;
+    background: var(--color-exact-bg);
+    color: var(--color-exact);
+    font: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .update-badge-btn:hover:not(:disabled) {
+    background: var(--color-exact);
+    color: #fff;
+  }
+
+  .update-state-tag {
+    font-size: 10px;
+    color: var(--brand-strong);
+    white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .card-head-right {
@@ -532,6 +615,17 @@
     white-space: nowrap;
   }
 
+  .sync-badge {
+    padding: 0 5px;
+    border-radius: 4px;
+    background: var(--brand-subtle);
+    color: var(--brand-text);
+    font-size: 9.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
   .unanalyzed-dot {
     padding: 0 5px;
     border-radius: 999px;
@@ -553,16 +647,35 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 19px;
-    height: 19px;
+    width: 21px;
+    height: 21px;
     padding: 3px;
+    border: 1px solid transparent;
     border-radius: 5px;
     color: var(--p-color);
     background: var(--p-bg);
+    cursor: pointer;
+    transition: transform 120ms ease, opacity 120ms ease, border-color 120ms ease, filter 120ms ease;
+  }
+
+  .provider-chip:hover:not(:disabled) {
+    transform: translateY(-1px);
+    border-color: var(--p-color);
+    opacity: 1;
+    filter: none;
   }
 
   .provider-chip.inactive {
-    opacity: 0.35;
+    opacity: 0.28;
     filter: grayscale(1);
+    background: var(--bg-secondary);
+  }
+
+  .provider-chip.focused {
+    border-color: var(--p-color);
+  }
+
+  .provider-chip:disabled {
+    cursor: default;
   }
 </style>

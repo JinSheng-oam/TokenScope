@@ -31,35 +31,73 @@ pub(super) fn check(id: &CustomizationId) -> Result<UpdateInfo, String> {
     }
     let (_, path) = resolve(id)?;
     let dir = path.parent().ok_or("无效路径")?;
-    let Some(meta) = read_meta(dir)? else {
+    if let Some(meta) = read_meta(dir)? {
+        let changed = snapshot(dir)? != meta.files;
+        let (_tmp, _repo, latest) = clone_source(&meta.source)?;
         return Ok(UpdateInfo {
-            kind: "unknown".into(),
-            source: None,
-            status: "unsupported".into(),
-            detail: "没有可验证的来源记录，无法自动更新".into(),
+            kind: "independent".into(),
+            source: Some(meta.source.url),
+            status: if changed {
+                "local_changes"
+            } else if latest == meta.revision {
+                "current"
+            } else {
+                "available"
+            }
+            .into(),
+            detail: if changed {
+                "本地文件已修改，更新已锁定"
+            } else if latest == meta.revision {
+                "当前已是最新版本"
+            } else {
+                "检测到仓库更新"
+            }
+            .into(),
         });
-    };
-    let changed = snapshot(dir)? != meta.files;
-    let (_tmp, _repo, latest) = clone_source(&meta.source)?;
-    Ok(UpdateInfo {
-        kind: "independent".into(),
-        source: Some(meta.source.url),
-        status: if changed {
+    }
+    if dir.join(".git").exists() {
+        let dirty = !git(&["status", "--porcelain"], Some(dir))
+            .unwrap_or_default()
+            .trim()
+            .is_empty();
+        let origin = git(&["config", "--get", "remote.origin.url"], Some(dir))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let local_rev = git(&["rev-parse", "HEAD"], Some(dir))
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        let remote_rev = git(&["ls-remote", "origin", "HEAD"], Some(dir))
+            .ok()
+            .and_then(|out| out.split_whitespace().next().map(str::to_owned))
+            .unwrap_or_default();
+        let status = if dirty {
             "local_changes"
-        } else if latest == meta.revision {
+        } else if !local_rev.is_empty() && !remote_rev.is_empty() && local_rev == remote_rev {
             "current"
-        } else {
+        } else if !remote_rev.is_empty() {
             "available"
-        }
-        .into(),
-        detail: if changed {
-            "本地文件已修改，更新已锁定"
-        } else if latest == meta.revision {
-            "当前已是最新版本"
         } else {
-            "检测到仓库更新"
-        }
-        .into(),
+            "unknown"
+        };
+        let detail = match status {
+            "local_changes" => "本地 Git 工作区有未提交修改，更新已锁定",
+            "current" => "当前已是最新版本",
+            "available" => "检测到 Git 远程仓库更新",
+            _ => "无法获取 Git 远程版本信息",
+        };
+        return Ok(UpdateInfo {
+            kind: "git".into(),
+            source: origin,
+            status: status.into(),
+            detail: detail.into(),
+        });
+    }
+    Ok(UpdateInfo {
+        kind: "unknown".into(),
+        source: None,
+        status: "unsupported".into(),
+        detail: "没有可验证的来源记录，无法自动更新".into(),
     })
 }
 pub(super) fn update(id: &CustomizationId) -> Result<String, String> {
@@ -79,6 +117,19 @@ pub(super) fn update(id: &CustomizationId) -> Result<String, String> {
         } else {
             "Skills Manager 未应用更新，请检查来源或稍后重试".into()
         });
+    }
+    let (_, resolved_path) = resolve(id)?;
+    let resolved_dir = resolved_path.parent().ok_or("无效路径")?.to_path_buf();
+    if read_meta(&resolved_dir)?.is_none() && resolved_dir.join(".git").exists() {
+        let dirty = !git(&["status", "--porcelain"], Some(&resolved_dir))
+            .unwrap_or_default()
+            .trim()
+            .is_empty();
+        if dirty {
+            return Err("本地 Git 工作区有修改，请先提交或还原后再更新".into());
+        }
+        git(&["pull", "--ff-only"], Some(&resolved_dir))?;
+        return Ok("Git 仓库已更新至最新版本".into());
     }
     let target = root.join(&id.name);
     if fs::symlink_metadata(&target)

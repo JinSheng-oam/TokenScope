@@ -123,6 +123,10 @@ pub(crate) fn roots(provider: &str) -> Result<Vec<Root>, String> {
             }
             result
         }
+        "library" => vec![
+            skill("tokenscope-skills", h.join(".tokenscope/skills")),
+            skill("skills-manager-central", h.join(".skills-manager/skills")),
+        ],
         _ => return Err("不支持的工具".into()),
     })
 }
@@ -194,9 +198,22 @@ pub(super) fn canonical_target(path: &Path) -> Result<PathBuf, String> {
     Ok(path)
 }
 pub(crate) fn is_link(path: &Path) -> bool {
-    fs::symlink_metadata(path)
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        (meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 pub(super) fn check_target(root: &Root, path: &Path) -> Result<(), String> {
     if (root.kind == "skill" && is_link(path.parent().ok_or("无效路径")?)) || is_link(path) {

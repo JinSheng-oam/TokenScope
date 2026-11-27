@@ -7,10 +7,14 @@
   import { parseSummaryMarkdown } from './skillSummaryMarkdown';
   import {
     deriveCardBrief,
+    getProviderSyncMode,
+    isProviderEnabled,
     isSkillAnalyzable,
     sourceTypeLabel,
     type SkillLibraryItem,
+    type SkillSyncMode,
   } from './skillLibraryTypes';
+  import { syncModeLabel, type SkillSyncOverride } from './skillSyncPrefs';
   import type { BatchItemState } from './skillBatchAnalyzer';
   import type { Entry, Provider } from './agentCustomizationEntries';
   import type { UpdateInfo } from './agentSkillSourceTypes';
@@ -19,6 +23,8 @@
 
   export let item: SkillLibraryItem;
   export let batchState: BatchItemState | undefined = undefined;
+  export let globalSyncMode: SkillSyncMode = 'link';
+  export let syncOverride: SkillSyncOverride = 'inherit';
   export let hasAiConfig = false;
   export let dirty = false;
   export let onClose: () => void = () => {};
@@ -26,6 +32,7 @@
   export let onAnalyzeSingle: (item: SkillLibraryItem) => void = () => {};
   export let onToggleEnabled: (item: SkillLibraryItem) => Promise<void> = async () => {};
   export let onToggleProvider: (item: SkillLibraryItem, provider: Provider, enabled: boolean) => Promise<void> = async () => {};
+  export let onChangeSyncOverride: (item: SkillLibraryItem, next: SkillSyncOverride, applyNow: boolean) => Promise<void> = async () => {};
   export let onOpenAiConfig: () => void = () => {};
 
   let contentTab: 'preview' | 'edit' = 'preview';
@@ -60,8 +67,8 @@
   $: brief = deriveCardBrief(item);
   $: analyzable = isSkillAnalyzable(item);
   $: isAnalyzing = batchState?.status === 'running' || batchState?.status === 'retrying';
-  $: deploymentMap = new Map(item.deployments.map((d) => [d.provider, d]));
-  $: enabledCount = ALL_PROVIDERS.filter((p) => Boolean(deploymentMap.get(p.id)?.enabled)).length;
+  $: effectiveSyncMode = syncOverride === 'inherit' ? globalSyncMode : syncOverride;
+  $: enabledCount = ALL_PROVIDERS.filter((p) => isProviderEnabled(item, p.id)).length;
 
   $: overviewBlocks = parseSummaryMarkdown(item.summary?.overview ?? '');
   $: scenarioBlocks = parseSummaryMarkdown(item.summary?.scenarios ?? '');
@@ -69,7 +76,7 @@
   $: previewBlocks = parseSummaryMarkdown(stripFrontmatter(content));
 
   $: selectedAsEntry = {
-    id: item.primary_id,
+    id: item.primary_id as unknown as Entry['id'],
     path: item.path,
     kind: 'skill',
     exists: item.exists,
@@ -248,7 +255,7 @@
       <div class="detail-meta-strip">
         <div class="provider-icons-row">
           {#each ALL_PROVIDERS as p (p.id)}
-            {@const isOn = Boolean(deploymentMap.get(p.id)?.enabled)}
+            {@const isOn = isProviderEnabled(item, p.id)}
             <span
               class="provider-chip"
               class:inactive={!isOn}
@@ -590,19 +597,53 @@
     {/if}
   </section>
 
-  <!-- 3. Cross-Agent Deployment Matrix -->
+  <!-- 3. Cross-Agent Deployment Matrix & Per-Skill Sync Mode -->
   <section class="detail-card">
     <div class="detail-card-head">
       <div class="card-head-left">
         <strong>工具工作区</strong>
         <span class="sync-pill">已启用 {enabledCount} / {ALL_PROVIDERS.length}</span>
       </div>
+      {#if !item.builtin}
+        <div class="card-head-right sync-mode-controls">
+          <span class="sync-mode-label">同步方式：</span>
+          <div class="sync-seg" role="group" aria-label="设置此技能同步方式">
+            <button
+              type="button"
+              class="sync-seg-btn"
+              class:active={syncOverride === 'inherit'}
+              disabled={saving}
+              onclick={() => void onChangeSyncOverride(item, 'inherit', true)}
+            >
+              跟随全局 ({syncModeLabel(globalSyncMode)})
+            </button>
+            <button
+              type="button"
+              class="sync-seg-btn"
+              class:active={syncOverride === 'link'}
+              disabled={saving}
+              onclick={() => void onChangeSyncOverride(item, 'link', true)}
+            >
+              静态链接
+            </button>
+            <button
+              type="button"
+              class="sync-seg-btn"
+              class:active={syncOverride === 'copy'}
+              disabled={saving}
+              onclick={() => void onChangeSyncOverride(item, 'copy', true)}
+            >
+              文件复制
+            </button>
+          </div>
+        </div>
+      {/if}
     </div>
 
     <div class="workspace-matrix">
       {#each ALL_PROVIDERS as p (p.id)}
-        {@const dep = deploymentMap.get(p.id)}
-        {@const isOn = Boolean(dep?.enabled)}
+        {@const isOn = isProviderEnabled(item, p.id)}
+        {@const pMode = getProviderSyncMode(item, p.id)}
         <button
           type="button"
           class="agent-cell"
@@ -611,8 +652,8 @@
           title={item.builtin
             ? `${p.label}（系统内置）`
             : isOn
-              ? `${p.label}：已启用（点击禁用）`
-              : `${p.label}：已禁用（点击启用并自动同步到该工具）`}
+              ? `${p.label}：已启用（${pMode === 'copy' ? '文件复制' : '静态链接'}）· 点击禁用`
+              : `${p.label}：已禁用 · 点击启用（将按${syncModeLabel(effectiveSyncMode)}同步）`}
           onclick={() => {
             if (!item.builtin) void onToggleProvider(item, p.id, !isOn);
           }}
@@ -623,7 +664,7 @@
           <span class="agent-icon" class:dim={!isOn} style={`--p-color: ${p.color}; --p-bg: ${p.bg}`}>{@html p.icon}</span>
           <span class="agent-label">{p.label}</span>
           <span class="agent-state" class:on={isOn}>
-            {isOn ? '已启用' : '已禁用'}
+            {isOn ? (pMode === 'copy' ? '已启用 · 复制' : '已启用 · 链接') : '已禁用'}
           </span>
         </button>
       {/each}
@@ -1230,6 +1271,46 @@
 
   .agent-state.on {
     color: var(--color-exact);
+    font-weight: 600;
+  }
+
+  .sync-mode-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .sync-mode-label {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .sync-seg {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    background: var(--bg-card);
+  }
+
+  .sync-seg-btn {
+    height: 22px;
+    padding: 0 8px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .sync-seg-btn.active {
+    background: var(--brand-subtle);
+    color: var(--brand-text);
     font-weight: 600;
   }
 

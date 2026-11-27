@@ -63,14 +63,20 @@
 
 <style>
   .custom-page {
+    width: 100%;
     max-width: 1440px;
     margin: 0 auto;
+    flex: 1 1 0;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     gap: var(--page-heading-gap, 14px);
   }
 
   .custom-heading {
+    flex-shrink: 0;
     margin-bottom: 0;
   }
 

@@ -538,20 +538,22 @@
 </script>
 
 {#if activeItem}
-  <SkillDetailView
-    item={activeItem}
-    batchState={batchProgress.items[activeItem.key]}
-    {providerSyncPrefs}
-    {hasAiConfig}
-    bind:dirty={detailDirty}
-    onClose={() => { activeItemKey = null; detailDirty = false; }}
-    onRefreshLibrary={refresh}
-    onAnalyzeSingle={(target) => void analyzeSingleItem(target)}
-    onToggleEnabled={toggleCardEnabled}
-    onToggleProvider={toggleProviderEnabled}
-    onChangeProviderSyncMode={handleChangeProviderSyncMode}
-    {onOpenAiConfig}
-  />
+  <div class="detail-scroll-wrap">
+    <SkillDetailView
+      item={activeItem}
+      batchState={batchProgress.items[activeItem.key]}
+      {providerSyncPrefs}
+      {hasAiConfig}
+      bind:dirty={detailDirty}
+      onClose={() => { activeItemKey = null; detailDirty = false; }}
+      onRefreshLibrary={refresh}
+      onAnalyzeSingle={(target) => void analyzeSingleItem(target)}
+      onToggleEnabled={toggleCardEnabled}
+      onToggleProvider={toggleProviderEnabled}
+      onChangeProviderSyncMode={handleChangeProviderSyncMode}
+      {onOpenAiConfig}
+    />
+  </div>
 {:else if panelMode !== 'none'}
   <div class="overlay-card">
     <div class="overlay-provider-bar">
@@ -1037,6 +1039,7 @@
       <div class="skill-loading-bar" role="status" aria-label="正在刷新技能库"></div>
     {/if}
 
+    <div class="library-scroll-body">
     {#if loading && items.length === 0}
       <div class="skill-loading-shell" role="status" aria-live="polite" aria-label="正在加载技能库">
         <div class="skill-loading-bar"></div>
@@ -1251,15 +1254,36 @@
         {/each}
       </div>
     {/if}
+    </div>
   </div>
 {/if}
 
 <style>
   .library-shell {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     gap: 10px;
     min-width: 0;
+  }
+
+  .library-scroll-body {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
+    padding-bottom: 8px;
+  }
+
+  .detail-scroll-wrap {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
   }
 
   .toolbar-row {
@@ -2030,6 +2054,9 @@
   }
 
   .overlay-card {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
     background: var(--bg-card);

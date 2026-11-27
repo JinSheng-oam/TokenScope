@@ -2,6 +2,7 @@ use super::super::models::{
     tool_display_name, ModelActivityBreakdown, ToolUsageOverview, UsageBreakdown, UsageOverview,
     UsageTotals,
 };
+use super::super::rollup::{usage_rows, Source, UNTIMED};
 use super::super::{LocalStore, PROJECT_LABEL_TOOL_ID};
 use crate::error::{pos_u64, Result, StoreError};
 use rusqlite::params;
@@ -28,29 +29,23 @@ impl LocalStore {
         from_ms: Option<i64>,
         to_ms: Option<i64>,
     ) -> Result<(UsageTotals, UsageTotals, UsageTotals)> {
-        let mut stmt = self.conn.prepare(
-            "SELECT scope, \
+        let source = usage_rows(Source::Local, from_ms, to_ms);
+        let mut stmt = self.conn.prepare(&format!(
+            "{source} SELECT scope, \
              COALESCE(SUM(input_uncached_tokens + cache_read_tokens + cache_write_tokens + output_tokens + unclassified_tokens),0), \
              COALESCE(SUM(input_uncached_tokens),0), COALESCE(SUM(cache_read_tokens),0), \
              COALESCE(SUM(cache_write_tokens),0), COALESCE(SUM(output_tokens),0), \
              COALESCE(SUM(unclassified_tokens),0), COALESCE(SUM(COALESCE(reasoning_tokens,0)),0), \
-             COALESCE(SUM(CASE WHEN reasoning_tokens IS NOT NULL THEN 1 ELSE 0 END),0), \
-             COUNT(*), COALESCE(SUM(CASE WHEN estimated_cost_microusd IS NOT NULL THEN estimated_cost_microusd ELSE 0 END),0), \
-             COALESCE(SUM(CASE WHEN estimated_cost_microusd IS NOT NULL THEN 1 ELSE 0 END),0), \
-             COALESCE(SUM(CASE WHEN estimated_cost_microusd IS NULL THEN 1 ELSE 0 END),0), \
-             COALESCE(SUM(CASE WHEN precision='exact' THEN 1 ELSE 0 END),0), \
-             COALESCE(SUM(CASE WHEN precision='aggregate' THEN 1 ELSE 0 END),0), \
-             COALESCE(SUM(CASE WHEN precision='estimated' THEN 1 ELSE 0 END),0), \
-             COALESCE(SUM(CASE WHEN precision='unknown' THEN 1 ELSE 0 END),0) \
-             FROM usage_records WHERE owner_device_id=?1 \
-             AND scope IN ('device_local','unknown','account_global') AND is_deleted=0 \
-             AND (?2 IS NULL OR event_at_ms >= ?2) AND (?3 IS NULL OR event_at_ms < ?3) \
+             SUM(reasoning_known), SUM(records), SUM(cost), SUM(priced), SUM(records-priced), \
+             SUM(exact), SUM(aggregate), SUM(estimated), SUM(unknown) \
+             FROM usage_rows WHERE owner_device_id=?1 \
+             AND scope IN ('device_local','unknown','account_global') \
              GROUP BY scope",
-        )?;
+        ))?;
         let mut local = UsageTotals::default();
         let mut unassigned = UsageTotals::default();
         let mut account_global = UsageTotals::default();
-        let mut rows = stmt.query(params![owner_device_id, from_ms, to_ms])?;
+        let mut rows = stmt.query([owner_device_id])?;
         while let Some(r) = rows.next()? {
             let scope: String = r.get(0)?;
             let priced = r.get::<_, i64>(11)?;
@@ -136,22 +131,22 @@ impl LocalStore {
         if !["tool_id", "model_id", "project_id"].contains(&column) {
             return Err(StoreError::InvalidInput("dashboard breakdown column"));
         }
+        let dimension = match column {
+            "model_id" => "NULLIF(model_key,char(0))",
+            "project_id" => "NULLIF(project_key,char(0))",
+            _ => "tool_id",
+        };
+        let source = usage_rows(Source::Local, from_ms, to_ms);
         let sql = format!(
-            "SELECT {column}, COUNT(*), \
+            "{source} SELECT {dimension}, SUM(records), \
              COALESCE(SUM(input_uncached_tokens + cache_read_tokens + cache_write_tokens + output_tokens + unclassified_tokens),0), \
-             COALESCE(SUM(CASE WHEN estimated_cost_microusd IS NOT NULL THEN estimated_cost_microusd ELSE 0 END),0), \
-             COALESCE(SUM(CASE WHEN estimated_cost_microusd IS NOT NULL THEN 1 ELSE 0 END),0), \
-             COALESCE(SUM(CASE WHEN precision='exact' THEN 1 ELSE 0 END),0), \
-             COALESCE(SUM(CASE WHEN precision='aggregate' THEN 1 ELSE 0 END),0), \
-             COALESCE(SUM(CASE WHEN precision='estimated' THEN 1 ELSE 0 END),0), \
-             COALESCE(SUM(CASE WHEN precision='unknown' THEN 1 ELSE 0 END),0), \
-             COALESCE(SUM(CASE WHEN event_at_ms IS NULL THEN 1 ELSE 0 END),0) \
-             FROM usage_records WHERE owner_device_id=?1 AND scope=?2 AND is_deleted=0 \
-             AND (?3 IS NULL OR event_at_ms >= ?3) AND (?4 IS NULL OR event_at_ms < ?4) \
-             GROUP BY {column} ORDER BY 3 DESC,{column}"
+             SUM(cost), SUM(priced), SUM(exact), SUM(aggregate), SUM(estimated), SUM(unknown), \
+             SUM(CASE WHEN hour={UNTIMED} THEN records ELSE 0 END) \
+             FROM usage_rows WHERE owner_device_id=?1 AND scope=?2 \
+             GROUP BY 1 ORDER BY 3 DESC,1"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![owner_device_id, scope, from_ms, to_ms], |r| {
+        let rows = stmt.query_map(params![owner_device_id, scope], |r| {
             Ok((
                 r.get::<_, Option<String>>(0)?,
                 r.get::<_, i64>(1)?,

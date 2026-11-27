@@ -1,6 +1,6 @@
 //! Schema v1 is append-only at the migration layer. No destructive schema reset.
 
-pub const VERSION: i64 = 12;
+pub const VERSION: i64 = 13;
 pub const MIGRATION_001: &str = r#"
 CREATE TABLE schema_migrations (
   version INTEGER PRIMARY KEY,

@@ -78,6 +78,7 @@
   let todayIso = '';
 
   let snapshot: DashboardSnapshot | null = null;
+  let restoredDashboardSnapshot = false;
   let agent: AgentStatus | null = null;
   let loading = true;
   let refreshing = false;
@@ -122,6 +123,7 @@
     errorChanged: (value) => { errorMessage = value; },
     snapshotCleared: () => { snapshot = null; },
     snapshotChanged: applySnapshot,
+    cachedSnapshotChanged: (restored) => { restoredDashboardSnapshot = restored; },
     snapshotLoaded: (next) => {
       if (!$hubState.displayName && next.identity?.display_name) hubController.setDisplayName(next.identity.display_name);
       if (activeTab === "sessions") void sessionController.load(false, next.data_revision);
@@ -667,7 +669,7 @@
     <!-- Topbar -->
     <DashboardTopbar {activeTabLabel} {deviceScope} {deviceScopeLabel} {selectableRemoteDevices} {snapshot}
       {range} {todayIso} {customStart} {customEnd}
-      {refreshing} rangeLoading={rangeSwitching || refreshing} {selectDeviceScope} {handleSelectRange} {applyCustomRange} {loadDashboard} showControls={!isLocalConfigTab}
+      {refreshing} restoredSnapshot={restoredDashboardSnapshot} rangeLoading={rangeSwitching || refreshing} {selectDeviceScope} {handleSelectRange} {applyCustomRange} {loadDashboard} showControls={!isLocalConfigTab}
       {isEditingOverviewLayout}
       onToggleOverviewLayout={() => (isEditingOverviewLayout = !isEditingOverviewLayout)}
     />

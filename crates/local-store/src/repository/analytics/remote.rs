@@ -1,10 +1,10 @@
 use super::super::{
     models::{tool_display_name, RemoteDeviceUsage, RemoteUsageBreakdown, RemoteUsageTotals},
-    sync::{read_remote_totals, REMOTE_TOTAL_COLUMNS},
+    rollup::{usage_rows, Source, UNTIMED},
+    sync::read_remote_totals,
     LocalStore,
 };
 use crate::error::{pos_u64, Result, StoreError};
-use rusqlite::{params_from_iter, types::Value};
 use std::collections::BTreeMap;
 
 pub(super) struct RemoteDashboard {
@@ -83,24 +83,17 @@ impl LocalStore {
         from_ms: Option<i64>,
         to_ms: Option<i64>,
     ) -> Result<RemoteDashboard> {
-        let mut sql = format!(
-            "SELECT owner_device_id,json_extract(payload_json,'$.tool_id'),\
-             json_extract(payload_json,'$.model_id'),json_extract(payload_json,'$.project_id'),\
-             {REMOTE_TOTAL_COLUMNS},SUM(json_extract(payload_json,'$.event_at_ms') IS NULL)\
-             FROM remote_usage_cache WHERE is_deleted=0 AND json_extract(payload_json,'$.scope')='device_local'"
+        let source = usage_rows(Source::Remote, from_ms, to_ms);
+        let sql = format!(
+            "{source} SELECT owner_device_id,tool_id,NULLIF(model_key,char(0)),NULLIF(project_key,char(0)),
+             SUM(input_uncached_tokens),SUM(cache_read_tokens),SUM(cache_write_tokens),SUM(output_tokens),
+             SUM(unclassified_tokens),SUM(reasoning_tokens),SUM(reasoning_known),SUM(records),SUM(priced),
+             SUM(exact),SUM(aggregate),SUM(estimated),SUM(unknown),SUM(CASE WHEN priced>0 THEN cost END),
+             SUM(CASE WHEN hour={UNTIMED} THEN records ELSE 0 END)
+             FROM usage_rows GROUP BY 1,2,3,4"
         );
-        let mut args = Vec::<Value>::new();
-        if let Some(from) = from_ms {
-            sql.push_str(" AND json_extract(payload_json,'$.event_at_ms')>=?");
-            args.push(from.into());
-        }
-        if let Some(to) = to_ms {
-            sql.push_str(" AND json_extract(payload_json,'$.event_at_ms')<?");
-            args.push(to.into());
-        }
-        sql.push_str(" GROUP BY 1,2,3,4");
         let mut statement = self.conn.prepare(&sql)?;
-        let mut rows = statement.query(params_from_iter(args))?;
+        let mut rows = statement.query([])?;
         let mut total = RemoteUsageTotals::default();
         let mut devices = BTreeMap::<String, RemoteUsageTotals>::new();
         let mut tools = Groups::new();

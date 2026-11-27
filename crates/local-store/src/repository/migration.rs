@@ -305,6 +305,23 @@ impl LocalStore {
             tx.execute_batch("PRAGMA user_version=12;")?;
             tx.commit()?;
         }
+        if version <= 12 {
+            let (count, highest): (i64, i64) = conn.query_row(
+                "SELECT COUNT(*),MAX(version) FROM schema_migrations",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            if count != 12 || highest != 12 {
+                return Err(StoreError::DatabaseInconsistent(
+                    "legacy migration metadata invalid before v13",
+                ));
+            }
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            super::rollup::install(&tx)?;
+            tx.execute("INSERT INTO schema_migrations(version,applied_at_ms) VALUES(13,CAST(strftime('%s','now') AS INTEGER)*1000)",[])?;
+            tx.execute_batch("PRAGMA user_version=13;")?;
+            tx.commit()?;
+        }
         let count: i64 = conn.query_row(
             "SELECT count(*) FROM schema_migrations WHERE version BETWEEN 1 AND ?1",
             [schema::VERSION],

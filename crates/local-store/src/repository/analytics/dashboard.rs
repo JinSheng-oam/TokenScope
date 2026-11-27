@@ -2,6 +2,7 @@ use super::super::models::{
     DailyUsage, DashboardObservations, DashboardQuery, DashboardSnapshot, RemoteDailyUsage,
     SourceHealth,
 };
+use super::super::rollup::{daily_rows, Source};
 use super::super::LocalStore;
 use crate::error::{pos_u64, Result, StoreError};
 use crate::schema;
@@ -213,13 +214,13 @@ impl LocalStore {
         }
         let ranges_json = serde_json::to_string(ranges)
             .map_err(|_| StoreError::InvalidInput("dashboard daily ranges"))?;
-        let mut stmt = self.conn.prepare("SELECT json_extract(d.value,'$[0]'),
-            COALESCE(SUM(u.input_uncached_tokens+u.cache_read_tokens+u.cache_write_tokens+u.output_tokens+u.unclassified_tokens),0),
-            COALESCE(SUM(u.input_uncached_tokens),0),COALESCE(SUM(u.output_tokens),0)
-            FROM json_each(?1) d LEFT JOIN usage_records u
-            ON u.owner_device_id=?2 AND u.scope='device_local' AND u.is_deleted=0
-            AND u.event_at_ms>=json_extract(d.value,'$[1]') AND u.event_at_ms<json_extract(d.value,'$[2]')
-            GROUP BY d.key ORDER BY CAST(d.key AS INTEGER)")?;
+        let local_rows = daily_rows(Source::Local);
+        let mut stmt = self.conn.prepare(&format!(
+            "{local_rows} SELECT d.day,COALESCE(SUM(p.tokens),0),
+             COALESCE(SUM(p.input),0),COALESCE(SUM(p.output),0)
+             FROM ranges d LEFT JOIN points p ON p.day_idx=d.day_idx
+             GROUP BY d.day_idx ORDER BY CAST(d.day_idx AS INTEGER)"
+        ))?;
         let rows = stmt.query_map(params![ranges_json, owner], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -238,16 +239,12 @@ impl LocalStore {
                 output_tokens: pos_u64(output)?,
             });
         }
-        let mut stmt = self.conn.prepare("SELECT r.owner_device_id,json_extract(d.value,'$[0]'),
-            SUM(json_extract(r.payload_json,'$.usage.input_uncached_tokens')+json_extract(r.payload_json,'$.usage.cache_read_tokens')+
-                json_extract(r.payload_json,'$.usage.cache_write_tokens')+json_extract(r.payload_json,'$.usage.output_tokens')+
-                json_extract(r.payload_json,'$.usage.unclassified_tokens')),
-            SUM(json_extract(r.payload_json,'$.usage.input_uncached_tokens')),SUM(json_extract(r.payload_json,'$.usage.output_tokens'))
-            FROM json_each(?1) d JOIN remote_usage_cache r
-            ON r.is_deleted=0 AND json_extract(r.payload_json,'$.scope')='device_local'
-            AND json_extract(r.payload_json,'$.event_at_ms')>=json_extract(d.value,'$[1]')
-            AND json_extract(r.payload_json,'$.event_at_ms')<json_extract(d.value,'$[2]')
-            GROUP BY r.owner_device_id,d.key ORDER BY r.owner_device_id,CAST(d.key AS INTEGER)")?;
+        let remote_rows = daily_rows(Source::Remote);
+        let mut stmt = self.conn.prepare(&format!(
+            "{remote_rows} SELECT p.owner,d.day,SUM(p.tokens),SUM(p.input),SUM(p.output)
+             FROM ranges d JOIN points p ON p.day_idx=d.day_idx
+             GROUP BY p.owner,d.day_idx ORDER BY p.owner,CAST(d.day_idx AS INTEGER)"
+        ))?;
         let rows = stmt.query_map([ranges_json], |r| {
             Ok((
                 r.get::<_, String>(0)?,

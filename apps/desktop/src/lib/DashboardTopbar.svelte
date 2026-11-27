@@ -19,6 +19,7 @@
   export let todayIso: string;
   export let refreshing: boolean;
   export let rangeLoading = false;
+  export let restoredSnapshot = false;
   export let selectDeviceScope: (scope: DeviceScope) => void;
   export let handleSelectRange: (range: Exclude<DashboardRange, "custom">) => void;
   export let applyCustomRange: (selection: { start: string; end: string }) => void;
@@ -87,6 +88,11 @@
     <span>TokenScope</span>
     <span class="sep">/</span>
     <strong>{activeTabLabel}</strong>
+    {#if showControls && restoredSnapshot && snapshot}
+      <small title={new Date(snapshot.generated_at_ms).toLocaleString()}>
+        上次更新 {relativeTime(snapshot.generated_at_ms, $liveMinute)}
+      </small>
+    {/if}
   </div>
 
   {#if showControls}

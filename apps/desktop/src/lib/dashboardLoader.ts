@@ -1,5 +1,6 @@
 import { getAgentStatus, getDashboardSnapshot, startAgent } from './api';
 import { createRequestGate, dashboardRequestKey } from './dashboardRequests';
+import { readDashboardSnapshot, saveDashboardSnapshot } from './dashboardSnapshotStorage';
 import type { AgentStatus, DashboardRange, DashboardSnapshot } from './types';
 
 interface DashboardLoaderOptions {
@@ -12,6 +13,7 @@ interface DashboardLoaderOptions {
   snapshotCleared: () => void;
   snapshotChanged: (snapshot: DashboardSnapshot) => void;
   snapshotLoaded: (snapshot: DashboardSnapshot) => void;
+  cachedSnapshotChanged?: (restored: boolean) => void;
 }
 
 export function createDashboardLoader(options: DashboardLoaderOptions) {
@@ -19,20 +21,28 @@ export function createDashboardLoader(options: DashboardLoaderOptions) {
   let agentStarted = false;
   let appliedSnapshotKey = '';
   let appliedAt = 0;
+  let restored = false;
   let refreshTimer: number | undefined;
   let appliedRefreshIntervalMs = -1;
 
   function acceptSnapshot(next: DashboardSnapshot, key: string) {
     const { range, start, end } = options.selection();
     if (key !== dashboardRequestKey(range, start, end)) return;
-    if (appliedSnapshotKey === key && appliedAt > next.generated_at_ms) return;
+    if (!restored && appliedSnapshotKey === key && appliedAt > next.generated_at_ms) return;
+    const shouldSave = restored || appliedSnapshotKey !== key || appliedAt !== next.generated_at_ms;
     appliedSnapshotKey = key;
     appliedAt = next.generated_at_ms;
+    restored = false;
+    options.cachedSnapshotChanged?.(false);
     options.snapshotChanged(next);
+    if (shouldSave) saveDashboardSnapshot(range, key, next);
   }
 
   function clearSnapshot() {
     appliedAt = 0;
+    appliedSnapshotKey = '';
+    restored = false;
+    options.cachedSnapshotChanged?.(false);
     options.snapshotCleared();
   }
 
@@ -56,6 +66,16 @@ export function createDashboardLoader(options: DashboardLoaderOptions) {
     }
     if (showSpinner) options.refreshingChanged(true);
     options.errorChanged('');
+    if (appliedSnapshotKey !== key) {
+      const saved = readDashboardSnapshot(selectedRange, key);
+      if (saved) {
+        appliedSnapshotKey = key;
+        restored = true;
+        options.cachedSnapshotChanged?.(true);
+        options.snapshotChanged(saved);
+        options.loadingChanged(false);
+      }
+    }
     try {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
       let currentAgent: AgentStatus;
@@ -72,10 +92,10 @@ export function createDashboardLoader(options: DashboardLoaderOptions) {
       options.agentChanged(currentAgent);
       if (!currentAgent.running) {
         options.errorChanged(currentAgent.message);
-        clearSnapshot();
+        if (appliedSnapshotKey !== key) clearSnapshot();
       } else if (!currentAgent.databaseReady) {
         options.errorChanged('Agent 已启动，正在初始化本地 SQLite WAL 数据库…');
-        clearSnapshot();
+        if (appliedSnapshotKey !== key) clearSnapshot();
       } else {
         const nextSnapshot = await fetchSnapshot(selectedRange, start, end);
         if (!dashboardRequests.isCurrent(request)) return;

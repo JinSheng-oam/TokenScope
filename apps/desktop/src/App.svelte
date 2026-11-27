@@ -32,7 +32,7 @@
   import { createSettingsController } from './lib/settingsController';
   import type { AgentStatus, AntigravityQuota, CodexQuota, DashboardObservations, DashboardRange, DashboardSnapshot, RemoteDevice, SessionActivity } from './lib/types';
   import OverviewPage from './lib/OverviewPage.svelte';
-  import LoadingStatus from './lib/LoadingStatus.svelte';
+  import DashboardLoading from './lib/DashboardLoading.svelte';
   import AppDialogHost from './lib/AppDialogHost.svelte';
   import { confirmDialog } from './lib/dialogStore';
 
@@ -673,16 +673,15 @@
     />
 
     <!-- Page Content Area -->
-    <div class="page-stage">
-      <section
-        class="page-content"
-        class:fit-viewport={loading && !isLocalConfigTab}
-        class:overview-page={activeTab === 'overview' && !loading}
-        class:compact-page={activeTab === 'models' || activeTab === 'projects' || isLocalConfigTab}
-        class:compact-session={activeTab === 'sessions' && ($sessionState.pageSize <= 7 || ($sessionState.loading && !$sessionState.analysis))}
-        class:is-refreshing={isContentRefreshing}
-        aria-busy={isContentRefreshing || undefined}
-      >
+    <section
+      class="page-content"
+      class:fit-viewport={loading && !isLocalConfigTab && activeTab !== 'overview'}
+      class:overview-page={activeTab === 'overview'}
+      class:compact-page={activeTab === 'models' || activeTab === 'projects' || isLocalConfigTab}
+      class:compact-session={activeTab === 'sessions' && ($sessionState.pageSize <= 7 || ($sessionState.loading && !$sessionState.analysis))}
+      class:is-refreshing={isContentRefreshing}
+      aria-busy={isContentRefreshing || undefined}
+    >
       {#if errorMessage && !isLocalConfigTab}
         <div class="notice-box" role="alert">
           {@html icons.alert}
@@ -704,120 +703,7 @@
         {@const McpConfigPageView = loadedPages.mcp}
         <McpConfigPageView {runtimeAvailable} bind:dirty={mcpConfigDirty} />
       {:else if loading}
-        <div class="loading-state" role="status" aria-live="polite">
-          <LoadingStatus message="正在加载用量…" stage="WAL 并发只读通道" />
-
-          <div class="loading-skeleton-grid" aria-hidden="true">
-            {#each [
-              { titleW: '38%', valW: '72%', subW: '44%', hero: true },
-              { titleW: '42%', valW: '62%', subW: '36%', hero: false },
-              { titleW: '40%', valW: '56%', subW: '40%', hero: false },
-              { titleW: '44%', valW: '68%', subW: '48%', hero: false },
-            ] as card, i}
-              <div class="loading-skeleton-card" class:hero={card.hero} style={`--delay: ${i * 90}ms`}>
-                <div class="sk-row-between">
-                  <span class="sk-bone sk-title" style={`width: ${card.titleW}`}></span>
-                  <span class="sk-bone sk-pill"></span>
-                </div>
-                <span class="sk-bone sk-value" style={`width: ${card.valW}`}></span>
-                <span class="sk-bone sk-bar"></span>
-                <div class="sk-row-between">
-                  <span class="sk-bone sk-foot" style={`width: ${card.subW}`}></span>
-                  <span class="sk-bone sk-foot" style="width: 24%"></span>
-                </div>
-              </div>
-            {/each}
-          </div>
-
-          <div class="loading-integrity-skeleton" aria-hidden="true">
-            <div class="sk-inline-group">
-              <span class="sk-bone sk-tag" style="width: 96px"></span>
-              <span class="sk-bone sk-tag" style="width: 104px"></span>
-              <span class="sk-bone sk-tag" style="width: 84px"></span>
-            </div>
-            <span class="sk-bone sk-tag" style="width: 160px"></span>
-          </div>
-
-          <div class="loading-panels-grid" aria-hidden="true">
-            <div class="loading-skeleton-panel" style="--delay: 120ms">
-              <div class="sk-panel-head">
-                <div class="sk-stack">
-                  <span class="sk-bone sk-h2" style="width: 128px"></span>
-                  <span class="sk-bone sk-sub" style="width: 220px"></span>
-                </div>
-                <span class="sk-bone sk-switch"></span>
-              </div>
-              <div class="sk-chart-bars">
-                {#each [38, 56, 44, 74, 62, 88, 52, 68, 92, 60, 78, 84, 48, 70] as h, idx}
-                  <span class="sk-chart-col" style={`height: ${h}%; --bar-delay: ${idx * 45}ms`}></span>
-                {/each}
-              </div>
-            </div>
-
-            <div class="loading-skeleton-panel" style="--delay: 220ms">
-              <div class="sk-panel-head">
-                <div class="sk-stack">
-                  <span class="sk-bone sk-h2" style="width: 108px"></span>
-                  <span class="sk-bone sk-sub" style="width: 156px"></span>
-                </div>
-                <span class="sk-bone sk-pill"></span>
-              </div>
-              <div class="sk-rank-list">
-                {#each ['86%', '62%', '38%', '22%'] as w}
-                  <div class="sk-rank-item">
-                    <div class="sk-row-between">
-                      <span class="sk-bone sk-title" style="width: 36%"></span>
-                      <span class="sk-bone sk-title" style="width: 28%"></span>
-                    </div>
-                    <span class="sk-bone sk-bar" style={`width: ${w}`}></span>
-                  </div>
-                {/each}
-              </div>
-            </div>
-          </div>
-
-          <div class="loading-support-grid" aria-hidden="true">
-            <div class="loading-skeleton-panel" style="--delay: 280ms">
-              <div class="sk-panel-head">
-                <div class="sk-stack">
-                  <span class="sk-bone sk-h2" style="width: 92px"></span>
-                  <span class="sk-bone sk-sub" style="width: 196px"></span>
-                </div>
-                <span class="sk-bone sk-pill"></span>
-              </div>
-              <div class="sk-session-list">
-                {#each ['46%', '58%', '40%', '52%'] as titleW}
-                  <div class="sk-session-row">
-                    <div class="sk-stack" style="flex: 1; min-width: 0;">
-                      <span class="sk-bone sk-title" style={`width: ${titleW}`}></span>
-                      <span class="sk-bone sk-foot" style="width: 32%"></span>
-                    </div>
-                    <span class="sk-bone sk-title" style="width: 72px"></span>
-                  </div>
-                {/each}
-              </div>
-            </div>
-
-            <div class="loading-skeleton-panel" style="--delay: 340ms">
-              <div class="sk-panel-head">
-                <div class="sk-stack">
-                  <span class="sk-bone sk-h2" style="width: 96px"></span>
-                  <span class="sk-bone sk-sub" style="width: 148px"></span>
-                </div>
-                <span class="sk-bone sk-pill"></span>
-              </div>
-              <div class="sk-session-list">
-                {#each ['34%', '28%', '30%', '42%'] as nameW}
-                  <div class="sk-session-row">
-                    <span class="sk-bone sk-title" style={`width: ${nameW}`}></span>
-                    <span class="sk-bone sk-foot" style="width: 76px"></span>
-                    <span class="sk-bone sk-pill" style="width: 40px; height: 16px;"></span>
-                  </div>
-                {/each}
-              </div>
-            </div>
-          </div>
-        </div>
+        <DashboardLoading {activeTab} />
       {:else if snapshot}
         <!-- TAB 1: OVERVIEW (DASHBOARD) -->
         {#if activeTab === 'overview'}
@@ -994,15 +880,7 @@
           />
         {/if}
       {/if}
-      </section>
-
-      {#if isContentRefreshing}
-        <div class="page-refresh-shimmer" aria-hidden="true">
-          <div class="page-refresh-beam"></div>
-          <div class="page-refresh-sweep"></div>
-        </div>
-      {/if}
-    </div>
+    </section>
   </main>
 </div>
 

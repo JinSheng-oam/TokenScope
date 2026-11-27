@@ -2,8 +2,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   DEFAULT_DASHBOARD_CARDS,
   STORAGE_KEY,
+  cardWidthToGridClass,
+  dashboardLayoutPrefs,
   loadDashboardLayout,
+  refreshDashboardLayoutPrefs,
   saveDashboardLayout,
+  saveDashboardCardGap,
+  saveDashboardCardRows,
   resetDashboardLayout,
   reorderCards,
   updateCardWidth,
@@ -124,5 +129,31 @@ describe('dashboardLayout', () => {
 
     const reShown = setCardVisibility(updated, 'tools', true);
     expect(reShown.find((c) => c.id === 'tools')?.visible).toBe(true);
+  });
+
+  it('maps card width to grid span classes and syncs dashboardLayoutPrefs store', () => {
+    expect(cardWidthToGridClass('1/3')).toBe('col-span-4');
+    expect(cardWidthToGridClass('1/2')).toBe('col-span-6');
+    expect(cardWidthToGridClass('2/3')).toBe('col-span-8');
+    expect(cardWidthToGridClass('full')).toBe('col-span-12');
+
+    let snapshot: { gap: number; defaultRows: number; cards: { id: string }[] } | undefined;
+    const unsubscribe = dashboardLayoutPrefs.subscribe((val) => {
+      snapshot = val;
+    });
+
+    saveDashboardCardGap(22);
+    saveDashboardCardRows(8);
+    saveDashboardLayout([{ id: 'quotas', visible: true, width: '1/2' }]);
+    expect(snapshot?.gap).toBe(22);
+    expect(snapshot?.defaultRows).toBe(8);
+    expect(snapshot?.cards.map((c) => c.id)).toEqual(['quotas']);
+
+    resetDashboardLayout();
+    refreshDashboardLayoutPrefs();
+    expect(snapshot?.gap).toBe(14);
+    expect(snapshot?.defaultRows).toBe(5);
+    expect(snapshot?.cards.length).toBe(DEFAULT_DASHBOARD_CARDS.length);
+    unsubscribe();
   });
 });

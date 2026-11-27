@@ -1,3 +1,5 @@
+import { writable } from 'svelte/store';
+
 export type CardId =
   | 'metrics'
   | 'integrity'
@@ -194,6 +196,7 @@ export function saveDashboardCardGap(gap: CardGap): void {
   } catch {
     // Keep the active setting when storage is unavailable.
   }
+  dashboardLayoutPrefs.update((prev) => ({ ...prev, gap }));
 }
 
 export function loadDashboardCardRows(): CardRows {
@@ -211,6 +214,7 @@ export function saveDashboardCardRows(rows: CardRows): void {
   } catch {
     // Keep the active setting when storage is unavailable.
   }
+  dashboardLayoutPrefs.update((prev) => ({ ...prev, defaultRows: rows }));
 }
 
 const VALID_CARD_IDS = new Set<CardId>([
@@ -244,6 +248,20 @@ export function isValidCardRows(rows: unknown): rows is CardRows {
 
 export function isValidWidth(width: unknown): width is CardWidth {
   return typeof width === 'string' && VALID_WIDTHS.has(width as CardWidth);
+}
+
+export function cardWidthToGridClass(width: CardWidth): string {
+  switch (width) {
+    case '1/3':
+      return 'col-span-4';
+    case '1/2':
+      return 'col-span-6';
+    case '2/3':
+      return 'col-span-8';
+    case 'full':
+    default:
+      return 'col-span-12';
+  }
 }
 
 export function loadDashboardLayout(): DashboardCardConfig[] {
@@ -298,13 +316,44 @@ export function loadDashboardLayout(): DashboardCardConfig[] {
   }
 }
 
+export interface DashboardLayoutPrefs {
+  cards: DashboardCardConfig[];
+  gap: CardGap;
+  defaultRows: CardRows;
+}
+
+function readDashboardLayoutPrefs(): DashboardLayoutPrefs {
+  return {
+    cards: loadDashboardLayout(),
+    gap: loadDashboardCardGap(),
+    defaultRows: loadDashboardCardRows(),
+  };
+}
+
+export const dashboardLayoutPrefs = writable<DashboardLayoutPrefs>(readDashboardLayoutPrefs());
+
+export function refreshDashboardLayoutPrefs(): DashboardLayoutPrefs {
+  const next = readDashboardLayoutPrefs();
+  dashboardLayoutPrefs.set(next);
+  return next;
+}
+
+export function saveDashboardCardGapWithPrefs(gap: CardGap): void {
+  saveDashboardCardGap(gap);
+}
+
 export function saveDashboardLayout(cards: DashboardCardConfig[]): void {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(cards));
-  } catch {
-    // Ignore storage quota or security errors
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(cards));
+    } catch {
+      // Ignore storage quota or security errors
+    }
   }
+  dashboardLayoutPrefs.update((prev) => ({
+    ...prev,
+    cards: cards.map((c) => ({ ...c })),
+  }));
 }
 
 export function resetDashboardLayout(): DashboardCardConfig[] {
@@ -317,7 +366,13 @@ export function resetDashboardLayout(): DashboardCardConfig[] {
       // Ignore
     }
   }
-  return DEFAULT_DASHBOARD_CARDS.map((c) => ({ ...c }));
+  const reset = DEFAULT_DASHBOARD_CARDS.map((c) => ({ ...c }));
+  dashboardLayoutPrefs.set({
+    cards: reset.map((c) => ({ ...c })),
+    gap: DEFAULT_CARD_GAP,
+    defaultRows: DEFAULT_CARD_ROWS,
+  });
+  return reset;
 }
 
 export function reorderCards(

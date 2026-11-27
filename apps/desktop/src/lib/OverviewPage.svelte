@@ -28,6 +28,7 @@
     CARD_ROWS_OPTIONS,
     DEFAULT_CARD_GAP,
     DEFAULT_CARD_ROWS,
+    cardWidthToGridClass,
     type CardGap,
     type CardId,
     type CardRows,
@@ -105,20 +106,6 @@
   $: visibleProjects = scopedProjects.filter((p) => p.key !== 'no-project' && p.label !== '未关联项目');
   $: allProjectTokens = visibleProjects.reduce((sum, p) => sum + p.total_tokens, 0);
   $: topProjectTotal = Math.max(1, ...visibleProjects.map((p) => p.total_tokens));
-
-  function widthClass(width: CardWidth): string {
-    switch (width) {
-      case '1/3':
-        return 'col-span-4';
-      case '1/2':
-        return 'col-span-6';
-      case '2/3':
-        return 'col-span-8';
-      case 'full':
-      default:
-        return 'col-span-12';
-    }
-  }
 
   function handleDragStart(e: DragEvent, index: number) {
     draggedIndex = index;
@@ -288,7 +275,7 @@
     {#each visibleCards as card, idx (card.id)}
       {@const meta = CARD_CATALOG[card.id]}
       <div
-        class={`overview-card-wrapper ${widthClass(card.width)}`}
+        class={`overview-card-wrapper ${cardWidthToGridClass(card.width)}`}
         class:is-editing={isEditingLayout}
         class:is-dragging={draggedIndex === idx}
         class:is-drop-target={dragOverIndex === idx}

@@ -1,6 +1,7 @@
 //! Desktop shell: packaged Agent supervisor, tray lifecycle and read-only stdio queries.
 //! The WebView never opens SQLite or reads source logs.
 mod agent;
+mod agent_control;
 mod agent_customizations;
 mod ai_assistant;
 mod dashboard;

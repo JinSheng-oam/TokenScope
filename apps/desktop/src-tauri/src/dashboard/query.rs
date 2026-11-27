@@ -1,18 +1,16 @@
 use crate::{
-    paths::{agent_is_running, database_path},
+    agent_control::{next_request_id, send_control_request},
+    paths::database_path,
     state::{DashboardRequest, DashboardWatch},
 };
 use std::{
-    fs::{self, OpenOptions},
-    io::{self, Write},
     sync::atomic::Ordering,
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager};
 use tokenscope_local_ipc::{
     DashboardResponse, SessionAnalysisResponse, SessionDeleteRequest, SessionDeleteResponse,
-    AGENT_CONTROL_DIRECTORY,
 };
 use tokenscope_local_store::{LocalStore, SessionAnalysisOptions};
 pub(super) fn dashboard_key(
@@ -298,80 +296,26 @@ pub(super) fn request_agent_session_delete(
         return Err("会话标识无效".into());
     }
     let db = database_path(app)?;
-    if !agent_is_running(&db)? {
-        return Err("本地采集器未运行，请刷新后重试".into());
-    }
-    let directory = db
-        .parent()
-        .ok_or("无效数据库路径")?
-        .join(AGENT_CONTROL_DIRECTORY);
-    fs::create_dir_all(&directory).map_err(|e| format!("创建 Agent 控制目录失败：{e}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
-            .map_err(|e| format!("设置 Agent 控制目录权限失败：{e}"))?;
-    }
-
-    static REQUEST_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    let sequence = REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let request_id = format!("{:x}-{:x}-{:x}", std::process::id(), timestamp, sequence);
+    let request_id = next_request_id();
     let request = SessionDeleteRequest {
         request_id: request_id.clone(),
         tool_id: tool_id.to_owned(),
         session_id: session_id.to_owned(),
     };
-    let body = serde_json::to_vec(&request).map_err(|e| format!("编码会话删除请求失败：{e}"))?;
-    let temporary = directory.join(format!("request-{request_id}.tmp"));
-    let request_path = directory.join(format!("request-{request_id}.json"));
-    let mut options = OpenOptions::new();
-    options.create_new(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+    let response: SessionDeleteResponse = send_control_request(
+        &db,
+        "request-",
+        "response-",
+        &request_id,
+        &request,
+        Duration::from_secs(30),
+        "会话删除",
+    )?;
+    if response.request_id != request_id {
+        return Err("Agent 会话删除响应标识不匹配".into());
     }
-    let write_request = (|| -> io::Result<()> {
-        let mut file = options.open(&temporary)?;
-        file.write_all(&body)?;
-        file.sync_all()?;
-        fs::rename(&temporary, &request_path)
-    })();
-    if let Err(error) = write_request {
-        let _ = fs::remove_file(&temporary);
-        return Err(format!("提交会话删除请求失败：{error}"));
+    if let Some(error) = response.error.as_deref() {
+        return Err(error.to_owned());
     }
-
-    let response_path = directory.join(format!("response-{request_id}.json"));
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        match fs::read(&response_path) {
-            Ok(bytes) => {
-                let _ = fs::remove_file(&response_path);
-                if bytes.len() > 8192 {
-                    return Err("Agent 会话删除响应超出大小限制".into());
-                }
-                let response: SessionDeleteResponse = serde_json::from_slice(&bytes)
-                    .map_err(|e| format!("读取 Agent 会话删除响应失败：{e}"))?;
-                if response.request_id != request_id {
-                    return Err("Agent 会话删除响应标识不匹配".into());
-                }
-                if let Some(error) = response.error.as_deref() {
-                    return Err(error.to_owned());
-                }
-                return Ok(response);
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(format!("读取 Agent 会话删除响应失败：{error}")),
-        }
-        if Instant::now() >= deadline {
-            let _ = fs::remove_file(&request_path);
-            return Err("Agent 30 秒内未处理会话删除请求，请稍后重试".into());
-        }
-        thread::sleep(Duration::from_millis(75));
-    }
+    Ok(response)
 }

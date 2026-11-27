@@ -357,7 +357,11 @@ fn build_skill_library() -> Result<Vec<SkillLibraryItem>, String> {
                 path: entry.path.clone(),
                 enabled: entry.enabled,
                 linked: entry.linked,
-                sync_mode: if entry.linked { "link".into() } else { "copy".into() },
+                sync_mode: if entry.linked {
+                    "link".into()
+                } else {
+                    "copy".into()
+                },
                 editable: entry.editable,
                 builtin: entry.builtin,
             };
@@ -380,7 +384,9 @@ fn build_skill_library() -> Result<Vec<SkillLibraryItem>, String> {
                         .map(|text| extract_frontmatter_description(&text))
                         .unwrap_or_default();
                 }
-                if existing.source.source_type == "local" && existing.source.source_group == "未分类" {
+                if existing.source.source_type == "local"
+                    && existing.source.source_group == "未分类"
+                {
                     let candidate_source =
                         resolve_source_info(dir.as_deref(), entry.builtin, &manager_index);
                     if candidate_source.source_type != "local"
@@ -436,7 +442,11 @@ fn build_skill_library() -> Result<Vec<SkillLibraryItem>, String> {
     result.sort_by(|a, b| {
         a.builtin
             .cmp(&b.builtin)
-            .then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
+            .then_with(|| {
+                a.name
+                    .to_ascii_lowercase()
+                    .cmp(&b.name.to_ascii_lowercase())
+            })
             .then_with(|| a.key.cmp(&b.key))
     });
     Ok(result)
@@ -499,8 +509,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
 fn create_link_dir(src_dir: &Path, dst_dir: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(src_dir, dst_dir)
-            .map_err(|e| format!("创建符号链接失败：{e}"))
+        std::os::unix::fs::symlink(src_dir, dst_dir).map_err(|e| format!("创建符号链接失败：{e}"))
     }
     #[cfg(windows)]
     {
@@ -719,7 +728,10 @@ fn set_provider_enabled(
                 if sync_mode == "copy" && is_link(&dir) {
                     remove_link_only(&dir)?;
                     copy_dir_recursive(&source_dir, &dir)?;
-                } else if sync_mode == "link" && !is_link(&dir) && !same_canonical_dir(&dir, &source_dir) {
+                } else if sync_mode == "link"
+                    && !is_link(&dir)
+                    && !same_canonical_dir(&dir, &source_dir)
+                {
                     let anchor = ensure_central_anchor(&source_dir, &source_id.name)?;
                     let _ = replace_copy_with_link(&dir, &anchor);
                 }
@@ -771,7 +783,8 @@ fn set_provider_enabled(
                                     let sib_dest = sib_root.path.join(&source_id.name);
                                     if fs::symlink_metadata(&sib_dest).is_err() {
                                         let _ = fs::create_dir_all(&sib_root.path);
-                                        let _ = link_or_copy_skill_dir(&canon, &sib_dest, sync_mode);
+                                        let _ =
+                                            link_or_copy_skill_dir(&canon, &sib_dest, sync_mode);
                                     }
                                 }
                             }
@@ -806,8 +819,9 @@ fn set_provider_enabled(
                                         let sib_dest = sib_root.path.join(&source_id.name);
                                         if fs::symlink_metadata(&sib_dest).is_err() {
                                             let _ = fs::create_dir_all(&sib_root.path);
-                                            let _ =
-                                                link_or_copy_skill_dir(&anchor, &sib_dest, sync_mode);
+                                            let _ = link_or_copy_skill_dir(
+                                                &anchor, &sib_dest, sync_mode,
+                                            );
                                         }
                                     }
                                 }

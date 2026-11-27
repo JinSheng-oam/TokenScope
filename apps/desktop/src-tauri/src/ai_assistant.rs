@@ -297,7 +297,12 @@ pub(crate) fn parse_summary_sections(raw: &str) -> (String, String, String, Stri
     let usage_guide = usage_lines.join("\n").trim().to_string();
 
     if overview.is_empty() && usage_guide.is_empty() && scenarios.is_empty() && brief.is_empty() {
-        (String::new(), raw.trim().to_string(), String::new(), String::new())
+        (
+            String::new(),
+            raw.trim().to_string(),
+            String::new(),
+            String::new(),
+        )
     } else {
         (brief, overview, scenarios, usage_guide)
     }

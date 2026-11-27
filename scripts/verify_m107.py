@@ -13,7 +13,7 @@ compose = (ROOT / 'deploy/compose.yaml').read_text(encoding='utf-8')
 dockerfile = (ROOT / 'deploy/hub/Dockerfile').read_text(encoding='utf-8')
 caddy = (ROOT / 'deploy/caddy/Caddyfile').read_text(encoding='utf-8')
 agent = (ROOT / 'crates/tokenscope-agent/src/daemon.rs').read_text(encoding='utf-8')
-repo = '\n'.join((ROOT/'crates/local-store/src/repository'/p).read_text(encoding='utf-8') for p in ('analytics/remote.rs', 'analytics/dashboard.rs'))
+repo = '\n'.join((ROOT/'crates/local-store/src/repository'/p).read_text(encoding='utf-8') for p in ('analytics/remote.rs', 'analytics/dashboard.rs', 'rollup.rs'))
 ui = (ROOT / 'apps/desktop/src/lib/DevicesPage.svelte').read_text(encoding='utf-8')
 package = json.loads((ROOT / 'apps/desktop/package.json').read_text(encoding='utf-8'))
 

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { adaptiveFitRow, adaptiveFitText } from './adaptiveFit';
+  import { buildTokenCandidates } from './adaptiveFormat';
   import CustomSelect from './CustomSelect.svelte';
   import { formatNumber, percentOf, relativeTime } from '../lib/format';
   import { icons } from '../lib/icons';
@@ -210,10 +212,10 @@
       </div>
       <span class="precision-chip exact">本机</span>
     </div>
-    <div class="device-token-total">
+    <div class="device-token-total" use:adaptiveFitRow>
       <span>本机 Token 消耗</span>
       <div class="device-token-val">
-        <strong class="tabular">{formatNumber(local?.total_tokens)}</strong>
+        <strong class="tabular" use:adaptiveFitText={{ candidates: buildTokenCandidates(local?.total_tokens) }}></strong>
         <span class="rank-share tabular">{percentOf(local?.total_tokens ?? 0, allDeviceTotal).toFixed(1)}%</span>
       </div>
     </div>
@@ -246,10 +248,10 @@
           {dev.revoked_at_ms ? '已注销' : '已同步'}
         </span>
       </div>
-      <div class="device-token-total">
+      <div class="device-token-total" use:adaptiveFitRow>
         <span>远端 Token 缓存</span>
         <div class="device-token-val">
-          <strong class="tabular">{formatNumber(devTokens)}</strong>
+          <strong class="tabular" use:adaptiveFitText={{ candidates: buildTokenCandidates(devTokens) }}></strong>
           <span class="rank-share tabular">{percentOf(devTokens, allDeviceTotal).toFixed(1)}%</span>
         </div>
       </div>

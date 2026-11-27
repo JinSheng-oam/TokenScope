@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { adaptiveFitRow, adaptiveFitText } from '../adaptiveFit';
+  import { buildCostCandidates } from '../adaptiveFormat';
   import { displayCurrency } from '../displayCurrency';
   import { formatCost, formatNumber, percentOf } from '../format';
   import type { UsageBreakdown, UsageTotals } from '../types';
@@ -48,12 +50,14 @@
     <button type="button" class="panel-tag" onclick={onNavigatePricing}>模型定价 →</button>
   </div>
 
-  <div class="cost-hero-row">
+  <div class="cost-hero-row" use:adaptiveFitRow>
     <div class="cost-hero-main">
       <span class="cost-hero-label">当前范围预估</span>
-      <strong class="cost-hero-value tabular">
-        {local?.estimated_cost_microusd != null ? formatCost(local.estimated_cost_microusd, $displayCurrency) : '暂无报价'}
-      </strong>
+      {#if local?.estimated_cost_microusd != null}
+        <strong class="cost-hero-value tabular" use:adaptiveFitText={{ candidates: buildCostCandidates(local.estimated_cost_microusd, $displayCurrency) }}></strong>
+      {:else}
+        <strong class="cost-hero-value tabular">暂无报价</strong>
+      {/if}
     </div>
     {#if totalPriceableRecords > 0}
       <span class="panel-tag tabular" title={`已计价 ${formatNumber(pricedRecords)} / ${formatNumber(totalPriceableRecords)} 笔`}>
@@ -67,13 +71,13 @@
       {#each costRankedModels.slice(0, cardRows) as model, idx}
         {@const modelCost = model.estimated_cost_microusd ?? 0}
         <div class="rank-item">
-          <div class="rank-row">
+          <div class="rank-row" use:adaptiveFitRow={{ minTitleWidth: 112 }}>
             <span class="rank-title">
               <span class="rank-num tabular">{String(idx + 1).padStart(2, '0')}</span>
               <strong title={model.label}>{compactModelLabel(model.label)}</strong>
             </span>
             <span class="rank-meta">
-              <span class="rank-value tabular">{formatCost(modelCost, $displayCurrency)}</span>
+              <span class="rank-value tabular" use:adaptiveFitText={{ candidates: buildCostCandidates(modelCost, $displayCurrency), title: formatCost(modelCost, $displayCurrency) }}></span>
               <span class="rank-share tabular">{percentOf(modelCost, Math.max(1, totalCostMicrousd)).toFixed(1)}%</span>
             </span>
           </div>

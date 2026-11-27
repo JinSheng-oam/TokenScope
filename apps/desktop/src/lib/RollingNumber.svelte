@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
+  import { buildTokenTiers, formatTokenAtTier, type TokenUnitTier } from './adaptiveFormat';
   import { formatNumber } from './format';
 
   export let value: number | null | undefined;
@@ -10,14 +11,43 @@
   let displayValue = 0;
   let pulsing = false;
   let mounted = false;
+  let activeTier: TokenUnitTier = 'full';
+  let spanEl: HTMLSpanElement | null = null;
   let rafId: number | null = null;
+  let fitRafId: number | null = null;
   let pulseTimer: ReturnType<typeof setTimeout> | null = null;
+  let resizeObserver: ResizeObserver | null = null;
 
   function stopAnimation() {
     if (rafId !== null) {
       cancelAnimationFrame(rafId);
       rafId = null;
     }
+  }
+
+  function pickAdaptiveTier() {
+    if (!spanEl || !spanEl.parentElement) return;
+    const container = spanEl.parentElement;
+    if (container.clientWidth <= 0) return;
+
+    const tiers = buildTokenTiers(targetValue);
+    let chosen: TokenUnitTier = tiers[0]?.tier ?? 'full';
+    for (const candidate of tiers) {
+      spanEl.textContent = candidate.text;
+      chosen = candidate.tier;
+      if (container.scrollWidth <= container.clientWidth + 1) break;
+    }
+
+    activeTier = chosen;
+    spanEl.textContent = formatTokenAtTier(enabled ? displayValue : targetValue, activeTier);
+  }
+
+  function scheduleTierFit() {
+    if (fitRafId !== null) cancelAnimationFrame(fitRafId);
+    fitRafId = requestAnimationFrame(() => {
+      fitRafId = null;
+      pickAdaptiveTier();
+    });
   }
 
   function animateTo(target: number, isInitial: boolean) {
@@ -67,6 +97,7 @@
     } else {
       animateTo(targetValue, false);
     }
+    tick().then(() => pickAdaptiveTier());
   }
 
   onMount(() => {
@@ -76,12 +107,28 @@
     } else {
       displayValue = targetValue;
     }
+
+    if (spanEl?.parentElement && typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        pickAdaptiveTier();
+      });
+      resizeObserver.observe(spanEl.parentElement);
+    }
+    pickAdaptiveTier();
+    scheduleTierFit();
   });
 
   onDestroy(() => {
     stopAnimation();
+    if (fitRafId !== null) cancelAnimationFrame(fitRafId);
     if (pulseTimer) clearTimeout(pulseTimer);
+    resizeObserver?.disconnect();
   });
 </script>
 
-<span class="rolling-num" class:is-updating={pulsing}>{formatNumber(enabled ? displayValue : targetValue)}</span>
+<span
+  bind:this={spanEl}
+  class="rolling-num"
+  class:is-updating={pulsing}
+  title={activeTier !== 'full' ? formatNumber(targetValue) : undefined}
+>{formatTokenAtTier(enabled ? displayValue : targetValue, activeTier)}</span>

@@ -3,7 +3,9 @@
   import { findActivityForSession, type TrendViewMode } from '../lib/dashboardView';
   import UsageCurve from './UsageCurve.svelte';
   import UsageHeatmap from './UsageHeatmap.svelte';
-  import { formatCost, formatNumber, percentOf } from '../lib/format';
+  import { adaptiveFitRow, adaptiveFitText } from './adaptiveFit';
+  import { buildCostCandidates, buildTokenCandidates } from './adaptiveFormat';
+  import { formatNumber, percentOf } from '../lib/format';
   import type { ChartPoint } from '../lib/dashboardView';
   import type { HeatmapCalendar, HeatmapCell } from '../lib/heatmap';
   import { icons } from '../lib/icons';
@@ -407,10 +409,10 @@
                 <div class="metric-split-seg output" style={`width: ${outputShareRate}%`} title={`输出 ${outputShareRate}%`}></div>
                 <div class="metric-split-seg cache" style={`width: ${cacheShareRate}%`} title={`缓存 ${cacheShareRate}%`}></div>
               </div>
-              <div class="metric-foot">
-                <span>非缓存 <strong>{formatNumber(Math.max(0, (local?.total_tokens ?? 0) - cacheTokens))}</strong></span>
+              <div class="metric-foot" use:adaptiveFitRow>
+                <span>非缓存 <strong use:adaptiveFitText={{ candidates: buildTokenCandidates(Math.max(0, (local?.total_tokens ?? 0) - cacheTokens)), priority: 0 }}></strong></span>
                 {#if local?.estimated_cost_microusd != null}
-                  <span title="按公开基础费率估算。Antigravity 未分类 Token 按输入价；缺报价时参考 Gemini 3 Flash。">基础估算 <strong>{formatCost(local.estimated_cost_microusd, $displayCurrency)}</strong></span>
+                  <span title="按公开基础费率估算。Antigravity 未分类 Token 按输入价；缺报价时参考 Gemini 3 Flash。">基础估算 <strong use:adaptiveFitText={{ candidates: buildCostCandidates(local.estimated_cost_microusd, $displayCurrency), priority: 1, title: '按公开基础费率估算。Antigravity 未分类 Token 按输入价；缺报价时参考 Gemini 3 Flash。' }}></strong></span>
                 {:else}
                   <span class="metric-foot-sub">含缓存读写</span>
                 {/if}
@@ -445,8 +447,8 @@
               <div class="metric-split-bar" aria-hidden="true">
                 <div class="metric-split-seg output" style={`width: ${Math.min(100, Math.max(4, Number(reasoningShareRate) || 0))}%`}></div>
               </div>
-              <div class="metric-foot">
-                <span>推理 <strong>{formatNumber(local?.reasoning_tokens)}</strong></span>
+              <div class="metric-foot" use:adaptiveFitRow>
+                <span>推理 <strong use:adaptiveFitText={{ candidates: buildTokenCandidates(local?.reasoning_tokens) }}></strong></span>
                 <span class="metric-foot-sub">占总量 {outputShareRate}%</span>
               </div>
             </article>
@@ -462,9 +464,9 @@
               <div class="metric-split-bar" aria-hidden="true">
                 <div class="metric-split-seg cache" style={`width: ${Math.min(100, Math.max(4, Number(cacheHitRate) || 0))}%`}></div>
               </div>
-              <div class="metric-foot">
-                <span>读取 <strong>{formatNumber(local?.cache_read_tokens)}</strong></span>
-                <span>写入 <strong>{formatNumber(local?.cache_write_tokens)}</strong></span>
+              <div class="metric-foot" use:adaptiveFitRow>
+                <span>读取 <strong use:adaptiveFitText={{ candidates: buildTokenCandidates(local?.cache_read_tokens) }}></strong></span>
+                <span>写入 <strong use:adaptiveFitText={{ candidates: buildTokenCandidates(local?.cache_write_tokens) }}></strong></span>
               </div>
             </article>
           </div>

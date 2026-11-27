@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { adaptiveFitRow, adaptiveFitText } from './adaptiveFit';
+  import { buildCostCandidates, buildTokenCandidates } from './adaptiveFormat';
   import { displayCurrency } from './displayCurrency';
-  import { formatCompactTokens, resolveSessionActivityState } from './dashboardView';
+  import { resolveSessionActivityState } from './dashboardView';
   import { formatCost, formatNumber, formatToolLabel, percentOf, relativeTime } from './format';
   import type { HeatmapCalendar } from './heatmap';
   import { liveMinute } from './liveClock';
@@ -88,12 +90,6 @@
     onNavigatePricing?: () => void;
   } = $props();
 
-  const modelMillionsFormat = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1, useGrouping: false });
-
-  function formatNarrowModelTokens(tokens: number): string {
-    return tokens >= 1_000_000 ? `${modelMillionsFormat.format(tokens / 1_000_000)}M` : formatCompactTokens(tokens);
-  }
-
   function compactModelLabel(label: string): string {
     const [provider, model, ...rest] = label.split('/');
     return provider && model && rest.length === 0 && model.toLowerCase().startsWith(`${provider.toLowerCase()}-`)
@@ -115,13 +111,13 @@
       <div class="rank-list">
         {#each activeTools.slice(0, cardRows) as tool, idx}
           <div class="rank-item">
-            <div class="rank-row">
+            <div class="rank-row" use:adaptiveFitRow={{ minTitleWidth: 96 }}>
               <span class="rank-title">
                 <span class="rank-num tabular">{String(idx + 1).padStart(2, '0')}</span>
                 {tool.label}
               </span>
               <span class="rank-meta">
-                <span class="rank-value tabular">{formatNumber(tool.total_tokens)}</span>
+                <span class="rank-value tabular" use:adaptiveFitText={{ candidates: buildTokenCandidates(tool.total_tokens) }}></span>
                 <span class="rank-share tabular">{percentOf(tool.total_tokens, local?.total_tokens ?? topToolTotal).toFixed(1)}%</span>
               </span>
             </div>
@@ -150,7 +146,7 @@
         {#each sortedModels.slice(0, cardRows) as model, idx}
           {@const shortLabel = compactModelLabel(model.label)}
           <div class="rank-item">
-            <div class="rank-row">
+            <div class="rank-row" use:adaptiveFitRow={{ minTitleWidth: 112 }}>
               <span class="rank-title">
                 <span class="rank-num tabular">{String(idx + 1).padStart(2, '0')}</span>
                 <strong title={model.label}>
@@ -163,15 +159,16 @@
                 </strong>
               </span>
               <span class="rank-meta">
-                <span class="rank-value tabular" title={`${formatNumber(model.total_tokens)} Token`}>
-                  <span class="model-tokens-full">{formatNumber(model.total_tokens)}</span>
-                  <span class="model-tokens-compact" aria-hidden="true">{formatNarrowModelTokens(model.total_tokens)}</span>
-                </span>
+                <span
+                  class="rank-value tabular"
+                  use:adaptiveFitText={{ candidates: buildTokenCandidates(model.total_tokens), priority: 0, title: `${formatNumber(model.total_tokens)} Token` }}
+                ></span>
                 {#if model.estimated_cost_microusd != null}
                   {@const cost = formatCost(model.estimated_cost_microusd, $displayCurrency)}
-                  <span class="panel-tag small-cost-tag tabular" title={`预估费用：${cost}`}>
-                    {cost}
-                  </span>
+                  <span
+                    class="panel-tag small-cost-tag tabular"
+                    use:adaptiveFitText={{ candidates: buildCostCandidates(model.estimated_cost_microusd, $displayCurrency), priority: 1, title: `预估费用：${cost}` }}
+                  ></span>
                 {/if}
                 <span class="rank-share tabular">{percentOf(model.total_tokens, allModelTokens).toFixed(1)}%</span>
               </span>
@@ -226,7 +223,7 @@
         {#each visibleRecentSessions as session, index}
           {@const actState = resolveSessionActivityState(session, sessionActivity, $liveMinute)}
           {@const rate = sessionRateLabel(sessionRates, session, $liveMinute)}
-          <div class="recent-session-row">
+          <div class="recent-session-row" use:adaptiveFitRow={{ minTitleWidth: 120 }}>
             <span class="recent-session-rank tabular">{String(index + pendingActivity.length + 1).padStart(2, '0')}</span>
             <span class="recent-session-main">
               <strong title={session.display_name ?? session.session_id}>
@@ -253,7 +250,7 @@
                 </span>
               {/if}
               <span class="recent-session-value tabular">
-                {formatNumber(session.total_tokens)}
+                <span use:adaptiveFitText={{ candidates: buildTokenCandidates(session.total_tokens) }}></span>
                 {#if rate}<small class="session-token-rate" title={sessionRateTitle}>{rate}</small>{/if}
               </span>
             </span>
@@ -317,13 +314,13 @@
       <div class="rank-list">
         {#each visibleProjects.slice(0, cardRows) as project, idx}
           <div class="rank-item">
-            <div class="rank-row">
+            <div class="rank-row" use:adaptiveFitRow={{ minTitleWidth: 112 }}>
               <span class="rank-title">
                 <span class="rank-num tabular">{String(idx + 1).padStart(2, '0')}</span>
                 <strong title={project.label}>{project.label}</strong>
               </span>
               <span class="rank-meta">
-                <span class="rank-value tabular">{formatNumber(project.total_tokens)}</span>
+                <span class="rank-value tabular" use:adaptiveFitText={{ candidates: buildTokenCandidates(project.total_tokens) }}></span>
                 <span class="rank-share tabular">{percentOf(project.total_tokens, allProjectTokens).toFixed(1)}%</span>
               </span>
             </div>

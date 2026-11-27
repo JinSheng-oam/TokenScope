@@ -425,7 +425,6 @@
   white-space: nowrap;
 }
 
-.model-tokens-compact,
 .model-label-compact {
   display: none;
 }
@@ -456,7 +455,6 @@
     min-width: 0;
   }
 
-  .model-tokens-full,
   .model-label-full {
     /* Preserve the full value for assistive technology. */
     position: absolute;
@@ -466,7 +464,6 @@
     overflow: hidden;
   }
 
-  .model-tokens-compact,
   .model-label-compact {
     display: inline;
   }

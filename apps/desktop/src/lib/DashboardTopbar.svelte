@@ -18,6 +18,7 @@
   export let customEnd: string;
   export let todayIso: string;
   export let refreshing: boolean;
+  export let rangeLoading = false;
   export let selectDeviceScope: (scope: DeviceScope) => void;
   export let handleSelectRange: (range: Exclude<DashboardRange, "custom">) => void;
   export let applyCustomRange: (selection: { start: string; end: string }) => void;
@@ -165,7 +166,7 @@
         {/if}
       </div>
 
-      <div class="range-capsule" role="group" aria-label="时间跨度">
+      <div class="range-capsule" class:is-loading={rangeLoading} role="group" aria-label="时间跨度">
         {#each [
           { value: 'today', label: '今天' },
           { value: '7d', label: '7 天' },

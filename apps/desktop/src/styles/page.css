@@ -1,6 +1,15 @@
 /* ==========================================================================
    Page Content & Header
    ========================================================================== */
+.page-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .page-content {
   --page-heading-gap: 14px;
   flex: 1;
@@ -10,6 +19,93 @@
   overflow-x: hidden;
   /* 内容区独立滚动；宽屏下通过内边距把内容收拢到 1440px 视觉宽度 */
   padding: 18px max(24px, calc((100% - 1392px) / 2)) 32px;
+  transition: opacity 160ms ease, filter 160ms ease;
+}
+
+.page-content.is-refreshing {
+  opacity: 0.72;
+  filter: saturate(0.92);
+}
+
+.page-refresh-shimmer {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+  overflow: hidden;
+  background: rgba(11, 13, 17, 0.12);
+  animation: page-shimmer-fade-in 140ms ease-out both;
+}
+
+[data-theme="light"] .page-refresh-shimmer {
+  background: rgba(246, 247, 249, 0.22);
+}
+
+.page-refresh-beam {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 38%;
+  height: 2px;
+  border-radius: 0 2px 2px 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--brand-primary) 55%,
+    rgba(255, 255, 255, 0.85) 85%,
+    transparent 100%
+  );
+  box-shadow: 0 0 12px rgba(142, 153, 243, 0.55);
+  animation: page-beam-slide 1.05s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.page-refresh-sweep {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    108deg,
+    transparent 20%,
+    rgba(142, 153, 243, 0.06) 38%,
+    rgba(255, 255, 255, 0.14) 50%,
+    rgba(142, 153, 243, 0.06) 62%,
+    transparent 80%
+  );
+  transform: translateX(-100%);
+  animation: page-shimmer-sweep 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  will-change: transform;
+}
+
+[data-theme="light"] .page-refresh-sweep {
+  background: linear-gradient(
+    108deg,
+    transparent 20%,
+    rgba(79, 91, 213, 0.08) 38%,
+    rgba(255, 255, 255, 0.68) 50%,
+    rgba(79, 91, 213, 0.08) 62%,
+    transparent 80%
+  );
+}
+
+@keyframes page-shimmer-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes page-beam-slide {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(360%); }
+}
+
+@keyframes page-shimmer-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-refresh-beam,
+  .page-refresh-sweep {
+    animation: none;
+  }
 }
 
 .page-content.compact-session,

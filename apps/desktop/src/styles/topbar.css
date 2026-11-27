@@ -120,11 +120,38 @@
 }
 
 .range-btn.selected {
+  position: relative;
+  overflow: hidden;
   background-color: var(--bg-card);
   color: var(--brand-primary);
   box-shadow: var(--shadow-card);
   border-color: var(--border-subtle);
   font-weight: 600;
+}
+
+.range-capsule.is-loading .range-btn.selected {
+  border-color: var(--brand-border);
+  box-shadow: 0 0 0 1px var(--brand-subtle), var(--shadow-card);
+}
+
+.range-capsule.is-loading .range-btn.selected::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 15%,
+    rgba(142, 153, 243, 0.24) 50%,
+    transparent 85%
+  );
+  transform: translateX(-100%);
+  animation: range-btn-shimmer 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes range-btn-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 
 .custom-range-bar {

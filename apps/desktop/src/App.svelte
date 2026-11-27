@@ -81,6 +81,8 @@
   let agent: AgentStatus | null = null;
   let loading = true;
   let refreshing = false;
+  let rangeSwitching = false;
+  let rangeSwitchTimer: number | undefined;
   let codexQuotaRefreshing = false;
   let antigravityQuotaRefreshing = false;
   let codexQuotaError = '';
@@ -150,6 +152,7 @@
   let hoveredHeatmapCell: HeatmapCell | null = null;
 
   $: quotaRefreshing = codexQuotaRefreshing || antigravityQuotaRefreshing;
+  $: isContentRefreshing = (refreshing || rangeSwitching) && !loading && !isLocalConfigTab;
   $: quotaRows = antigravityQuotaOverride ?? snapshot?.antigravity_quota ?? [];
   $: activeAntigravityQuotas = filterActiveAntigravityQuotas(quotaRows);
   $: activeCodexQuotas = filterActiveCodexQuotas(codexQuotaOverride ?? snapshot?.codex_quota ?? []);
@@ -391,8 +394,18 @@
     if (Date.now() - newest >= 60_000 && Date.now() - lastQuotaAttemptAt >= 60_000) void handleRefreshCodexQuota();
   }
 
+  function beginRangeSwitchTransition() {
+    rangeSwitching = true;
+    if (rangeSwitchTimer !== undefined) window.clearTimeout(rangeSwitchTimer);
+    rangeSwitchTimer = window.setTimeout(() => {
+      rangeSwitchTimer = undefined;
+      rangeSwitching = false;
+    }, 520);
+  }
+
   function handleSelectRange(next: Exclude<DashboardRange, 'custom'>) {
     if (range === next) return;
+    beginRangeSwitchTransition();
     sessionController.resetForRangeChange();
     range = next;
     void loadDashboard();
@@ -409,6 +422,7 @@
     }
     customStart = start;
     customEnd = end;
+    beginRangeSwitchTransition();
     sessionController.resetForRangeChange();
     range = 'custom';
     void loadDashboard();
@@ -554,6 +568,7 @@
       unsubscribeRefreshInterval();
       if (activityTimer !== undefined) window.clearInterval(activityTimer);
       if (quotaTimer !== undefined) window.clearInterval(quotaTimer);
+      if (rangeSwitchTimer !== undefined) window.clearTimeout(rangeSwitchTimer);
       sessionController.dispose();
       unlistenDashboard?.();
       unlistenObservations?.();
@@ -652,19 +667,22 @@
     <!-- Topbar -->
     <DashboardTopbar {activeTabLabel} {deviceScope} {deviceScopeLabel} {selectableRemoteDevices} {snapshot}
       {range} {todayIso} {customStart} {customEnd}
-      {refreshing} {selectDeviceScope} {handleSelectRange} {applyCustomRange} {loadDashboard} showControls={!isLocalConfigTab}
+      {refreshing} rangeLoading={rangeSwitching || refreshing} {selectDeviceScope} {handleSelectRange} {applyCustomRange} {loadDashboard} showControls={!isLocalConfigTab}
       {isEditingOverviewLayout}
       onToggleOverviewLayout={() => (isEditingOverviewLayout = !isEditingOverviewLayout)}
     />
 
     <!-- Page Content Area -->
-    <section
-      class="page-content"
-      class:fit-viewport={loading && !isLocalConfigTab}
-      class:overview-page={activeTab === 'overview' && !loading}
-      class:compact-page={activeTab === 'models' || activeTab === 'projects' || isLocalConfigTab}
-      class:compact-session={activeTab === 'sessions' && ($sessionState.pageSize <= 7 || ($sessionState.loading && !$sessionState.analysis))}
-    >
+    <div class="page-stage">
+      <section
+        class="page-content"
+        class:fit-viewport={loading && !isLocalConfigTab}
+        class:overview-page={activeTab === 'overview' && !loading}
+        class:compact-page={activeTab === 'models' || activeTab === 'projects' || isLocalConfigTab}
+        class:compact-session={activeTab === 'sessions' && ($sessionState.pageSize <= 7 || ($sessionState.loading && !$sessionState.analysis))}
+        class:is-refreshing={isContentRefreshing}
+        aria-busy={isContentRefreshing || undefined}
+      >
       {#if errorMessage && !isLocalConfigTab}
         <div class="notice-box" role="alert">
           {@html icons.alert}
@@ -976,7 +994,15 @@
           />
         {/if}
       {/if}
-    </section>
+      </section>
+
+      {#if isContentRefreshing}
+        <div class="page-refresh-shimmer" aria-hidden="true">
+          <div class="page-refresh-beam"></div>
+          <div class="page-refresh-sweep"></div>
+        </div>
+      {/if}
+    </div>
   </main>
 </div>
 

@@ -79,4 +79,17 @@ describe('DashboardTopbar.svelte', () => {
     await fireEvent.click(btn);
     expect(loadDashboard).not.toHaveBeenCalled();
   });
+
+  it('marks range capsule as loading when rangeLoading is true', () => {
+    const { getByRole } = render(DashboardTopbar, {
+      props: {
+        ...baseProps,
+        range: '7d',
+        rangeLoading: true,
+      },
+    });
+
+    const capsule = getByRole('group', { name: '时间跨度' });
+    expect(capsule.classList.contains('is-loading')).toBe(true);
+  });
 });

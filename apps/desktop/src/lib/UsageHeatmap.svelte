@@ -2,9 +2,13 @@
   import { formatCompactTokens } from "./dashboardView";
   import { formatNumber } from "./format";
   import type { HeatmapCalendar, HeatmapCell } from "./heatmap";
+  import { heatmapConfig, resolveHeatmapPaletteStyle } from "./heatmapConfig";
 
   export let heatmapCalendar: HeatmapCalendar;
   export let hoveredHeatmapCell: HeatmapCell | null;
+
+  $: paletteStyle = resolveHeatmapPaletteStyle($heatmapConfig);
+  $: [t2, t3, t4] = heatmapCalendar.thresholds;
 
   const heatmapWeekdayLabels = ['一', '', '三', '', '五', '', '日'];
 
@@ -25,7 +29,7 @@
 </script>
 
 <!-- GitHub-Style Contribution Heatmap -->
-<div class="chart-wrap">
+<div class="chart-wrap" style={paletteStyle}>
   <div
     class="heatmap-stage"
     role="region"
@@ -120,11 +124,11 @@
     </span>
     <span class="heatmap-legend-scale" aria-label="热力图颜色强度图例">
       <span>少</span>
-      <span class="heatmap-legend-swatch level-0"></span>
-      <span class="heatmap-legend-swatch level-1"></span>
-      <span class="heatmap-legend-swatch level-2"></span>
-      <span class="heatmap-legend-swatch level-3"></span>
-      <span class="heatmap-legend-swatch level-4"></span>
+      <span class="heatmap-legend-swatch level-0" title="0 Token"></span>
+      <span class="heatmap-legend-swatch level-1" title={`> 0 且 < ${formatCompactTokens(t2)} Token`}></span>
+      <span class="heatmap-legend-swatch level-2" title={`≥ ${formatCompactTokens(t2)} Token`}></span>
+      <span class="heatmap-legend-swatch level-3" title={`≥ ${formatCompactTokens(t3)} Token`}></span>
+      <span class="heatmap-legend-swatch level-4" title={`≥ ${formatCompactTokens(t4)} Token`}></span>
       <span>多</span>
     </span>
   </div>

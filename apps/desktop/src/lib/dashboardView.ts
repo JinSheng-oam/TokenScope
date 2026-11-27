@@ -1,5 +1,6 @@
 import { formatNumber } from './format';
 import { buildHeatmapCalendar, formatWeekday } from './heatmap';
+import type { HeatmapConfig } from './heatmapConfig';
 import type {
   DashboardRange,
   DashboardSnapshot,
@@ -27,6 +28,7 @@ export type DashboardProjectionOptions = {
   range: DashboardRange;
   customStart: string;
   customEnd: string;
+  heatmapConfig?: Partial<HeatmapConfig>;
 };
 
 export type ChartPoint = DashboardSnapshot['daily'][number] & {
@@ -240,6 +242,7 @@ export function buildDashboardProjection(options: DashboardProjectionOptions) {
     heatmapCalendar: buildHeatmapCalendar(
       options.heatmapSnapshot ? resolveScopedDaily(options.heatmapSnapshot, scope) : chartValues,
       options.todayIso || chartValues[chartValues.length - 1]?.date || '',
+      options.heatmapConfig,
     ),
     topToolTotal: Math.max(1, ...scopedTools.map((item) => item.total_tokens)),
     topModelTotal: Math.max(1, ...scopedModels.map((item) => item.total_tokens)),

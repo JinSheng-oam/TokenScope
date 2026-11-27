@@ -3,6 +3,8 @@
   import { findActivityForSession, type TrendViewMode } from '../lib/dashboardView';
   import UsageCurve from './UsageCurve.svelte';
   import UsageHeatmap from './UsageHeatmap.svelte';
+  import HeatmapSettingsPanel from './HeatmapSettingsPanel.svelte';
+  import { describeHeatmapRangeMode, heatmapConfig } from './heatmapConfig';
   import { adaptiveFitRow, adaptiveFitText } from './adaptiveFit';
   import { buildCostCandidates, buildTokenCandidates } from './adaptiveFormat';
   import { formatNumber, percentOf } from '../lib/format';
@@ -388,6 +390,15 @@
               </button>
             </div>
           </div>
+
+          {#if card.id === 'trend'}
+            <HeatmapSettingsPanel
+              todayIso={heatmapCalendar.rangeEndDate}
+              onEnsureHeatmapMode={() => {
+                if (trendViewMode !== 'heatmap') onSwitchTrendView('heatmap');
+              }}
+            />
+          {/if}
         {/if}
 
         <!-- Card Contents -->
@@ -517,7 +528,7 @@
                 <h2>Token 使用趋势</h2>
                 <p>
                   {trendViewMode === 'heatmap'
-                    ? `完整历史 · ${heatmapCalendar.weeks.length} 周 · ${heatmapRangeLabel}`
+                    ? `${describeHeatmapRangeMode($heatmapConfig)} · ${heatmapCalendar.weeks.length} 周 · ${heatmapRangeLabel}`
                     : '按本机时区自然日汇集'}
                 </p>
               </div>

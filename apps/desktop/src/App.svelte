@@ -13,6 +13,7 @@
     type ModelSortBy,
     type TrendViewMode,
   } from './lib/dashboardView';
+  import { heatmapConfig } from './lib/heatmapConfig';
   import { filterActiveCodexQuotas } from './lib/quotaPageView';
   import {
     getDashboardSnapshot,
@@ -225,6 +226,7 @@
     range,
     customStart,
     customEnd,
+    heatmapConfig: $heatmapConfig,
   });
 
   $: sessionPage = $sessionState.analysis?.page;

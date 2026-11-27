@@ -15,6 +15,7 @@ use tokenscope_local_store::{LocalStore, ModelPriceEntry};
 
 const CATALOG_URL: &str = "https://models.dev/api.json";
 const CATALOG_VERSION_PREFIX: &str = "models.dev:base-v4:";
+const BUILTIN_FALLBACK_VERSION: &str = "builtin:fallback-v1";
 const MAX_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
 const SUCCESS_REFRESH_MS: i64 = 24 * 60 * 60 * 1000;
 const RETRY_REFRESH_MS: i64 = 60 * 60 * 1000;
@@ -190,8 +191,31 @@ fn run_refresh(
             }
         },
         Err(error) => {
-            let message = format!("下载价格目录失败（models.dev）：{error}");
+            let mut message = format!("下载价格目录失败（models.dev）：{error}");
             eprintln!("TokenScope public model prices unavailable: {error}");
+            let has_any_catalog = store
+                .model_price_catalog_state()
+                .ok()
+                .and_then(|s| s.active_version)
+                .is_some();
+            if !has_any_catalog {
+                let fallback = builtin_fallback_entries();
+                if let Ok(report) = store.install_model_price_catalog(
+                    BUILTIN_FALLBACK_VERSION,
+                    &fallback,
+                    None,
+                    now,
+                ) {
+                    println!(
+                        "model price catalog fallback installed version={} models={} historical_records_priced={}",
+                        report.price_version, report.model_count, report.backfilled_records
+                    );
+                    message = format!(
+                        "已启用内置离线兜底报价（{} 个主流模型），联网后可刷新完整目录：{error}",
+                        report.model_count
+                    );
+                }
+            }
             write_status_file(
                 db_path,
                 &PriceCatalogStatus {
@@ -479,6 +503,59 @@ fn price_version(entries: &[ModelPriceEntry]) -> Result<String, serde_json::Erro
     let encoded = serde_json::to_vec(entries)?;
     let digest = Sha256::digest(encoded);
     Ok(format!("{CATALOG_VERSION_PREFIX}{digest:x}"))
+}
+
+fn rate_entry(
+    provider_id: &str,
+    model_id: &str,
+    input: &str,
+    output: &str,
+    cache_read: Option<&str>,
+    cache_write: Option<&str>,
+) -> ModelPriceEntry {
+    ModelPriceEntry {
+        provider_id: provider_id.to_owned(),
+        model_id: model_id.to_owned(),
+        input_rate_nanos: decimal_to_nanos(input),
+        output_rate_nanos: decimal_to_nanos(output),
+        cache_read_rate_nanos: cache_read.and_then(decimal_to_nanos),
+        cache_write_rate_nanos: cache_write.and_then(decimal_to_nanos),
+        reasoning_rate_nanos: None,
+    }
+}
+
+/// Built-in offline fallback rates (USD per 1M tokens) for core models so users in
+/// air-gapped or proxy-restricted networks still get baseline cost estimates until
+/// the live models.dev catalog can be fetched.
+fn builtin_fallback_entries() -> Vec<ModelPriceEntry> {
+    vec![
+        // OpenAI
+        rate_entry("openai", "gpt-5.4", "2.5", "15", Some("0.25"), None),
+        rate_entry("openai", "gpt-5.3-codex", "1.75", "14", Some("0.175"), None),
+        rate_entry("openai", "gpt-5.2", "1.75", "14", Some("0.175"), None),
+        rate_entry("openai", "gpt-5", "1.25", "10", Some("0.125"), None),
+        rate_entry("openai", "gpt-5-mini", "0.25", "2", Some("0.025"), None),
+        rate_entry("openai", "gpt-4.1", "2", "8", Some("0.5"), None),
+        rate_entry("openai", "gpt-4.1-mini", "0.4", "1.6", Some("0.1"), None),
+        rate_entry("openai", "gpt-4o", "2.5", "10", Some("1.25"), None),
+        rate_entry("openai", "o3", "2", "8", Some("0.5"), None),
+        rate_entry("openai", "o4-mini", "1.1", "4.4", Some("0.275"), None),
+        // Anthropic
+        rate_entry("anthropic", "claude-opus-4-6", "15", "75", Some("1.5"), Some("18.75")),
+        rate_entry("anthropic", "claude-sonnet-4-6", "3", "15", Some("0.3"), Some("3.75")),
+        rate_entry("anthropic", "claude-sonnet-4-5", "3", "15", Some("0.3"), Some("3.75")),
+        rate_entry("anthropic", "claude-haiku-4-5", "1", "5", Some("0.1"), Some("1.25")),
+        rate_entry("anthropic", "claude-3-7-sonnet", "3", "15", Some("0.3"), Some("3.75")),
+        rate_entry("anthropic", "claude-3-5-sonnet", "3", "15", Some("0.3"), Some("3.75")),
+        // Google
+        rate_entry("google", "gemini-3-flash-preview", "0.5", "3", Some("0.05"), None),
+        rate_entry("google", "gemini-2.5-pro", "1.25", "10", Some("0.125"), None),
+        rate_entry("google", "gemini-2.5-flash", "0.3", "2.5", Some("0.03"), None),
+        rate_entry("google", "gemini-2.0-flash", "0.1", "0.4", Some("0.025"), None),
+        // DeepSeek
+        rate_entry("deepseek", "deepseek-chat", "0.27", "1.1", Some("0.07"), None),
+        rate_entry("deepseek", "deepseek-reasoner", "0.55", "2.19", Some("0.14"), None),
+    ]
 }
 
 #[cfg(test)]

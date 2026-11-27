@@ -1033,15 +1033,111 @@
     {#if error}<p class="msg error" role="alert">{error}</p>{/if}
     {#if notice}<p class="msg success" role="status">{notice}</p>{/if}
 
+    {#if loading && items.length > 0}
+      <div class="skill-loading-bar" role="status" aria-label="正在刷新技能库"></div>
+    {/if}
+
     {#if loading && items.length === 0}
-      <div class="skills-grid">
-        {#each Array(6) as _}
-          <div class="skeleton-skill-card">
-            <div class="sk-line w-45"></div>
-            <div class="sk-line w-90"></div>
-            <div class="sk-line w-65"></div>
+      <div class="skill-loading-shell" role="status" aria-live="polite" aria-label="正在加载技能库">
+        <div class="skill-loading-bar"></div>
+        {#if grouped}
+          <div class="groups-container">
+            {#each [{ w: '140px', count: 3 }, { w: '172px', count: 3 }] as grpSk, gIdx}
+              <div class="source-group-section">
+                <div class="sk-group-head" style={`--delay: ${gIdx * 90}ms`}>
+                  <span class="sk-bone sk-dot-sm"></span>
+                  <span class="sk-bone sk-group-title" style={`width: ${grpSk.w}`}></span>
+                  <span class="sk-bone sk-count-pill"></span>
+                </div>
+                {#if viewMode === 'grid'}
+                  <div class="skills-grid">
+                    {#each Array(grpSk.count) as _, cIdx}
+                      {@const idx = gIdx * 3 + cIdx}
+                      <div class="skeleton-skill-card" style={`--delay: ${idx * 55}ms`}>
+                        <div class="sk-card-head">
+                          <span class="sk-bone sk-status-dot"></span>
+                          <span class="sk-bone sk-card-title" style={`width: ${['48%', '62%', '42%', '56%', '50%', '44%'][idx % 6]}`}></span>
+                          <span class="sk-bone sk-switch-pill"></span>
+                        </div>
+                        <div class="sk-card-body">
+                          <span class="sk-bone sk-desc-line" style={`width: ${['92%', '84%', '96%', '88%', '90%', '82%'][idx % 6]}`}></span>
+                          <span class="sk-bone sk-desc-line" style={`width: ${['68%', '58%', '74%', '62%', '66%', '54%'][idx % 6]}`}></span>
+                        </div>
+                        <div class="sk-card-foot">
+                          <span class="sk-bone sk-source-pill"></span>
+                          <div class="sk-provider-row">
+                            {#each Array(5) as _, pIdx}
+                              <span class="sk-bone sk-provider-dot" style={`--delay: ${idx * 55 + pIdx * 35}ms`}></span>
+                            {/each}
+                          </div>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {:else}
+                  <div class="skills-list">
+                    {#each Array(grpSk.count) as _, cIdx}
+                      {@const idx = gIdx * 3 + cIdx}
+                      <div class="skeleton-skill-row" style={`--delay: ${idx * 50}ms`}>
+                        <span class="sk-bone sk-status-dot"></span>
+                        <span class="sk-bone sk-row-title" style={`width: ${['128px', '156px', '112px', '144px', '132px', '120px'][idx % 6]}`}></span>
+                        <span class="sk-bone sk-row-desc" style={`width: ${['42%', '36%', '46%', '38%', '44%', '34%'][idx % 6]}`}></span>
+                        <div class="sk-provider-row sk-row-right">
+                          {#each Array(5) as _, pIdx}
+                            <span class="sk-bone sk-provider-dot" style={`--delay: ${idx * 50 + pIdx * 30}ms`}></span>
+                          {/each}
+                          <span class="sk-bone sk-source-pill"></span>
+                          <span class="sk-bone sk-switch-pill"></span>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/each}
           </div>
-        {/each}
+        {:else if viewMode === 'grid'}
+          <div class="skills-grid">
+            {#each Array(9) as _, idx}
+              <div class="skeleton-skill-card" style={`--delay: ${idx * 50}ms`}>
+                <div class="sk-card-head">
+                  <span class="sk-bone sk-status-dot"></span>
+                  <span class="sk-bone sk-card-title" style={`width: ${['46%', '60%', '40%', '54%', '48%', '64%', '44%', '58%', '50%'][idx]}`}></span>
+                  <span class="sk-bone sk-switch-pill"></span>
+                </div>
+                <div class="sk-card-body">
+                  <span class="sk-bone sk-desc-line" style={`width: ${['94%', '86%', '92%', '88%', '96%', '84%', '90%', '86%', '92%'][idx]}`}></span>
+                  <span class="sk-bone sk-desc-line" style={`width: ${['64%', '56%', '72%', '60%', '68%', '52%', '66%', '58%', '62%'][idx]}`}></span>
+                </div>
+                <div class="sk-card-foot">
+                  <span class="sk-bone sk-source-pill"></span>
+                  <div class="sk-provider-row">
+                    {#each Array(5) as _, pIdx}
+                      <span class="sk-bone sk-provider-dot" style={`--delay: ${idx * 50 + pIdx * 30}ms`}></span>
+                    {/each}
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="skills-list">
+            {#each Array(8) as _, idx}
+              <div class="skeleton-skill-row" style={`--delay: ${idx * 45}ms`}>
+                <span class="sk-bone sk-status-dot"></span>
+                <span class="sk-bone sk-row-title" style={`width: ${['136px', '160px', '118px', '148px', '128px', '152px', '124px', '142px'][idx]}`}></span>
+                <span class="sk-bone sk-row-desc" style={`width: ${['44%', '36%', '48%', '40%', '46%', '34%', '42%', '38%'][idx]}`}></span>
+                <div class="sk-provider-row sk-row-right">
+                  {#each Array(5) as _, pIdx}
+                    <span class="sk-bone sk-provider-dot" style={`--delay: ${idx * 45 + pIdx * 28}ms`}></span>
+                  {/each}
+                  <span class="sk-bone sk-source-pill"></span>
+                  <span class="sk-bone sk-switch-pill"></span>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
     {:else if filteredItems.length === 0}
       <div class="empty-library">
@@ -1725,26 +1821,190 @@
     font-variant-numeric: tabular-nums;
   }
 
+  .skill-loading-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .skill-loading-bar {
+    position: relative;
+    height: 2px;
+    width: 100%;
+    border-radius: 999px;
+    background: var(--border-subtle);
+    overflow: hidden;
+  }
+
+  .skill-loading-bar::after {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 36%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent 0%, var(--brand-primary) 50%, transparent 100%);
+    animation: skill-progress-slide 1.25s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+
+  @keyframes skill-progress-slide {
+    0% { transform: translateX(-110%); }
+    100% { transform: translateX(310%); }
+  }
+
+  @keyframes skill-sk-enter {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .sk-group-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 2px 8px;
+    animation: skill-sk-enter 220ms ease both;
+    animation-delay: var(--delay, 0ms);
+  }
+
+  .sk-dot-sm {
+    width: 12px;
+    height: 12px;
+    border-radius: 4px;
+  }
+
+  .sk-group-title {
+    height: 13px;
+    border-radius: 5px;
+  }
+
+  .sk-count-pill {
+    width: 24px;
+    height: 16px;
+    border-radius: 999px;
+  }
+
   .skeleton-skill-card {
-    height: 124px;
-    padding: 14px;
+    min-height: 124px;
+    padding: 13px 14px;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
     background: var(--bg-card);
     display: flex;
     flex-direction: column;
     gap: 10px;
+    animation: skill-sk-enter 240ms ease both;
+    animation-delay: var(--delay, 0ms);
   }
 
-  .sk-line {
-    height: 12px;
-    border-radius: 6px;
-    background: var(--bg-secondary);
+  .sk-card-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
-  .sk-line.w-45 { width: 45%; height: 14px; }
-  .sk-line.w-90 { width: 90%; }
-  .sk-line.w-65 { width: 65%; margin-top: auto; }
+  .sk-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+
+  .sk-card-title {
+    height: 14px;
+    border-radius: 5px;
+  }
+
+  .sk-switch-pill {
+    width: 30px;
+    height: 17px;
+    border-radius: 999px;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  .sk-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .sk-desc-line {
+    height: 11px;
+    border-radius: 4px;
+  }
+
+  .sk-card-foot {
+    margin-top: auto;
+    padding-top: 6px;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .sk-source-pill {
+    width: 58px;
+    height: 16px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+
+  .sk-provider-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .sk-provider-dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    flex-shrink: 0;
+  }
+
+  .skeleton-skill-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    padding: 8px 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    animation: skill-sk-enter 220ms ease both;
+    animation-delay: var(--delay, 0ms);
+  }
+
+  .sk-row-title {
+    height: 13px;
+    border-radius: 5px;
+    flex-shrink: 0;
+  }
+
+  .sk-row-desc {
+    height: 11px;
+    border-radius: 4px;
+  }
+
+  .sk-row-right {
+    margin-left: auto;
+    gap: 8px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .skill-loading-bar::after,
+    .sk-group-head,
+    .skeleton-skill-card,
+    .skeleton-skill-row {
+      animation: none;
+    }
+  }
 
   .empty-library {
     padding: 48px 20px;

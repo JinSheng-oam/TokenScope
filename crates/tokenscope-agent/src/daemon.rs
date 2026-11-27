@@ -88,7 +88,7 @@ pub(super) fn run(
             || collection.deepseek_harness
             || collection.pi
         {
-            pricing::refresh_if_due(store);
+            pricing::refresh_if_due(store, db);
             if options.shutdown_requested() {
                 break;
             }

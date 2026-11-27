@@ -87,6 +87,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             lifecycle::reveal_main_window,
             model_pricing::get_model_price_catalog,
+            model_pricing::refresh_model_price_catalog,
             model_pricing::save_model_pricing_preferences,
             agent::start_agent,
             agent::stop_agent,

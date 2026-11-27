@@ -400,7 +400,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if !daemon {
         if codex || claude || antigravity || deepseek_harness || pi {
-            pricing::refresh_if_due(&mut store);
+            pricing::refresh_if_due(&mut store, &db);
             collect_once(
                 &mut store,
                 &CollectionOptions {

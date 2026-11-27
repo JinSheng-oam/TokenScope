@@ -29,6 +29,7 @@
   let pageSize = 10;
   let page = 1;
   let loading = false;
+  let refreshing = false;
   let error = '';
   let pageSizeReady = false;
   let saving = false;
@@ -102,6 +103,25 @@
       error = '读取价格目录失败，请重试。';
     } finally {
       loading = false;
+    }
+  }
+
+  async function refreshCatalog() {
+    if (!runtimeAvailable || refreshing || loading) return;
+    refreshing = true;
+    error = '';
+    try {
+      await invoke('refresh_model_price_catalog');
+      await load();
+    } catch (reason) {
+      error = String(reason);
+      try {
+        catalog = await invoke<Catalog>('get_model_price_catalog');
+      } catch {
+        /* Preserve existing catalog state. */
+      }
+    } finally {
+      refreshing = false;
     }
   }
 
@@ -244,6 +264,17 @@
           />
           <span>关键词匹配</span>
         </label>
+
+        <button
+          type="button"
+          class="btn-secondary btn-refresh-catalog"
+          disabled={refreshing || loading}
+          onclick={refreshCatalog}
+          title="立即从 models.dev 拉取最新公开模型价格目录"
+        >
+          {@html icons.refresh}
+          <span>{refreshing ? '刷新中…' : '刷新目录'}</span>
+        </button>
       </div>
     </div>
 
@@ -483,6 +514,13 @@
         {#if entries.length && hasFilters}
           <p>请尝试调整搜索词或清除筛选条件。</p>
           <button type="button" class="btn-secondary" onclick={clearFilters}>清除筛选</button>
+        {:else if !entries.length}
+          {#if catalog?.last_error}
+            <p class="pricing-empty-error">{catalog.last_error}</p>
+          {/if}
+          <button type="button" class="btn-secondary" disabled={refreshing} onclick={refreshCatalog}>
+            {refreshing ? '正在拉取价格目录…' : '立即拉取价格目录'}
+          </button>
         {/if}
       </div>
     {/if}
@@ -512,6 +550,26 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
+  }
+
+  .btn-refresh-catalog {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    font-size: 12px;
+  }
+
+  .btn-refresh-catalog :global(svg) {
+    width: 13px;
+    height: 13px;
+  }
+
+  .pricing-empty-error {
+    color: var(--color-danger);
+    font-size: 12px;
+    max-width: 520px;
+    word-break: break-word;
   }
 
   .currency-segment {

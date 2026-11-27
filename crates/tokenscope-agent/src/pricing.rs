@@ -4,10 +4,13 @@ use reqwest::redirect::Policy;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::io::Read;
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
+use tokenscope_local_ipc::{PriceCatalogStatus, PRICE_CATALOG_STATUS_FILENAME};
 use tokenscope_local_store::{LocalStore, ModelPriceEntry};
 
 const CATALOG_URL: &str = "https://models.dev/api.json";
@@ -15,6 +18,7 @@ const CATALOG_VERSION_PREFIX: &str = "models.dev:base-v4:";
 const MAX_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
 const SUCCESS_REFRESH_MS: i64 = 24 * 60 * 60 * 1000;
 const RETRY_REFRESH_MS: i64 = 60 * 60 * 1000;
+const EMPTY_RETRY_REFRESH_MS: i64 = 2 * 60 * 1000;
 static MANUAL_PRICES_APPLIED: Mutex<Vec<ModelPriceEntry>> = Mutex::new(Vec::new());
 static LEGACY_REFRESH_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 
@@ -27,7 +31,30 @@ enum CatalogResponse {
     },
 }
 
-pub(super) fn refresh_if_due(store: &mut LocalStore) {
+fn write_status_file(db_path: &Path, status: &PriceCatalogStatus) {
+    let Some(dir) = db_path.parent() else {
+        return;
+    };
+    let destination = dir.join(PRICE_CATALOG_STATUS_FILENAME);
+    let temporary = dir.join(format!("{PRICE_CATALOG_STATUS_FILENAME}.tmp"));
+    let _ = fs::remove_file(&temporary);
+    let Ok(body) = serde_json::to_vec(status) else {
+        return;
+    };
+    let mut options = OpenOptions::new();
+    options.create(true).write(true).truncate(true);
+    let write_res = (|| -> std::io::Result<()> {
+        let mut file = options.open(&temporary)?;
+        file.write_all(&body)?;
+        file.sync_all()?;
+        fs::rename(&temporary, &destination)
+    })();
+    if write_res.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+}
+
+pub(super) fn refresh_if_due(store: &mut LocalStore, db_path: &Path) {
     let now = chrono::Utc::now().timestamp_millis();
     apply_manual_prices(store, now);
     let state = match store.model_price_catalog_state() {
@@ -37,46 +64,144 @@ pub(super) fn refresh_if_due(store: &mut LocalStore) {
             return;
         }
     };
+    let has_catalog = state.active_version.is_some();
+    let retry_window_ms = if has_catalog {
+        RETRY_REFRESH_MS
+    } else {
+        EMPTY_RETRY_REFRESH_MS
+    };
     let success_is_fresh = state
         .last_success_ms
         .is_some_and(|saved| now.saturating_sub(saved) < SUCCESS_REFRESH_MS);
     let attempt_is_recent = state
         .last_attempt_ms
-        .is_some_and(|saved| now.saturating_sub(saved) < RETRY_REFRESH_MS);
+        .is_some_and(|saved| now.saturating_sub(saved) < retry_window_ms);
     let current_format = state
         .active_version
         .as_deref()
         .is_some_and(|version| version.starts_with(CATALOG_VERSION_PREFIX));
     // A saved attempt from the old format cannot tell us whether this version tried.
-    let first_upgrade_attempt = state.active_version.is_some()
+    let first_upgrade_attempt = has_catalog
         && !current_format
         && !LEGACY_REFRESH_ATTEMPTED.swap(true, Ordering::Relaxed);
     if !first_upgrade_attempt && ((current_format && success_is_fresh) || attempt_is_recent) {
         return;
     }
+    let _ = run_refresh(store, db_path, now, state.etag.as_deref(), current_format, state.last_success_ms);
+}
+
+pub(super) fn force_refresh(
+    store: &mut LocalStore,
+    db_path: &Path,
+) -> Result<(Option<i64>, usize, usize), String> {
+    let now = chrono::Utc::now().timestamp_millis();
+    apply_manual_prices(store, now);
+    let state = store
+        .model_price_catalog_state()
+        .map_err(|error| format!("读取价格目录状态失败：{error}"))?;
+    let current_format = state
+        .active_version
+        .as_deref()
+        .is_some_and(|version| version.starts_with(CATALOG_VERSION_PREFIX));
+    // Force refresh bypasses ETag when no catalog is installed so we always download fresh data.
+    let etag = if current_format {
+        state.etag.as_deref()
+    } else {
+        None
+    };
+    run_refresh(store, db_path, now, etag, current_format, state.last_success_ms)
+}
+
+fn run_refresh(
+    store: &mut LocalStore,
+    db_path: &Path,
+    now: i64,
+    etag: Option<&str>,
+    current_format: bool,
+    previous_success_ms: Option<i64>,
+) -> Result<(Option<i64>, usize, usize), String> {
     if let Err(error) = store.mark_model_price_attempt(now) {
+        let message = format!("记录价格目录刷新尝试失败：{error}");
         eprintln!("TokenScope price catalog refresh deferred: {error}");
-        return;
+        return Err(message);
     }
 
-    match fetch_catalog(state.etag.as_deref(), current_format) {
-        Ok(CatalogResponse::NotModified(etag)) => {
-            if let Err(error) = store.mark_model_price_not_modified(now, etag.as_deref()) {
+    match fetch_catalog(etag, current_format) {
+        Ok(CatalogResponse::NotModified(new_etag)) => {
+            if let Err(error) = store.mark_model_price_not_modified(now, new_etag.as_deref()) {
+                let message = format!("更新价格目录状态失败：{error}");
                 eprintln!("TokenScope price catalog refresh failed: {error}");
+                write_status_file(
+                    db_path,
+                    &PriceCatalogStatus {
+                        last_attempt_ms: Some(now),
+                        last_success_ms: previous_success_ms,
+                        last_error: Some(message.clone()),
+                    },
+                );
+                return Err(message);
             }
+            let model_count = store
+                .active_model_price_catalog()
+                .map(|(_, entries)| entries.len())
+                .unwrap_or(0);
+            write_status_file(
+                db_path,
+                &PriceCatalogStatus {
+                    last_attempt_ms: Some(now),
+                    last_success_ms: Some(now),
+                    last_error: None,
+                },
+            );
+            Ok((Some(now), model_count, 0))
         }
         Ok(CatalogResponse::Updated {
             entries,
             version,
             etag,
         }) => match store.install_model_price_catalog(&version, &entries, etag.as_deref(), now) {
-            Ok(report) => println!(
-                "model price catalog version={} models={} historical_records_priced={}",
-                report.price_version, report.model_count, report.backfilled_records
-            ),
-            Err(error) => eprintln!("TokenScope price catalog install failed: {error}"),
+            Ok(report) => {
+                println!(
+                    "model price catalog version={} models={} historical_records_priced={}",
+                    report.price_version, report.model_count, report.backfilled_records
+                );
+                write_status_file(
+                    db_path,
+                    &PriceCatalogStatus {
+                        last_attempt_ms: Some(now),
+                        last_success_ms: Some(now),
+                        last_error: None,
+                    },
+                );
+                Ok((Some(now), report.model_count, report.backfilled_records))
+            }
+            Err(error) => {
+                let message = format!("写入价格目录失败：{error}");
+                eprintln!("TokenScope price catalog install failed: {error}");
+                write_status_file(
+                    db_path,
+                    &PriceCatalogStatus {
+                        last_attempt_ms: Some(now),
+                        last_success_ms: previous_success_ms,
+                        last_error: Some(message.clone()),
+                    },
+                );
+                Err(message)
+            }
         },
-        Err(error) => eprintln!("TokenScope public model prices unavailable: {error}"),
+        Err(error) => {
+            let message = format!("下载价格目录失败（models.dev）：{error}");
+            eprintln!("TokenScope public model prices unavailable: {error}");
+            write_status_file(
+                db_path,
+                &PriceCatalogStatus {
+                    last_attempt_ms: Some(now),
+                    last_success_ms: previous_success_ms,
+                    last_error: Some(message.clone()),
+                },
+            );
+            Err(message)
+        }
     }
 }
 
@@ -103,10 +228,19 @@ fn fetch_catalog(
     etag: Option<&str>,
     has_saved_catalog: bool,
 ) -> Result<CatalogResponse, Box<dyn std::error::Error>> {
+    let redirect_policy = Policy::custom(|attempt| {
+        if attempt.previous().len() >= 5 {
+            attempt.error("too many redirects")
+        } else if attempt.url().scheme() != "https" {
+            attempt.error("refusing non-HTTPS redirect")
+        } else {
+            attempt.follow()
+        }
+    });
     let client = Client::builder()
-        .redirect(Policy::none())
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(12))
+        .redirect(redirect_policy)
+        .connect_timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(20))
         .build()?;
     let mut request = client.get(CATALOG_URL);
     if let Some(etag) = etag {
@@ -204,25 +338,34 @@ fn parse_catalog(root: &Value) -> Result<Vec<ModelPriceEntry>, String> {
             if has_unsupported_pricing(cost, reference) {
                 continue;
             }
+            let (Ok(input_rate_nanos), Ok(output_rate_nanos), Ok(cache_read_rate_nanos), Ok(cache_write_rate_nanos), Ok(reasoning_rate_nanos)) = (
+                parse_rate(cost.get("input")),
+                parse_rate(cost.get("output")),
+                parse_rate(cost.get("cache_read")),
+                parse_rate(cost.get("cache_write")),
+                parse_rate(cost.get("reasoning")),
+            ) else {
+                continue;
+            };
             let entry = ModelPriceEntry {
                 provider_id: provider_id.to_owned(),
                 model_id: model_id.to_owned(),
-                input_rate_nanos: parse_rate(cost.get("input"))?,
-                output_rate_nanos: parse_rate(cost.get("output"))?,
-                cache_read_rate_nanos: parse_rate(cost.get("cache_read"))?,
-                cache_write_rate_nanos: parse_rate(cost.get("cache_write"))?,
-                reasoning_rate_nanos: parse_rate(cost.get("reasoning"))?,
+                input_rate_nanos,
+                output_rate_nanos,
+                cache_read_rate_nanos,
+                cache_write_rate_nanos,
+                reasoning_rate_nanos,
             };
             if entry_has_any_rate(&entry) {
-                insert_entry(&mut entries, entry.clone())?;
+                let _ = insert_entry(&mut entries, entry.clone());
                 if model_key != model_id {
-                    insert_entry(
+                    let _ = insert_entry(
                         &mut entries,
                         ModelPriceEntry {
                             model_id: model_key.clone(),
                             ..entry
                         },
-                    )?;
+                    );
                 }
             }
         }

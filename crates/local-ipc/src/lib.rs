@@ -7,6 +7,7 @@ use tokenscope_local_store::{DashboardSnapshot, SessionAnalysisPage};
 pub const MODULE_ID: &str = "local-ipc";
 pub const PROTOCOL_VERSION: u32 = 2;
 pub const AGENT_CONTROL_DIRECTORY: &str = "agent-control";
+pub const PRICE_CATALOG_STATUS_FILENAME: &str = "model-price-status.json";
 pub const SESSION_ANALYSIS_PROTOCOL_VERSION: u32 = 1;
 /// Tracks the store schema so the desktop can never render a snapshot produced
 /// by an incompatible Agent/database pair.
@@ -42,6 +43,30 @@ pub struct SessionDeleteResponse {
     pub request_id: String,
     pub deleted_records: usize,
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PriceCatalogRefreshRequest {
+    pub request_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PriceCatalogRefreshResponse {
+    pub request_id: String,
+    pub updated_at_ms: Option<i64>,
+    pub model_count: usize,
+    pub backfilled_records: usize,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PriceCatalogStatus {
+    pub last_attempt_ms: Option<i64>,
+    pub last_success_ms: Option<i64>,
+    pub last_error: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

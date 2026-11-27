@@ -44,59 +44,70 @@
 </script>
 
   <section class="catalog" aria-label="文件列表">
-    <div class="catalog-head">
-      <div class="catalog-head-left">
-        <strong>文件列表</strong>
-        <span class="catalog-total-pill">{resultCount} 项</span>
+    <div class="catalog-top">
+      <div class="catalog-head">
+        <div class="catalog-head-left">
+          <strong>文件列表</strong>
+          <span class="catalog-total-pill">{resultCount} 项</span>
+        </div>
+        <button type="button"
+          class="btn-icon-refresh"
+          disabled={busy}
+          onclick={() => void refresh()}
+          title="刷新本地文件与 Skill 状态"
+          aria-label="刷新文件列表"
+        >
+          <span class:spin={busy}>{@html icons.refresh}</span>
+        </button>
       </div>
-      <button type="button"
-        class="btn-icon-refresh"
-        disabled={busy}
-        onclick={() => void refresh()}
-        title="刷新本地文件与 Skill 状态"
-        aria-label="刷新文件列表"
-      >
-        <span class:spin={busy}>{@html icons.refresh}</span>
-      </button>
-    </div>
 
-    <div class="catalog-search-box">
-      <svg class="search-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" />
-      </svg>
-      <input
-        type="search"
-        class="catalog-search-input"
-        bind:value={filterQuery}
-        placeholder="搜索指令或 Skill..."
-        aria-label="搜索指令或 Skill"
-      />
-      {#if filterQuery}
-        <button
-          type="button"
-          class="search-clear-btn"
-          onclick={() => filterQuery = ''}
-          title="清除搜索"
-          aria-label="清除搜索"
-        >{@html icons.close}</button>
-      {/if}
-    </div>
+      <div class="catalog-search-box">
+        <svg class="search-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" />
+        </svg>
+        <input
+          type="search"
+          class="catalog-search-input"
+          bind:value={filterQuery}
+          placeholder="搜索指令或 Skill..."
+          aria-label="搜索指令或 Skill"
+        />
+        {#if filterQuery}
+          <button
+            type="button"
+            class="search-clear-btn"
+            onclick={() => filterQuery = ''}
+            title="清除搜索"
+            aria-label="清除搜索"
+          >{@html icons.close}</button>
+        {/if}
+      </div>
 
-    <div class="catalog-filters" role="group" aria-label="筛选文件类型">
-      {#each categories as item (item.id)}
-        <button type="button" class="catalog-filter" aria-pressed={category === item.id}
-          onclick={() => selectCategory(item.id)}>{item.label}</button>
-      {/each}
-    </div>
+      <div class="catalog-filters" role="group" aria-label="筛选文件类型">
+        {#each categories as item (item.id)}
+          <button type="button" class="catalog-filter" aria-pressed={category === item.id}
+            onclick={() => selectCategory(item.id)}>{item.label}</button>
+        {/each}
+      </div>
 
-    <div class="catalog-actions" role="group" aria-label="添加文件">
-      {#if category !== 'skill'}
-        <button type="button" class="btn-ghost-sm" disabled={busy} onclick={beginCreateInstruction}>新建指令</button>
-      {/if}
-      {#if category !== 'instruction'}
-        <button type="button" class="btn-ghost-sm" disabled={busy} onclick={beginCreate}>新建 Skill</button>
-        <button type="button" class="btn-ghost-sm" disabled={busy} onclick={beginImport}>导入 Skill</button>
-      {/if}
+      <div class="catalog-actions" role="group" aria-label="添加文件">
+        {#if category !== 'skill'}
+          <button type="button" class="btn-ghost-sm" disabled={busy} onclick={beginCreateInstruction}>
+            <span class="btn-ghost-icon" aria-hidden="true">{@html icons.plus}</span>
+            <span>新建指令</span>
+          </button>
+        {/if}
+        {#if category !== 'instruction'}
+          <button type="button" class="btn-ghost-sm" disabled={busy} onclick={beginCreate}>
+            <span class="btn-ghost-icon" aria-hidden="true">{@html icons.plus}</span>
+            <span>新建 Skill</span>
+          </button>
+          <button type="button" class="btn-ghost-sm" disabled={busy} onclick={beginImport}>
+            <span class="btn-ghost-icon" aria-hidden="true">{@html icons.arrowDown}</span>
+            <span>导入 Skill</span>
+          </button>
+        {/if}
+      </div>
     </div>
 
     <div class="catalog-items" bind:this={list}>
@@ -196,18 +207,26 @@
     border-right: 1px solid var(--border-subtle);
     min-width: 0;
     min-height: 0;
-    padding: 12px;
     max-height: 70vh;
     display: flex;
     flex-direction: column;
+    background: var(--bg-elevated);
+  }
+
+  .catalog-top {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
     gap: 8px;
+    padding: 12px 12px 10px;
+    border-bottom: 1px solid var(--border-subtle);
     background: var(--bg-elevated);
   }
 
   .catalog-items {
+    flex: 1;
     min-height: 0;
-    padding: 4px 3px 2px 2px;
-    border-top: 1px solid var(--border-subtle);
+    padding: 6px 8px 10px;
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: var(--border-strong) transparent;
@@ -227,19 +246,21 @@
     gap: 2px;
     padding: 2px;
     background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
   }
 
   .catalog-filter {
     flex: 1;
-    min-height: 28px;
+    min-height: 26px;
     border: 1px solid transparent;
     border-radius: var(--radius-xs);
     background: transparent;
     color: var(--text-secondary);
     font: inherit;
-    font-size: 12px;
+    font-size: 11.5px;
     cursor: pointer;
+    transition: all var(--transition-fast);
   }
 
   .catalog-filter:hover {
@@ -251,6 +272,7 @@
     border-color: var(--border-subtle);
     color: var(--brand-text);
     font-weight: 600;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
   }
 
   .catalog-head-left {
@@ -268,17 +290,18 @@
     color: var(--text-muted);
     background: var(--bg-secondary);
     border-radius: 999px;
+    font-variant-numeric: tabular-nums;
   }
 
   .btn-icon-refresh {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
+    width: 28px;
+    height: 28px;
     padding: 0;
     border: 1px solid var(--border-subtle);
-    background: var(--bg-secondary);
+    background: var(--bg-card);
     color: var(--text-muted);
     border-radius: var(--radius-sm);
     cursor: pointer;
@@ -288,6 +311,7 @@
   .btn-icon-refresh:hover:not(:disabled) {
     color: var(--text-primary);
     border-color: var(--border-default);
+    background: var(--bg-card-hover);
   }
 
   .btn-icon-refresh :global(svg) {
@@ -306,23 +330,24 @@
 
   .catalog-search-input {
     width: 100%;
-    height: 34px;
-    padding: 0 32px;
+    height: 31px;
+    padding: 0 28px 0 30px;
     font: inherit;
     font-size: 11.5px;
     color: var(--text-primary);
-    background: var(--bg-secondary);
+    background: var(--bg-card);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
-    transition: all var(--transition-fast);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   }
 
   .search-icon {
     position: absolute;
-    top: 9px;
-    left: 10px;
-    width: 16px;
-    height: 16px;
+    top: 50%;
+    left: 9px;
+    transform: translateY(-50%);
+    width: 14px;
+    height: 14px;
     color: var(--text-muted);
     pointer-events: none;
   }
@@ -334,17 +359,17 @@
   .catalog-search-input:focus {
     outline: none;
     border-color: var(--brand-primary);
-    background: var(--bg-card);
+    box-shadow: 0 0 0 2px var(--brand-subtle);
   }
 
   .catalog-search-input::placeholder {
-    color: var(--text-secondary);
+    color: var(--text-muted);
     opacity: 1;
   }
 
   .search-clear-btn {
     position: absolute;
-    right: 4px;
+    right: 5px;
     top: 50%;
     transform: translateY(-50%);
     width: 18px;
@@ -363,8 +388,8 @@
   }
 
   .search-clear-btn :global(svg) {
-    width: 14px;
-    height: 14px;
+    width: 13px;
+    height: 13px;
   }
 
   .group-title {
@@ -372,11 +397,15 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-top: 6px;
-    padding: 4px 8px;
-    font-size: 11.5px;
-    color: var(--text-secondary);
+    margin-top: 8px;
+    padding: 3px 8px;
+    font-size: 11px;
+    color: var(--text-muted);
     font-weight: 600;
+  }
+
+  .group-title:first-child {
+    margin-top: 2px;
   }
 
   .group-title-left {
@@ -391,27 +420,51 @@
     justify-content: center;
     min-width: 16px;
     height: 15px;
-    padding: 0 4px;
+    padding: 0 5px;
     font-size: 10px;
     font-weight: 600;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     background: var(--bg-secondary);
     border-radius: 999px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .catalog-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+    gap: 5px;
   }
 
   .btn-ghost-sm {
-    min-height: 28px;
-    padding: 0 9px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-height: 27px;
+    padding: 0 7px;
     font: inherit;
     font-size: 10.5px;
     font-weight: 500;
     color: var(--text-secondary);
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-xs);
     cursor: pointer;
     transition: all var(--transition-fast);
     white-space: nowrap;
+  }
+
+  .btn-ghost-icon {
+    display: inline-flex;
+    width: 11px;
+    height: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .btn-ghost-icon :global(svg) {
+    width: 100%;
+    height: 100%;
   }
 
   .btn-ghost-sm:hover:not(:disabled) {
@@ -420,11 +473,8 @@
     border-color: var(--brand-border);
   }
 
-  .catalog-actions {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 4px;
+  .btn-ghost-sm:hover:not(:disabled) .btn-ghost-icon {
+    color: var(--brand-primary);
   }
 
   .file-row {
@@ -436,7 +486,7 @@
     gap: 2px;
     text-align: left;
     border: 1px solid transparent;
-    border-radius: var(--radius-xs);
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-primary);
     padding: 6px 8px;
@@ -452,6 +502,7 @@
   .file-row.active {
     background: var(--brand-subtle);
     border-color: var(--brand-border);
+    box-shadow: inset 2.5px 0 0 var(--brand-primary);
   }
 
   .file-row:disabled {
@@ -514,7 +565,7 @@
 
   .file-sub-root {
     font-size: 10.5px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     padding-left: 21px;
     overflow: hidden;
     text-overflow: ellipsis;

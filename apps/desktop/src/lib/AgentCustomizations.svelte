@@ -555,7 +555,11 @@
     <div class="workspace">
       <AgentFileCatalog {instructions} {skills} {selected} {busy} {refresh} {select} {beginCreateInstruction} {beginImport} {beginCreate} />
 
-      <section class="editor" aria-label="文件编辑器">
+      <section
+        class="editor"
+        class:is-editing={Boolean(selected && !importing && !creatingInstruction && !creating)}
+        aria-label="文件编辑器"
+      >
         {#if importing}
           <AgentSkillImport {provider} {providerRootOptions} bind:skillRoot bind:busy bind:error
             onInstall={(items) => { entries = items; importing = false; notice = "安装成功；选择左侧 skill 可查看或检查更新。"; }}
@@ -581,52 +585,66 @@
 
         {:else if selected}
           <div class="editor-head">
-            <div class="editor-meta">
-              <div class="editor-title-row">
-                <h2 class="editor-file-title" title={selected.id.name}>
-                  {selected.builtin_description ? '/' : ''}{selected.id.name}{selected.kind === 'skill' && !selected.builtin_description ? ' / SKILL.md' : ''}
-                </h2>
-                <div class="editor-badges">
-                  {#if selected.kind === 'instruction'}
-                    {@const info = instructionInfo(selected, instructions)}
-                    <span class={`instruction-badge ${info.tone}`} title={info.detail}>{info.label}</span>
-                  {/if}
-                  {#if selected.kind === 'skill'}
-                    <span class="status-badge" class:disabled={!selected.enabled} class:enabled={selected.enabled}>
-                      <span class="status-dot"></span>
-                      {selected.enabled ? '已启用' : '已停用'}
-                    </span>
-                  {/if}
-                  {#if selected.linked}
-                    <span class="link-badge">软链接目标</span>
+            <div class="editor-head-top">
+              <div class="editor-title-group">
+                <div class="editor-title-row">
+                  <h2 class="editor-file-title" title={selected.id.name}>
+                    {selected.builtin_description ? '/' : ''}{selected.id.name}{selected.kind === 'skill' && !selected.builtin_description ? ' / SKILL.md' : ''}
+                  </h2>
+                  <div class="editor-badges">
+                    {#if selected.kind === 'instruction'}
+                      {@const info = instructionInfo(selected, instructions)}
+                      <span class={`instruction-badge ${info.tone}`} title={info.detail}>{info.label}</span>
+                    {/if}
+                    {#if selected.kind === 'skill'}
+                      <span class="status-badge" class:disabled={!selected.enabled} class:enabled={selected.enabled}>
+                        <span class="status-dot"></span>
+                        {selected.enabled ? '已启用' : '已停用'}
+                      </span>
+                    {/if}
+                    {#if selected.linked}
+                      <span class="link-badge">软链接目标</span>
+                    {/if}
+                  </div>
+                </div>
+
+                <div class="editor-path-row">
+                  <span class="editor-path" title={selected.path}>{selected.path}</span>
+                  {#if selected.path}
+                    <button
+                      type="button"
+                      class="copy-path-btn"
+                      class:copied={copiedPath}
+                      onclick={() => { if (selected) void copyPath(selected.path); }}
+                      title="复制文件绝对路径"
+                      aria-label={copiedPath ? "路径已复制" : "复制路径"}
+                    >
+                      {#if copiedPath}
+                        <span class="copy-success" role="status">已复制</span>
+                      {:else}
+                        <span>复制路径</span>
+                      {/if}
+                    </button>
                   {/if}
                 </div>
               </div>
 
-              <div class="editor-path-row">
-                <span class="editor-path" title={selected.path}>{selected.path}</span>
-                {#if selected.path}
+              {#if selected.editable}
                 <button
                   type="button"
-                  class="copy-path-btn"
-                  onclick={() => { if (selected) void copyPath(selected.path); }}
-                  title="复制文件绝对路径"
-                  aria-label={copiedPath ? "路径已复制" : "复制路径"}
+                  class="btn-primary btn-save"
+                  disabled={busy || (!dirty && selected.exists)}
+                  onclick={() => void save()}
                 >
-                  {#if copiedPath}
-                    <span class="copy-success" role="status">已复制</span>
-                  {:else}
-                    <span>复制路径</span>
-                  {/if}
+                  {busy ? '处理中…' : selected.exists ? '保存更改' : '创建文件'}
                 </button>
-                {/if}
-              </div>
-
-              {#if selected.kind === 'instruction' && (selected.instructionEntry || !mainEntryForSelected)}
-                {@const info = instructionInfo(selected, instructions)}
-                <p class={`instruction-status-note ${info.tone}`}>{info.detail}</p>
               {/if}
             </div>
+
+            {#if selected.kind === 'instruction' && (selected.instructionEntry || !mainEntryForSelected)}
+              {@const info = instructionInfo(selected, instructions)}
+              <p class={`instruction-status-note ${info.tone}`}>{info.detail}</p>
+            {/if}
 
             <div class="editor-actions">
               {#if selected.kind === 'skill' && selected.exists && !selected.builtin}
@@ -679,16 +697,6 @@
                 >
                   删除
                 </button>
-              {/if}
-
-              {#if selected.editable}
-              <button type="button"
-                class="btn-primary btn-save"
-                disabled={busy || (!dirty && selected.exists)}
-                onclick={() => void save()}
-              >
-                {busy ? '处理中…' : selected.exists ? '保存更改' : '创建文件'}
-              </button>
               {/if}
             </div>
           </div>
@@ -758,20 +766,21 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    min-height: 32px;
-    padding: 0 8px;
+    min-height: 30px;
+    padding: 0 10px;
     white-space: nowrap;
     font-size: 12px;
     font-weight: 500;
-    color: var(--text-primary);
-    background: transparent;
-    border: 1px solid transparent;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition: all var(--transition-fast);
   }
 
   .ai-toggle-btn:hover:not(:disabled) {
+    color: var(--text-primary);
     border-color: var(--border-default);
     background: var(--bg-card-hover);
   }
@@ -830,8 +839,8 @@
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
-    gap: 4px 16px;
-    padding: 6px 8px;
+    gap: 4px 12px;
+    padding: 5px 6px;
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
@@ -840,15 +849,15 @@
   .provider-tabs {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
+    gap: 3px;
   }
 
   .provider-tab-btn {
-    min-height: 32px;
-    padding: 3px 10px;
+    min-height: 30px;
+    padding: 0 11px;
     border: 1px solid transparent;
     background: transparent;
-    border-radius: var(--radius-xs);
+    border-radius: var(--radius-sm);
     font: inherit;
     font-size: 12px;
     font-weight: 500;
@@ -860,6 +869,7 @@
 
   .provider-tab-btn:hover:not(:disabled) {
     color: var(--text-primary);
+    background: var(--bg-secondary);
   }
 
   .provider-tab-btn:focus-visible {
@@ -871,6 +881,7 @@
     background: var(--brand-subtle);
     color: var(--brand-text);
     border-color: var(--brand-border);
+    font-weight: 600;
   }
 
   .provider-tab-btn:disabled {
@@ -881,7 +892,7 @@
   /* Workspace Layout */
   .workspace {
     display: grid;
-    grid-template-columns: clamp(220px, 36%, 336px) minmax(0, 1fr);
+    grid-template-columns: clamp(232px, 30%, 304px) minmax(0, 1fr);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
     background: var(--bg-card);
@@ -902,13 +913,21 @@
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
-    gap: 12px;
-    padding: 14px 16px;
+    gap: 8px;
+    padding: 12px 16px 10px;
     border-bottom: 1px solid var(--border-subtle);
     background: var(--bg-card);
   }
 
-  .editor-meta {
+  .editor-head-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .editor-title-group {
     flex: 1;
     min-width: 0;
   }
@@ -922,9 +941,9 @@
   }
 
   .editor-file-title {
-    font-size: 15px;
+    font-size: 14.5px;
     font-weight: 700;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.015em;
     color: var(--text-primary);
     margin: 0;
     overflow-wrap: anywhere;
@@ -935,20 +954,20 @@
     display: inline-flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 5px;
   }
 
   .editor-path-row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-top: 4px;
+    gap: 6px;
+    margin-top: 3px;
     min-width: 0;
   }
 
   .instruction-status-note {
     max-width: 70ch;
-    margin: 6px 0 0;
+    margin: 0;
     color: var(--text-secondary);
     font-size: 11px;
     line-height: 1.45;
@@ -961,7 +980,7 @@
   .editor-path {
     font-family: var(--font-mono, monospace);
     font-size: 11px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -972,14 +991,14 @@
   .copy-path-btn {
     display: inline-flex;
     align-items: center;
-    min-height: 28px;
-    padding: 0 9px;
+    height: 21px;
+    padding: 0 7px;
     font: inherit;
     font-size: 10px;
     color: var(--text-muted);
     background: var(--bg-secondary);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-xs);
     cursor: pointer;
     transition: all var(--transition-fast);
     flex-shrink: 0;
@@ -989,6 +1008,12 @@
   .copy-path-btn:hover {
     color: var(--text-primary);
     border-color: var(--border-default);
+    background: var(--bg-card-hover);
+  }
+
+  .copy-path-btn.copied {
+    border-color: var(--color-exact-border);
+    background: var(--color-exact-bg);
   }
 
   .copy-success {
@@ -1009,8 +1034,8 @@
   }
 
   .btn-action {
-    height: 28px;
-    padding: 0 10px;
+    height: 26px;
+    padding: 0 9px;
     font-size: 11.5px;
     font-weight: 500;
     display: inline-flex;
@@ -1042,12 +1067,12 @@
   }
 
   .btn-save {
-    margin-inline-start: auto;
-    height: 28px;
+    height: 29px;
     padding: 0 14px;
     font-size: 11.5px;
     font-weight: 600;
     white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .editor-empty {
@@ -1114,9 +1139,17 @@
     grid-template-rows: minmax(0, 1fr);
   }
 
+  .fit-workspace .editor.is-editing {
+    overflow: hidden;
+  }
+
   @media (max-height: 600px) {
     .fit-workspace .workspace {
       min-height: 300px;
+    }
+
+    .fit-workspace .editor.is-editing {
+      overflow: auto;
     }
   }
 

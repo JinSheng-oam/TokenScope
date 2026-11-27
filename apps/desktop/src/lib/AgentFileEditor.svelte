@@ -7,7 +7,6 @@
 
   $: editorLines = content ? content.split('\n').length : 0;
   $: editorChars = content ? content.length : 0;
-
 </script>
 
 <div class="editor-textarea-wrap">
@@ -48,14 +47,15 @@
     <span>最大 1 MiB</span>
   </div>
 </div>
+
 <style>
   /* Textarea Editor Box */
   .editor-textarea-wrap {
     flex: 1;
-    min-height: 280px;
+    min-height: 240px;
     display: flex;
     flex-direction: column;
-    background: var(--bg-secondary);
+    background: color-mix(in srgb, var(--bg-secondary) 44%, var(--bg-card));
   }
 
   textarea {
@@ -64,18 +64,19 @@
     height: 100%;
     min-height: 0;
     resize: none;
-    padding: 16px;
+    padding: 14px 18px;
     border: none;
     outline: none;
     color: var(--text-primary);
     background: transparent;
-    font: 12.5px/1.65 var(--font-mono, 'JetBrains Mono', 'Cascadia Code', Consolas, monospace);
+    font: 12.5px/1.68 var(--font-mono, 'JetBrains Mono', 'Cascadia Code', Consolas, monospace);
     tab-size: 2;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
   }
 
   textarea:focus-visible {
-    outline: 2px solid var(--brand-primary);
-    outline-offset: -2px;
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--brand-primary) 55%, transparent);
   }
 
   /* Editor Footer Status Bar */
@@ -86,7 +87,7 @@
     gap: 4px 12px;
     align-items: center;
     justify-content: space-between;
-    padding: 7px 18px;
+    padding: 6px 16px;
     border-top: 1px solid var(--border-subtle);
     font-size: 11px;
     color: var(--text-muted);
@@ -99,10 +100,14 @@
     gap: 6px;
   }
 
+  .foot-metrics {
+    font-variant-numeric: tabular-nums;
+  }
+
   .foot-status {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
     font-weight: 500;
   }
 

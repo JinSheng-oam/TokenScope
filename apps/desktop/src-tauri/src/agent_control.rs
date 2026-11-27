@@ -52,8 +52,8 @@ where
             .map_err(|e| format!("设置 Agent 控制目录权限失败：{e}"))?;
     }
 
-    let body = serde_json::to_vec(request)
-        .map_err(|e| format!("编码{action_label}请求失败：{e}"))?;
+    let body =
+        serde_json::to_vec(request).map_err(|e| format!("编码{action_label}请求失败：{e}"))?;
     let temporary = directory.join(format!("{request_prefix}{request_id}.tmp"));
     let request_path = directory.join(format!("{request_prefix}{request_id}.json"));
     let mut options = OpenOptions::new();

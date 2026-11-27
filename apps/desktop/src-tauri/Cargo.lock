@@ -4594,7 +4594,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tokenscope-core-domain"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -4604,7 +4604,7 @@ dependencies = [
 
 [[package]]
 name = "tokenscope-desktop"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "auto-launch",
  "chrono",
@@ -4634,7 +4634,7 @@ dependencies = [
 
 [[package]]
 name = "tokenscope-local-ipc"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "serde",
  "tokenscope-local-store",
@@ -4642,7 +4642,7 @@ dependencies = [
 
 [[package]]
 name = "tokenscope-local-store"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -4655,7 +4655,7 @@ dependencies = [
 
 [[package]]
 name = "tokenscope-sync-client"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "hex",
  "keyring",

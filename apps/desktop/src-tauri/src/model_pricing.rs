@@ -22,7 +22,10 @@ pub(crate) struct ModelPriceCatalog {
 }
 
 fn read_price_status(db_path: &Path) -> PriceCatalogStatus {
-    let Some(path) = db_path.parent().map(|dir| dir.join(PRICE_CATALOG_STATUS_FILENAME)) else {
+    let Some(path) = db_path
+        .parent()
+        .map(|dir| dir.join(PRICE_CATALOG_STATUS_FILENAME))
+    else {
         return PriceCatalogStatus::default();
     };
     let Ok(bytes) = fs::read(path) else {
